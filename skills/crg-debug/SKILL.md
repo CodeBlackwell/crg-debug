@@ -45,7 +45,7 @@ skill's directory):
    *Execution mode* section, honoring every cross-cutting rule (TDD discipline, false-positive guard,
    fail-safe-defaults lens, git & safety policy, report layout) verbatim.
 
-To upgrade prose → deterministic, run the bundled `deterministic` command once.
+To upgrade prose → deterministic, run the bundled `crg-deterministic` command once.
 
 ## After it returns
 
