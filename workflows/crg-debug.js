@@ -422,6 +422,22 @@ for (const item of verified.filter(Boolean)) {
 confirmedBugs.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9))
 log(`Verify: ${confirmedBugs.length} confirmed · ${deferred.length} deferred (intentional) · ${rejected.length} rejected`)
 
+// ---- Persist the confirmed ledger: the serialized detect->fix hand-off -------
+// Detection's output as a self-describing file — review it, cluster it for
+// coupling, or feed a later fix-only run. The sandbox can't write files itself,
+// so one short agent serializes it to the working tree.
+const ledger = {
+  repoRoot, scope: scope || 'full repo', model,
+  toolchain: setup.toolchain || [], baselineFailures,
+  confirmedBugs, deferred, rejected,
+}
+const ledgerPath = `${repoRoot}/.crg-debug/ledger.json`
+await agent(
+  `Create the directory ${repoRoot}/.crg-debug if it does not exist, then write the following JSON to ${ledgerPath}, overwriting any existing file. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap in markdown, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(ledger, null, 2)}`,
+  { label: 'persist', phase: 'Verify', model },
+)
+log(`Verify: ledger persisted -> ${ledgerPath}`)
+
 // ---- Phase 4: Fix waves (opt-in via fix=true) --------------------------------
 // The crux: fix agents apply TDD fixes, but a SEPARATE gate agent re-runs the
 // checks and the SCRIPT reads its raw exit codes — the model never declares "passed".
@@ -459,6 +475,24 @@ Open each test with a one-sentence comment naming the user-facing behavior it pr
 Each bug's test must be ISOLATED to THAT bug: it must pass even while OTHER unfixed bugs remain (do not import a whole crashing module if a narrower import works; for compiled languages, build+run only that test). For each bug report testCommand: the exact, narrowest command that runs ONLY that bug's test (e.g. \`pytest path::test_x\`, or the gcc compile+run line) — the script re-runs each independently to confirm.
 Return filesTouched and a fixes[] row per bug: {bugId, testFile, testCommand, redObserved, greenObserved}.`,
     { label: `fix:${shortFile(file)}`, phase: 'Fix', schema: FIX_SCHEMA, model },
+  )
+
+// Coupled-bug holistic fixer (the prose fallback). Unlike fixAgent's per-bug TDD,
+// this fixes a set of INTERACTING bugs across one or more files in a SINGLE context
+// and gates on ONE shared test — the only test that can validate fixes whose outputs
+// the per-bug isolated gate could never separate.
+const fixAgentCoupled = (files, bugs) =>
+  agent(
+    `These ${bugs.length} confirmed bugs in the repo at ${repoRoot} could NOT be closed one at a time: they are COUPLED — fixing one alone leaves a shared test red. Fix them TOGETHER in one pass, holding the interaction in your head. You may edit these files plus their tests: ${files.join(', ')}
+
+Bugs:
+${bugs.map(b => fence(`bugId: ${b.bugId}\nfile: ${b.file}\nrootCause: ${b.rootCause}\nsymptom: ${b.symptom}\nwhyRepro: ${b.whyRepro}`)).join('\n')}
+
+Toolchain:
+${tcLine()}
+
+Apply the MINIMAL source fix for EVERY bug at once. Then write ONE test that exercises the shared behavior and passes ONLY when all of them are fixed — do NOT try to isolate a single bug. Run that test AND the owning package's existing test command; both must be green. Report each bug's greenObserved and put the SAME shared narrowest testCommand on every row.`,
+    { label: 'fix:coupled', phase: 'Fix', schema: FIX_SCHEMA, model },
   )
 
 const gateAgent = scopeNote =>
@@ -511,6 +545,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   const MAX_WAVES = 6
   const MAX_BUGS_PER_FIX = 4 // one agent's load cap; a denser file sends extra chunks to later waves
   let waveNum = 0
+  let stalled = null // set to the open set when a wave stalls (closed 0 / thrash)
 
   while (queue.length && waveNum < MAX_WAVES) {
     waveNum++
@@ -576,23 +611,35 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     log(`Fix wave ${waveNum}: ${groups.length} files, attempted ${attempted.length}, closed ${closed}`)
 
     const nextRaw = [...deferredChunks, ...requeued]
-    // Fixed-point guard: a wave that closes nothing cannot make progress -> stop.
-    if (closed === 0) {
-      unfixedBugs.push(...nextRaw.map(b => ({ ...b, reason: 'wave closed 0 bugs — needs human', wave: waveNum })))
-      break
-    }
+    // Fixed-point guard: a wave that closes nothing means the open bugs resist per-bug
+    // isolated fixing -> stop the loop; the coupled fallback below takes them.
+    if (closed === 0) { stalled = nextRaw; break }
     // Thrash guard: ONLY a bug attempted-and-failed (requeued) that returns again is
     // thrash. Deferred chunks were never attempted, so they never trip this.
     const thrash = requeued.find(b => seenKeys.has(keyOf(b)))
     requeued.forEach(b => seenKeys.add(keyOf(b)))
-    if (thrash) {
-      unfixedBugs.push(...nextRaw.map(b => ({ ...b, reason: 're-queued a previously seen (file,root-cause) — needs human', wave: waveNum })))
-      break
-    }
+    if (thrash) { stalled = nextRaw; break }
     queue = nextRaw
   }
-  if (queue.length && waveNum >= MAX_WAVES) {
-    unfixedBugs.push(...queue.map(b => ({ ...b, reason: 'max wave cap (6) reached', wave: waveNum })))
+
+  // Coupled-bug fallback (one shot, before any human escalation). Per-bug isolated
+  // gates assume bug independence; when waves stall (closed 0 / thrash / cap), the bugs
+  // left open share one validating test no isolated gate can satisfy. Hand them to a
+  // SINGLE holistic prose attempt and gate on that shared test. A stalled wave is itself
+  // the coupling detector — no prediction needed.
+  const stillOpen = stalled || (waveNum >= MAX_WAVES ? queue : [])
+  if (stillOpen.length) {
+    const files = [...new Set(stillOpen.map(bugFile))]
+    log(`Fix: ${stillOpen.length} coupled bug(s) open after ${waveNum} waves — one holistic prose attempt over ${files.length} file(s)`)
+    const pr = await fixAgentCoupled(files, stillOpen)
+    const cmd = pr && (pr.fixes || []).map(f => f.testCommand).find(Boolean)
+    const g = cmd ? await bugGateAgent({ file: files[0], bugId: 'coupled' }, cmd) : await gateAgent('full suite')
+    const green = !!(g && (g.results || []).length && g.results.every(x => x.exitCode === 0))
+    for (const b of stillOpen) {
+      if (green) fixedBugs.push({ ...b, wave: 'prose-fallback' })
+      else unfixedBugs.push({ ...b, reason: 'per-bug waves + holistic prose attempt both failed — needs human', wave: waveNum })
+    }
+    log(`Fix: prose fallback ${green ? 'closed' : 'could not close'} ${stillOpen.length} coupled bug(s)`)
   }
 
   // Final full gate over the cumulative diff — the regression detector: with bugs
@@ -610,6 +657,7 @@ return {
   repoRoot,
   scope: scope || 'full repo',
   mode: fix ? 'discover+fix' : 'discover',
+  ledgerPath,
   confirmedBugs,
   deferred,
   rejected,

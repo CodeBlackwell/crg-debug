@@ -42,6 +42,26 @@ This copies the bundled workflow and its methodology into `~/.claude/workflows/`
 `/crg-debug` automatically prefers the Workflow; pass `--prose` to force prose mode. Watch a live run
 with `/workflows`.
 
+## Choosing a mode
+
+Both modes run the same `methodology.md`; they differ in **who enforces it**. In prose mode the model
+follows the protocol, so compliance tracks model strength. In deterministic mode the script owns phase
+order, verification, and the per-bug close gates, so the floor holds on any model.
+
+| | Prose | Deterministic |
+|---|---|---|
+| Enforcement | advisory — model may skip phases | in code — binds on any model |
+| Cost / latency | one context, fast | many parallel agents, minutes |
+| Coverage | one attention budget | parallel sweep, scales past one context |
+| Best for | strong models; small or tightly-coupled code | weak models; large multi-file repos; auditable runs |
+
+Rule of thumb: **prose gives you the model's native ceiling cheaply; deterministic buys a floor on a
+weak model at a token and wall-clock cost.** Eval runs bear this out: on one repo a prose pass went
+from 0.33 precision on a weak model to 1.00 on a strong one, while the deterministic Workflow held the
+weak model at a usable floor regardless of tier. Shape matters too — breadth (many independent bugs
+across files) favors the Workflow's parallel discovery; depth (a few interacting bugs in one place) can
+favor prose's single-context reasoning.
+
 ## Usage
 
 ```
