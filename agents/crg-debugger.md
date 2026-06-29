@@ -1,7 +1,7 @@
 ---
 name: crg-debugger
 description: Scoped, isolated CRG-driven debugger. Runs the crg-debug methodology SEQUENTIALLY in one clean context. Use when invoked by another orchestrator (which cannot nest subagents) or to debug a single issue/file in isolation. For a full parallel repo sweep, use the /crg-debug command (crg-debug Workflow) instead.
-model: opus
+model: inherit
 color: red
 ---
 
