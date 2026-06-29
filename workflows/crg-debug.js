@@ -3,11 +3,11 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Applies fixes to the working tree; never commits.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?}. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Nothing is committed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?}. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Nothing is committed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
-    { title: 'Discover', detail: 'one read-only finder per concern + a residual pass' },
+    { title: 'Discover', detail: 'concern-disjoint finders + residual pass; optional loop-until-dry (discoveryRounds>1)' },
     { title: 'Verify', detail: 'two independent reviewers refute/confirm each finding' },
     { title: 'Fix', detail: 'TDD fix waves over file-disjoint bugs, gated by exit codes (fix=true)' },
   ],
@@ -23,6 +23,10 @@ const scope = (a && a.scope) || ''
 const model = (a && a.model) || undefined
 // fix=true enables Phase 4 (TDD fix waves). Default off -> discovery only, no edits.
 const fix = !!(a && a.fix)
+// Discovery depth. 1 (default) = single finder pass per concern. >1 = loop-until-dry:
+// re-run the finders, each round told what's already found, until a round surfaces
+// nothing new or this cap is hit. Opt-in exhaustiveness, traded against token cost.
+const discoveryRounds = Math.max(1, Number(a && a.discoveryRounds) || 1)
 if (!repoRoot || typeof repoRoot !== 'string') {
   throw new Error('crg-debug workflow requires args: {repoRoot: "<absolute repo path>", scope?: "<focus>"}')
 }
@@ -257,7 +261,7 @@ const CONCERN_BRIEF = {
     'design & quality / maintainability — gated by a NAMED principle (DRY, encapsulation, least privilege, single-responsibility, consistency) + concrete evidence + a maintenance cost, NOT by a reproduced failure',
 }
 
-const finder = (label, concernText, files) =>
+const finder = (label, concernText, files, priorKnown) =>
   agent(
     `You are a discovery agent auditing the repo at ${repoRoot} for ONE concern: ${concernText}
 
@@ -265,25 +269,42 @@ Your scoped files (repo-relative — OPEN AND READ EVERY ONE, not just the centr
 ${files.length ? files.map(f => `- ${f}`).join('\n') : '(no files pre-assigned — sweep the uncovered surface yourself)'}
 
 Prefer CRG tools (get_flow_tool, query_graph_tool callers_of/callees_of, get_impact_radius_tool) before Grep. Run the "Common bug-class checklist" in ${SKILL} line-by-line over every function in your slice — extra scrutiny on files with NO test coverage, where inverted logic, flipped operators, double-applied transforms, and off-by-one bounds slip past. For the real-bug vs intentional and surface-vs-fix rules, defer to ${SKILL}.
-
+${priorKnown ? `\nALREADY FOUND in earlier rounds — do NOT re-report these or trivial restatements of them; hunt ONLY for DISTINCT defects they missed (different file:line or different root cause):\n${fence(priorKnown)}\n` : ''}
 Return structured findings rows — NOT file dumps. Every finding needs a file:line you actually opened, the named contract it violates as rootCause, and a concrete failing input -> wrong output as whyRepro. ${UNTRUSTED}`,
     { agentType: 'Explore', label, phase: 'Discover', schema: FINDINGS_SCHEMA, model },
   )
 
-const discoveryThunks = concerns.map(([key, ts]) => () =>
-  finder(`find:${key}`, CONCERN_BRIEF[key] || key, ts.map(t => t.file)),
-)
-// Residual pass over surface no concern claimed (knowledge-gaps + unowned files).
-discoveryThunks.push(() =>
-  finder(
-    'find:residual',
-    'RESIDUAL PASS — sweep in-scope source files that no other agent was assigned, especially non-hub leaf files (siblings, utils, standalone scripts). Apply the full bug-class checklist; this is the net for what a hub-centric sweep misses.',
-    [],
-  ),
-)
+const RESIDUAL_BRIEF =
+  'RESIDUAL PASS — sweep in-scope source files that no other agent was assigned, especially non-hub leaf files (siblings, utils, standalone scripts). Apply the full bug-class checklist; this is the net for what a hub-centric sweep misses.'
 
-const found = await parallel(discoveryThunks)
-const rawFindings = found.filter(Boolean).flatMap(r => r.findings || [])
+// One round = every concern finder + the residual pass, in parallel. discoveryRounds=1
+// is a single pass (default). >1 loops until a round adds nothing new (dry) or the cap
+// is hit; rounds after the first are told what's already found and hunt only the misses.
+const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+const keyOf = f => `${norm(f.file)}::${norm(f.rootCause)}`
+const rawFindings = []
+const seenFindingKeys = new Set()
+for (let round = 1; round <= discoveryRounds; round++) {
+  const known = round === 1 ? '' : rawFindings.map(f => `- ${f.file}: ${f.rootCause}`).join('\n')
+  const sfx = round > 1 ? `#${round}` : ''
+  const thunks = concerns.map(([key, ts]) => () =>
+    finder(`find:${key}${sfx}`, CONCERN_BRIEF[key] || key, ts.map(t => t.file), known),
+  )
+  thunks.push(() => finder(`find:residual${sfx}`, RESIDUAL_BRIEF, [], known))
+  const found = await parallel(thunks)
+  const fresh = found
+    .filter(Boolean)
+    .flatMap(r => r.findings || [])
+    .filter(f => {
+      const k = keyOf(f)
+      if (seenFindingKeys.has(k)) return false
+      seenFindingKeys.add(k)
+      return true
+    })
+  rawFindings.push(...fresh)
+  if (discoveryRounds > 1) log(`Discover round ${round}/${discoveryRounds}: +${fresh.length} new (${rawFindings.length} total)`)
+  if (fresh.length === 0) break // dry round -> stop
+}
 
 // Seed the queue with baseline build/typecheck failures (each is its own repro).
 for (const bf of baselineFailures) {
@@ -298,11 +319,11 @@ for (const bf of baselineFailures) {
   })
 }
 
-// Dedup by (file, rootCause) — deterministic, in code.
-const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+// Dedup by (file, rootCause) — deterministic, in code. Folds baseline seeds in with the
+// loop-deduped findings; finder findings are already unique by this key across rounds.
 const byKey = new Map()
 for (const f of rawFindings) {
-  const k = `${norm(f.file)}::${norm(f.rootCause)}`
+  const k = keyOf(f)
   if (!byKey.has(k)) byKey.set(k, f)
 }
 const deduped = [...byKey.values()]
