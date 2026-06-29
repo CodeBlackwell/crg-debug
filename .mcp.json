@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": ["--from", "code-review-graph-codeblackwell", "code-review-graph", "serve"]
+    }
+  }
+}

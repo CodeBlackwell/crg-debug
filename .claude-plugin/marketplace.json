@@ -1,0 +1,14 @@
+{
+  "name": "crg-debug",
+  "owner": { "name": "LeChristopher Blackwell" },
+  "metadata": {
+    "description": "Graph-driven parallel debugging for Claude Code, powered by code-review-graph."
+  },
+  "plugins": [
+    {
+      "name": "crg-debug",
+      "source": "./",
+      "description": "Graph-driven parallel debug + fix sweep. Prose orchestration by default; opt into the deterministic JS Workflow with the bundled enabler."
+    }
+  ]
+}
