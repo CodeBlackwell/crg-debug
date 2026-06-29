@@ -461,7 +461,7 @@ Return one results[] row: {command, exitCode, stdout, stderr}.`,
   )
 
 let fixResult = null
-if (fix && confirmedBugs.length) {
+if (fix && confirmedBugs.some(b => !b.conflicted)) {
   // Test-harness bootstrap (once, before any wave — avoids parallel fix agents
   // racing to scaffold the same config). TDD's RED step needs a runner first.
   if (!(setup.toolchain || []).some(t => t.test)) {
@@ -482,7 +482,11 @@ if (fix && confirmedBugs.length) {
   const fixedBugs = []
   const unfixedBugs = []
   const waveLog = []
-  let queue = confirmedBugs.map((b, i) => ({ ...b, bugId: b.bugId || `b${i}` }))
+  // Conflicting verdicts → keep unfixed, log both (methodology Phase 2). They stay
+  // in confirmedBugs for the report but never enter the fix queue.
+  const heldConflicted = confirmedBugs.filter(b => b.conflicted)
+  if (heldConflicted.length) log(`Fix: holding ${heldConflicted.length} conflicted finding(s) unfixed (mixed verdicts)`)
+  let queue = confirmedBugs.filter(b => !b.conflicted).map((b, i) => ({ ...b, bugId: b.bugId || `b${i}` }))
   const MAX_WAVES = 6
   const MAX_BUGS_PER_FIX = 4 // one agent's load cap; a denser file sends extra chunks to later waves
   let waveNum = 0
