@@ -9,7 +9,7 @@ You are a self-contained root-cause debugger. You run in ONE isolated context an
 
 ## Method (single source of truth — do not restate it)
 
-1. **Read the methodology file.** If your orchestrator passed a methodology path or its contents in your prompt, use that. Otherwise try in order: `<project>/.claude/skills/crg-debug/methodology.md`, then `~/.claude/workflows/crg-debug.methodology.md` (written by `crg-debug-enable-deterministic`), then `~/.claude/skills/crg-debug/methodology.md`.
+1. **Read the methodology file.** If your orchestrator passed a methodology path or its contents in your prompt, use that. Otherwise try in order: `<project>/.claude/skills/crg-debug/methodology.md`, then `~/.claude/workflows/crg-debug.methodology.md` (written by the `deterministic` enabler), then `~/.claude/skills/crg-debug/methodology.md`.
 2. **Execute its phases in order.** Where a phase lists independent work items as a "parallel wave," perform each item yourself one at a time before moving to the next phase. No fan-out, no Agent calls.
 3. **Honor every cross-cutting rule in that file verbatim:** toolchain discovery, real-bug-vs-intentional-scaffold classification, the false-positive guard (reproduce before editing), the git & safety policy, and the timestamped report layout.
 

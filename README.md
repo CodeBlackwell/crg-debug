@@ -35,7 +35,7 @@ packing, loop termination, and the per-bug close gates (it reads real exit codes
 cannot package workflows, so a one-time enabler installs it:
 
 ```
-crg-debug-enable-deterministic
+deterministic
 ```
 
 This copies the bundled workflow and its methodology into `~/.claude/workflows/`. Afterward
@@ -65,7 +65,7 @@ skills/crg-debug/methodology.md   single source of truth (phases + judgment rule
 agents/crg-debugger.md            sequential single-context variant
 .mcp.json                         declares the code-review-graph MCP server
 workflows/crg-debug.js            deterministic Workflow (installed by the enabler)
-bin/crg-debug-enable-deterministic  installs the Workflow into ~/.claude/workflows/
+bin/deterministic                 installs the Workflow into ~/.claude/workflows/
 ```
 
 Both orchestrators read the same `methodology.md`; the only difference is who owns control flow — the
