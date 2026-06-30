@@ -1,7 +1,7 @@
 ---
 name: crg-debug
 description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Nothing is committed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
-argument-hint: "[repo path] [focus area/file/issue] [--detect-only] [--prose] [--model <name>]"
+argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--prose] [--model <name>]"
 user_invocable: true
 ---
 
@@ -25,8 +25,29 @@ skill's directory):
 - **repoRoot**: an explicit path or `--repo <path>` wins; else the current `git rev-parse --show-toplevel`.
   If cwd is not a git repo and no path was given, STOP and ask for the repo path.
 - **scope**: any non-flag text — the focus area, file, or issue. Empty = full-repo sweep.
-- **model**: `--model <name>` (e.g. `--model haiku`). Omit to inherit the session model.
+- **issue**: `--issue <ref>`, OR a GitHub issue auto-detected in the non-flag text — a full
+  `https://github.com/<owner>/<repo>/issues/<n>` URL, `<owner>/<repo>#<n>`, or a bare `#<n>`
+  (bare resolves against the repo's `origin` remote). See *Resolve the issue* below.
+- **model**: defaults to `haiku`. `--model <name>` overrides it (e.g. `--model opus`); `--model session` inherits the session model.
 - **fix**: `true` by default. `--detect-only` sets `fix=false` (read-only ledger, no edits).
+
+## Resolve the issue (only if an issue ref was given)
+
+Set `issueContext` (the issue body, fed to the sweep) and `issueRef` (short provenance):
+
+- **GitHub ref** → fetch it:
+  `gh issue view <n> [-R <owner>/<repo>] --json title,body,state,labels,url,comments`.
+  Assemble `issueContext` from title + state + labels + body (+ the most relevant comments),
+  trimmed to ~4 KB; set `issueRef` to `<owner>/<repo>#<n>` plus the URL. If `gh` fails (not
+  authed, issue/repo not found) **STOP and report the error** — do not silently fall back to a
+  full sweep.
+- **Non-GitHub `--issue` value** (no recognizable GitHub ref) → **paste fallback**: use the raw
+  text verbatim as `issueContext` and a short label as `issueRef`. No `gh` call. This covers
+  Jira/Linear/etc. by pasting the ticket text.
+- **No issue given** → leave `issueContext`/`issueRef` unset.
+
+When `issueContext` is set it is the focus: an empty `scope` is resolved from the issue; a given
+`scope` narrows while the issue describes the symptom.
 
 ## Route
 
@@ -34,16 +55,18 @@ skill's directory):
    Workflow (this instruction is the explicit opt-in):
 
    ```
-   Workflow({ name: 'crg-debug', args: { repoRoot, scope, model, fix } })
+   Workflow({ name: 'crg-debug', args: { repoRoot, scope, model, fix, issueContext, issueRef } })
    ```
 
-   Omit `model` when unspecified. It runs in the background; tell the user they can watch live
-   progress with `/workflows`.
+   Pass the resolved `model` (`haiku` unless overridden); pass `issueContext`/`issueRef` only when
+   an issue was given. It runs in the background; tell the user they can watch live progress with
+   `/workflows`.
 
 2. Otherwise (no workflow installed, or `--prose`) → **read `methodology.md` from this skill's
    directory and execute it as the main-loop orchestrator** — parallel `Agent` waves per its
-   *Execution mode* section, honoring every cross-cutting rule (TDD discipline, false-positive guard,
-   fail-safe-defaults lens, git & safety policy, report layout) verbatim.
+   *Execution mode* section (each `Agent` call on the resolved `model` — `haiku` unless overridden),
+   honoring every cross-cutting rule (TDD discipline, false-positive guard, fail-safe-defaults lens,
+   git & safety policy, report layout) verbatim.
 
 To upgrade prose → deterministic, run the bundled `crg-deterministic` command once.
 
