@@ -527,7 +527,7 @@ Toolchain (use the owning package's commands):
 ${tcLine()}
 
 For EACH bug above, run the TDD micro-cycle (mandatory, in order; full discipline in ${SKILL}):
-1. RED — write a test asserting the CORRECT behavior, run it with the narrowest path filter, confirm it FAILS for the right reason (the actual bug). If it passes before any edit, that bug is not reproduced: set its redObserved=false, do NOT edit source for it.
+1. RED — write a test asserting the bug's INTENDED CORRECT outcome (derived from its symptom/whyRepro: the misbehaving input must now yield the right output, and the reported error/symptom must STOP happening). Run it with the narrowest path filter; confirm it FAILS for the right reason (the actual bug). NEVER encode the symptom as expected — a test that asserts the current wrong output, or that the reported exception is raised (e.g. assert_raises on the very error the bug describes), codifies the bug and is INVALID. If your test passes before any edit, first check it is asserting the corrected behavior and not the present one; rewrite it if so. Only set redObserved=false (source left untouched) once a test that genuinely encodes the CORRECT behavior still passes — i.e. the bug truly is not present.
 2. GREEN — apply the MINIMAL fix to SOURCE (never a generated artifact: no dist/build/bundle/minified/lockfile), re-run, confirm it passes (its greenObserved=true).
 Open each test with a one-sentence comment naming the user-facing behavior it protects.
 Each bug's test must be ISOLATED to THAT bug: it must pass even while OTHER unfixed bugs remain (do not import a whole crashing module if a narrower import works; for compiled languages, build+run only that test). For each bug report testCommand: the exact, narrowest command that runs ONLY that bug's test (e.g. \`pytest path::test_x\`, or the gcc compile+run line) — the script re-runs each independently to confirm.
@@ -553,14 +553,24 @@ Apply the MINIMAL source fix for EVERY bug at once. Then write ONE test that exe
     { label: 'fix:coupled', phase: 'Fix', schema: FIX_SCHEMA, model },
   )
 
-const gateAgent = scopeNote =>
-  agent(
-    `Run the verification gate for the repo at ${repoRoot}. Do NOT edit any file. For each package in the toolchain below, run its typecheck command and its test command${scopeNote ? ` (${scopeNote})` : ''}. Report the REAL exit code and output tail for each command — do not interpret pass/fail.
+// Verification gate, scoped to the BLAST RADIUS of the changed files via the graph
+// — never the whole suite, which on a large repo can take many minutes and hang the
+// run. Selects only the tests that exercise the touched files and their dependents.
+const gateAgent = touched => {
+  const files = [...new Set((touched || []).filter(Boolean))]
+  const roots = files.length ? files.map(f => `- ${f}`).join('\n') : '(none recorded)'
+  return agent(
+    `Run the verification gate for the repo at ${repoRoot}. Do NOT edit any file.
+1. TYPECHECK each package in the toolchain below.
+2. TESTS — run ONLY the blast radius of the changed files, NOT the whole suite (it can be huge and hang). Compute the radius with the graph: for each changed file call get_impact_radius_tool and query_graph_tool(pattern="tests_for") (plus get_affected_flows_tool) to collect the tests that exercise those files AND their dependents, then run just those test paths/nodes with the package runner (e.g. \`pytest <paths or -k>\`, \`vitest run <paths>\`). If the graph finds no covering test for a changed file, run its nearest co-located/sibling test; only if none exists at all, fall back to that one package's default test command. The command strings you report should show the scoped test paths.
+Changed files (blast-radius roots):
+${roots}
 Toolchain:
 ${tcLine()}
-Return one results[] row per command actually run: {command, exitCode, stdout, stderr}.`,
+Report the REAL exit code and output tail for every command actually run — do not interpret pass/fail. Return one results[] row per command: {command, exitCode, stdout, stderr}.`,
     { label: 'gate', phase: 'Fix', schema: GATE_SCHEMA, model },
   )
+}
 
 // Per-bug close gate: independently re-run ONLY one bug's own test. The SCRIPT
 // trusts the exit code, never the fix agent's "green" claim — and a bug closes on
@@ -595,6 +605,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   const fixedBugs = []
   const unfixedBugs = []
   const waveLog = []
+  const touchedFiles = new Set() // every source/test file edited across waves — the final gate's blast-radius roots
   // Conflicting verdicts → keep unfixed, log both (methodology Phase 2). They stay
   // in confirmedBugs for the report but never enter the fix queue.
   const heldConflicted = confirmedBugs.filter(b => b.conflicted)
@@ -628,6 +639,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
 
     const results = (await parallel(groups.map(([file, bugs]) => () =>
       fixAgent(file, bugs).then(r => ({ bugs, r }))))).filter(Boolean)
+    for (const { r } of results) for (const f of (r && r.filesTouched) || []) touchedFiles.add(f)
 
     // Flatten the per-bug rows, then run a per-bug close gate for each claimed fix.
     // The exit code is the script's source of truth; a bug closes on ITS own test, not
@@ -690,8 +702,9 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     const files = [...new Set(stillOpen.map(bugFile))]
     log(`Fix: ${stillOpen.length} coupled bug(s) open after ${waveNum} waves — one holistic prose attempt over ${files.length} file(s)`)
     const pr = await fixAgentCoupled(files, stillOpen)
+    for (const f of (pr && pr.filesTouched) || []) touchedFiles.add(f)
     const cmd = pr && (pr.fixes || []).map(f => f.testCommand).find(Boolean)
-    const g = cmd ? await bugGateAgent({ file: files[0], bugId: 'coupled' }, cmd) : await gateAgent('full suite')
+    const g = cmd ? await bugGateAgent({ file: files[0], bugId: 'coupled' }, cmd) : await gateAgent(files)
     const green = !!(g && (g.results || []).length && g.results.every(x => x.exitCode === 0))
     for (const b of stillOpen) {
       if (green) fixedBugs.push({ ...b, wave: 'prose-fallback' })
@@ -700,10 +713,11 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     log(`Fix: prose fallback ${green ? 'closed' : 'could not close'} ${stillOpen.length} coupled bug(s)`)
   }
 
-  // Final full gate over the cumulative diff — the regression detector: with bugs
-  // closed per-test, this is the one place the whole suite must be green together,
-  // surfacing any fix that broke a sibling. RED here flags a regression, not a miss.
-  const finalGate = await gateAgent('full suite, all touched packages')
+  // Final gate over the cumulative diff — the regression detector: with bugs closed
+  // per-test, this re-runs the blast radius of EVERY touched file together (via the
+  // graph), surfacing any fix that broke a sibling. Scoped to the impact radius, not
+  // the whole suite, so it can't hang on a huge repo. RED here flags a regression.
+  const finalGate = await gateAgent([...touchedFiles])
   const finalResults = (finalGate && finalGate.results) || []
   const finalClean = finalResults.length > 0 && finalResults.every(r => r.exitCode === 0)
   fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, finalGate: { clean: finalClean, results: finalResults } }
