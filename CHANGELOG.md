@@ -4,6 +4,20 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-30
+
+### Added
+- **`--from-ledger <path>`** — resume from a prior read-only run's `.crg-debug/ledger.json` and skip
+  straight to Phase 4 fix waves over the already-confirmed bugs. Enables a serialized
+  detect → review → fix hand-off (run `--detect-only`, review the ledger, then fix it). Implies
+  `fix=true`.
+
+### Changed
+- The deterministic workflow now resolves `methodology.md`'s path at runtime via
+  `args.methodologyPath` (passed by the `/crg-debug` skill) instead of having it baked in by `sed`
+  at install time — `crg-deterministic` now just copies `workflows/crg-debug.js` unmodified.
+- README restyled with badges and section emojis (no content changes).
+
 ## [0.3.0] - 2026-06-30
 
 ### Added
@@ -54,6 +68,7 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify, and fix
   confirmed bugs in TDD waves over file-disjoint sets. Nothing is committed.
 
+[0.4.0]: https://github.com/CodeBlackwell/crg-debug/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CodeBlackwell/crg-debug/releases/tag/v0.3.0
 [0.2.1]: https://github.com/CodeBlackwell/crg-debug/releases/tag/v0.2.1
 [0.2.0]: https://github.com/CodeBlackwell/crg-debug/releases/tag/v0.2.0
