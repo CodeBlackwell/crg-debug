@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Upgrade /crg-debug from prose orchestration to the deterministic JS Workflow.
 # Plugins cannot package workflows, so this copies the bundled workflow + its
-# methodology into ~/.claude/workflows/ and wires the methodology path the
-# workflow's agents read. Idempotent; safe to re-run after a plugin update.
+# methodology into ~/.claude/workflows/. The methodology path is resolved at
+# runtime — the /crg-debug skill passes it as args.methodologyPath, no baking.
+# Idempotent; safe to re-run after a plugin update.
 set -euo pipefail
 
 plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,8 +13,7 @@ methodology="$dest/crg-debug.methodology.md"
 mkdir -p "$dest"
 cp "$plugin_root/skills/crg-debug/methodology.md" "$methodology"
 cp "$plugin_root/lib/issue-ref.mjs" "$dest/crg-debug.issue-ref.mjs"
-sed "s#__CRG_DEBUG_METHODOLOGY_PATH__#$methodology#" \
-  "$plugin_root/workflows/crg-debug.js" > "$dest/crg-debug.js"
+cp "$plugin_root/workflows/crg-debug.js" "$dest/crg-debug.js"
 
 echo "Installed deterministic crg-debug workflow:"
 echo "  $dest/crg-debug.js"

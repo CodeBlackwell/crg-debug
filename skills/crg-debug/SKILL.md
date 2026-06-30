@@ -1,7 +1,7 @@
 ---
 name: crg-debug
 description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Nothing is committed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
-argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--prose] [--model <name>]"
+argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--from-ledger <path>] [--prose] [--model <name>]"
 user_invocable: true
 ---
 
@@ -30,6 +30,8 @@ skill's directory):
   (bare resolves against the repo's `origin` remote). See *Resolve the issue* below.
 - **model**: defaults to `haiku`. `--model <name>` overrides it (e.g. `--model opus`); `--model session` inherits the session model.
 - **fix**: `true` by default. `--detect-only` sets `fix=false` (read-only ledger, no edits).
+- **fromLedger**: `--from-ledger <path>` ingests a prior run's `.crg-debug/ledger.json` and skips
+  Discover/Verify — Phase 4 fixes the already-confirmed bugs. Implies `fix=true`; pass the absolute path.
 
 ## Resolve the issue (only if an issue ref was given)
 
@@ -63,12 +65,13 @@ When `issueContext` is set it is the focus: an empty `scope` is resolved from th
    Workflow (this instruction is the explicit opt-in):
 
    ```
-   Workflow({ name: 'crg-debug', args: { repoRoot, scope, model, fix, issueContext, issueRef } })
+   Workflow({ name: 'crg-debug', args: { repoRoot, scope, model, fix, issueContext, issueRef, methodologyPath, fromLedger } })
    ```
 
    Pass the resolved `model` (`haiku` unless overridden); pass `issueContext`/`issueRef` only when
-   an issue was given. It runs in the background; tell the user they can watch live progress with
-   `/workflows`.
+   an issue was given; set `methodologyPath` to the installed methodology's absolute path
+   (`$HOME/.claude/workflows/crg-debug.methodology.md`) so the workflow's agents can read it. It
+   runs in the background; tell the user they can watch live progress with `/workflows`.
 
 2. Otherwise (no workflow installed, or `--prose`) → **read `methodology.md` from this skill's
    directory and execute it as the main-loop orchestrator** — parallel `Agent` waves per its
