@@ -11,10 +11,12 @@ methodology="$dest/crg-debug.methodology.md"
 
 mkdir -p "$dest"
 cp "$plugin_root/skills/crg-debug/methodology.md" "$methodology"
+cp "$plugin_root/lib/issue-ref.mjs" "$dest/crg-debug.issue-ref.mjs"
 sed "s#__CRG_DEBUG_METHODOLOGY_PATH__#$methodology#" \
   "$plugin_root/workflows/crg-debug.js" > "$dest/crg-debug.js"
 
 echo "Installed deterministic crg-debug workflow:"
 echo "  $dest/crg-debug.js"
 echo "  $methodology"
+echo "  $dest/crg-debug.issue-ref.mjs"
 echo "Run /crg-debug — it now prefers the Workflow (use --prose to force prose mode)."

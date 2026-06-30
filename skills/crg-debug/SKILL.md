@@ -33,18 +33,26 @@ skill's directory):
 
 ## Resolve the issue (only if an issue ref was given)
 
-Set `issueContext` (the issue body, fed to the sweep) and `issueRef` (short provenance):
+Classify the input with the bundled parser (installed by the enabler), then set `issueContext`
+(issue body → fed to the sweep) and `issueRef` (short provenance):
 
-- **GitHub ref** → fetch it:
-  `gh issue view <n> [-R <owner>/<repo>] --json title,body,state,labels,url,comments`.
-  Assemble `issueContext` from title + state + labels + body (+ the most relevant comments),
-  trimmed to ~4 KB; set `issueRef` to `<owner>/<repo>#<n>` plus the URL. If `gh` fails (not
-  authed, issue/repo not found) **STOP and report the error** — do not silently fall back to a
-  full sweep.
-- **Non-GitHub `--issue` value** (no recognizable GitHub ref) → **paste fallback**: use the raw
-  text verbatim as `issueContext` and a short label as `issueRef`. No `gh` call. This covers
-  Jira/Linear/etc. by pasting the ticket text.
-- **No issue given** → leave `issueContext`/`issueRef` unset.
+```
+node ~/.claude/workflows/crg-debug.issue-ref.mjs "<input>" "$(git -C <repoRoot> remote get-url origin 2>/dev/null)"
+```
+
+It prints JSON `{kind, ref, owner, repo, number, url}`. (If that file is absent — prose-only
+install — classify by the same rules: `#n` / `owner/repo#n` / an `…/issues/<n>` URL → GitHub,
+else paste.)
+
+- **kind `github`** → fetch it:
+  `gh issue view <number> -R <owner>/<repo> --json title,body,state,labels,url,comments`
+  (omit `-R` when `owner`/`repo` are absent — `gh` resolves against the repo's origin). Assemble
+  `issueContext` from title + state + labels + body (+ the most relevant comments), trimmed to
+  ~4 KB; set `issueRef` to the parser's `ref` (+ `url`). If `gh` fails (not authed, issue/repo
+  not found) **STOP and report the error** — do not silently fall back to a full sweep.
+- **kind `paste`** → use the parser's `text` verbatim as `issueContext`, a short label as
+  `issueRef`. No `gh` call. Covers Jira/Linear/etc. by pasting the ticket text.
+- **kind `empty`** → no issue; leave `issueContext`/`issueRef` unset.
 
 When `issueContext` is set it is the focus: an empty `scope` is resolved from the issue; a given
 `scope` narrows while the issue describes the symptom.
