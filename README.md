@@ -1,23 +1,28 @@
-# crg-debug
+# 🐛 crg-debug
 
-Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).
+**Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
-`/crg-debug` builds a code knowledge graph, fans out concern-disjoint discovery agents over it,
-adversarially verifies every candidate, then fixes confirmed bugs in test-first waves over
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![version](https://img.shields.io/badge/version-0.3.0-informational)](CHANGELOG.md)
+
+`/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
+adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
 file-disjoint sets. It applies fixes to the working tree and **never commits**.
 
-## Requirements
+---
 
-- **Claude Code** (provides the skill/agent/MCP runtime).
+## ⚙️ Requirements
+
+- **Claude Code** — provides the skill/agent/MCP runtime.
 - **[`code-review-graph-codeblackwell`](https://pypi.org/project/code-review-graph-codeblackwell/)** —
   the graph engine, exposed to Claude as an MCP server. This plugin declares it in `.mcp.json` as
   `uvx --from code-review-graph-codeblackwell code-review-graph serve`, so you need
-  [`uv`](https://docs.astral.sh/uv/) on your PATH. It is a community fork of
+  [`uv`](https://docs.astral.sh/uv/) on your `PATH`. It is a community fork of
   [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) (Tirth Kanani, MIT),
   maintained so fixes ship without waiting on upstream review. The CLI command and MCP tools are still
   named `code-review-graph`, so the methodology and tool references are unchanged.
 
-## Install
+## 📦 Install
 
 ```
 /plugin marketplace add CodeBlackwell/crg-debug
@@ -25,9 +30,9 @@ file-disjoint sets. It applies fixes to the working tree and **never commits**.
 ```
 
 That gives you `/crg-debug` in **prose mode**: Claude's main loop orchestrates the methodology,
-dispatching parallel `Agent` waves per phase. Works on every model tier.
+dispatching parallel `Agent` waves per phase. Works on every model tier. ✅
 
-### Optional: deterministic mode
+### 🎛️ Optional: deterministic mode
 
 Prose orchestration relies on the model following the protocol. For the strongest guarantees, upgrade
 to the **deterministic JS Workflow**, where the script — not the model — owns phase order, wave
@@ -40,29 +45,30 @@ crg-deterministic
 
 This copies the bundled workflow and its methodology into `~/.claude/workflows/`. Afterward
 `/crg-debug` automatically prefers the Workflow; pass `--prose` to force prose mode. Watch a live run
-with `/workflows`.
+with `/workflows`. 📡
 
-## Choosing a mode
+## 🧭 Choosing a mode
 
 Both modes run the same `methodology.md`; they differ in **who enforces it**. In prose mode the model
 follows the protocol, so compliance tracks model strength. In deterministic mode the script owns phase
 order, verification, and the per-bug close gates, so the floor holds on any model.
 
-| | Prose | Deterministic |
+| | 📝 Prose | 🔒 Deterministic |
 |---|---|---|
 | Enforcement | advisory — model may skip phases | in code — binds on any model |
 | Cost / latency | one context, fast | many parallel agents, minutes |
 | Coverage | one attention budget | parallel sweep, scales past one context |
 | Best for | strong models; small or tightly-coupled code | weak models; large multi-file repos; auditable runs |
 
-Rule of thumb: **prose gives you the model's native ceiling cheaply; deterministic buys a floor on a
-weak model at a token and wall-clock cost.** Eval runs bear this out: on one repo a prose pass went
-from 0.33 precision on a weak model to 1.00 on a strong one, while the deterministic Workflow held the
-weak model at a usable floor regardless of tier. Shape matters too — breadth (many independent bugs
-across files) favors the Workflow's parallel discovery; depth (a few interacting bugs in one place) can
-favor prose's single-context reasoning.
+> **Rule of thumb:** prose gives you the model's native ceiling cheaply; deterministic buys a floor on
+> a weak model at a token and wall-clock cost.
 
-## Usage
+Eval runs bear this out: on one repo a prose pass went from 0.33 precision on a weak model to 1.00 on a
+strong one, while the deterministic Workflow held the weak model at a usable floor regardless of tier.
+Shape matters too — breadth (many independent bugs across files) favors the Workflow's parallel
+discovery; depth (a few interacting bugs in one place) can favor prose's single-context reasoning.
+
+## 🚀 Usage
 
 ```
 /crg-debug                       # full-repo sweep, detect + fix
@@ -72,10 +78,10 @@ favor prose's single-context reasoning.
 /crg-debug --prose               # force prose orchestration even if the Workflow is installed
 ```
 
-The run ends with a severity-ranked bug ledger and a timestamped report at the repo root. Nothing is
-committed — review the diff, then ask to commit (named files only) or run `/cpdv`.
+The run ends with a severity-ranked bug ledger 📋 and a timestamped report at the repo root. Nothing
+is committed — review the diff, then ask to commit (named files only) or run `/cpdv`.
 
-## Layout
+## 🗂️ Layout
 
 ```
 .claude-plugin/plugin.json        plugin manifest
@@ -91,6 +97,6 @@ bin/crg-deterministic             installs the Workflow into ~/.claude/workflows
 Both orchestrators read the same `methodology.md`; the only difference is who owns control flow — the
 model (prose) or the script (deterministic).
 
-## License
+## 📄 License
 
 MIT — see [LICENSE](LICENSE). Depends on code-review-graph (MIT, © Tirth Kanani).
