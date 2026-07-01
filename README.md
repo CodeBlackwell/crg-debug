@@ -81,6 +81,26 @@ discovery; depth (a few interacting bugs in one place) can favor prose's single-
 The run ends with a severity-ranked bug ledger 📋 and a timestamped report at the repo root. Nothing
 is committed — review the diff, then ask to commit (named files only) or run `/cpdv`.
 
+### 🌾 `/crg-farm` — the bug-farming loop
+
+`/crg-farm` wraps `/crg-debug` in a repeatable loop that sources real open bugs, triages them
+cheaply, escalates the model only where repair struggles, and ships draft PRs — pausing for your
+approval at every boundary that matters.
+
+```
+/crg-farm                        # source + triage + fix bugs in this repo, interactive
+/crg-farm --issue owner/repo#123 # farm a specific reported issue
+/crg-farm --auto                 # auto-pass soft gates; still HARD-stops at commit + PR submit
+/crg-farm --max-tier sonnet      # cap model escalation below opus
+```
+
+RECON (`/xplore`) → **GATE-RECON** → triage (`--detect-only`) → **GATE-TRIAGE** → fix
+(`--from-ledger`, escalating haiku→sonnet→opus over only the unfixed bugs) → **GATE-ESCALATE** →
+**GATE-DIFF** → PR-prep → **GATE-SUBMIT**. `GATE-DIFF` (working-tree→commit) and `GATE-SUBMIT`
+(fork→upstream) always block for an explicit human "yes" — `--auto` never bypasses them. Every run,
+candidate, gate decision, fix attempt, and PR is recorded to `~/.claude/crg-farm/history.jsonl` for
+cross-run dedup and audit.
+
 ## 🗂️ Layout
 
 ```
@@ -88,10 +108,14 @@ is committed — review the diff, then ask to commit (named files only) or run `
 .claude-plugin/marketplace.json   self-hosted marketplace catalog
 skills/crg-debug/SKILL.md         /crg-debug entry — routes prose vs deterministic
 skills/crg-debug/methodology.md   single source of truth (phases + judgment rules)
+skills/crg-farm/SKILL.md          /crg-farm entry — the bug-farming loop orchestrator
+skills/crg-farm/methodology.md    Named-Gate Protocol + escalation + PR-prep + farm-DB shapes
 agents/crg-debugger.md            sequential single-context variant
+lib/ledger-slice.mjs              narrow a ledger to a bug subset (triage + escalation)
+lib/farm-db.mjs                   global append-only farm history (JSONL)
 .mcp.json                         declares the code-review-graph MCP server
 workflows/crg-debug.js            deterministic Workflow (installed by the enabler)
-bin/crg-deterministic             installs the Workflow into ~/.claude/workflows/
+bin/crg-deterministic             installs the Workflow + helpers into ~/.claude/workflows/
 ```
 
 Both orchestrators read the same `methodology.md`; the only difference is who owns control flow — the

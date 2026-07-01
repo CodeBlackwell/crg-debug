@@ -4,6 +4,44 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-06-30
+
+### Added
+- **`/crg-farm` — a bug-farming loop over crg-debug.** A `user_invocable` main-loop orchestrator
+  that sources real open bugs, triages them cheaply, escalates model capacity only where repair
+  struggles, and ships draft PRs — with formal human approval at every consequential boundary. It
+  *calls* crg-debug as a primitive (zero Workflow changes). Stages: RECON (`/xplore`) → dedup →
+  TRIAGE (`--detect-only`) → FIX (`--from-ledger`, escalating haiku→sonnet→opus) → PR-prep. See
+  `skills/crg-farm/`.
+- **Two-pass duplicate-fix check in RECON** — before any triage spend, each candidate is verified
+  as genuinely open AND not already being fixed: pass 1 dedups against our own farm history; pass 2
+  checks the upstream repo (`gh issue view` / `gh search prs` / `gh pr list`) and classifies each
+  candidate fresh / in-flight / already-fixed, dropping the latter two so the farm never produces a
+  duplicate PR for a bug someone else already has in flight.
+- **Named-Gate Protocol** — five repeatable approval gates (RECON, TRIAGE, ESCALATE, DIFF, SUBMIT)
+  via `AskUserQuestion`. `GATE-DIFF` (working-tree→commit) and `GATE-SUBMIT` (fork→upstream) are
+  HARD stops that `--auto` never bypasses; soft gates auto-pass under `--auto`.
+- **Orchestrator-driven model escalation** — reads the Workflow's `ret.fix` return, narrows the
+  ledger to just the unfixed bugs (`lib/ledger-slice.mjs`), and re-invokes `--from-ledger` at the
+  next tier, so a stronger model only ever re-runs the hard bugs. Branches on failure channel
+  (RED-not-observed vs a regressing final gate).
+- **Farm database** — `lib/farm-db.mjs`, a global append-only JSONL at
+  `~/.claude/crg-farm/history.jsonl` recording every run, candidate, gate decision, fix attempt,
+  and PR across all repos. Enables cross-run candidate dedup (never re-work a shipped bug) and a
+  full audit trail. `CRG_FARM_DB` overrides the path.
+- `lib/ledger-slice.mjs` + `lib/farm-db.mjs` — standalone importable + CLI helpers (mirroring
+  `issue-ref.mjs`), each with a zero-dependency `node --test` suite. Installed next to the workflow
+  by the `crg-deterministic` enabler.
+
+### Changed
+- **Hardened the TDD RED step** (methodology + fix-agent prompt): a test that asserts the current
+  buggy output or expects the reported exception (`assert_raises` on the very error) is INVALID —
+  it codifies the bug and falsely "passes" RED. This is the guard the numpy einsum experiment
+  showed was needed (the fix agent had degenerated to asserting the symptom).
+- **Final gate narrows to the CRG blast radius** of touched files (impact radius + `tests_for` +
+  affected flows) instead of running the whole suite — a fix run can no longer hang polling a giant
+  test suite while still catching cross-file regressions.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
