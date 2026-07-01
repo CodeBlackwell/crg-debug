@@ -4,6 +4,36 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-07-01
+
+### Added
+- **Per-repo buildability provisioning for `/crg-farm` (`--env`, GATE-BUILDABILITY).** crg-debug
+  gains an `env` mode: `--env container` (the harness default) provisions a **dedicated, cached
+  Docker environment for each candidate repo** before TRIAGE — a slim base image for its stack,
+  `apt`-hand-installed system deps (installed iteratively: build, see what's missing, install,
+  retry), language deps in a persistent named volume, source bind-mounted, and every toolchain
+  command wrapped to run inside it. The image is **fingerprinted by the repo's manifests/lockfiles
+  and reused as-is unless deps change**, so an env is never rebuilt needlessly (cost is once per
+  repo, not once per run). `--env none` keeps the prior host-as-is behavior and stays the standalone
+  `/crg-debug` default, so plain `/crg-debug` is unchanged.
+- **Baseline classification: environment vs. code.** Every baseline build/typecheck failure is
+  tagged `code` (a genuine source defect — seeded as a bug, as before) or `env` (a missing
+  tool/dep/system library, a build not applicable to the project, or Docker unavailable — NOT a
+  bug). **Any residual `env` failure ⇒ the candidate is `unfarmable`:** crg-debug returns early and
+  the `--auto-bypass` harness hands it off cleanly (no fix, no PR, no invented bug) instead of
+  climbing tiers against an unbuildable tree. This fixes the failure class where an un-provisioned
+  environment (e.g. `uv build` on a repo that was never a library) was mistaken for a code bug and
+  produced a rejected PR. See `crg-debug.methodology.md` §Environment provisioning & baseline
+  classification and `skills/crg-farm/methodology.md` §Environment provisioning.
+
+### Tested
+- New `test/buildability.test.mjs` runs the **real** `crg-debug.js` control flow with stubbed
+  runtime globals, asserting env-kind failures route to `unfarmable` (both `container` and `none`
+  modes) while code-kind failures flow into discovery. New `test/live-provision.test.mjs` exercises
+  the actual Docker recipe end-to-end on a fixture repo — fingerprint-labeled image build, deps in a
+  named volume, green containerized baseline, fingerprint reuse, and the host-edit→container-visible
+  loop — and self-skips when the Docker daemon is down.
+
 ## [0.8.0] - 2026-07-01
 
 ### Added

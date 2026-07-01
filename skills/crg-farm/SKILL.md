@@ -43,7 +43,7 @@ also passed. When the harness runs, it replaces Steps 1-4 entirely with one call
 
 ```
 Workflow({ scriptPath: '$HOME/.claude/workflows/crg-debug.farm-bypass.js',
-  args: { direction, query, repo, issueRef, maxTier,
+  args: { direction, query, repo, issueRef, maxTier, env,
           methodologyPath: '$HOME/.claude/workflows/crg-debug.farm-methodology.md',
           crgDebugPath: '$HOME/.claude/workflows/crg-debug.js',
           farmDbPath: '$HOME/.claude/workflows/crg-debug.farm-db.mjs',
@@ -76,6 +76,16 @@ every gate below marked "Under `--auto-bypass`" honored the same way.
 - **startTier**: `--model <haiku|sonnet|opus>` sets the FIRST fix tier (default: the complexity
   score's recommendation at GATE-TRIAGE, falling back to `haiku`).
 - **maxTier**: `--max-tier` caps escalation (default `opus`).
+- **env**: `--env <none|container>` sets how each candidate's repo is made buildable before TRIAGE
+  (default **`container`** under the harness — the farm's clone cache is disposable). `container`
+  provisions a **dedicated, cached Docker env per repo**: a slim base image, hand-installed system
+  deps, language deps in a persistent named volume, source bind-mounted, and every toolchain command
+  run inside it. The image is fingerprinted by the repo's manifests and reused as-is unless deps
+  change — an env is never rebuilt needlessly. A repo the enabled mode can't make buildable is
+  **unfarmable**: it hands off cleanly (no fix, no PR, no false bug) instead of being mistaken for a
+  code defect. `none` runs the baseline against the host as-is (no Docker). Requires Docker for
+  `container`; if the daemon is down every candidate falls through as unfarmable. See
+  `methodology.md` §Environment provisioning.
 - **auto**: `--auto` auto-passes SOFT gates with their recommended default (logged `auto:true`).
   `GATE-DIFF` and `GATE-SUBMIT` still block — always.
 - **autoBypass**: `--auto-bypass` is a **separate flag from `--auto`** — never set implicitly, never

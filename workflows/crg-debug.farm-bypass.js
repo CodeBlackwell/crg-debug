@@ -6,7 +6,7 @@ export const meta = {
     'Requires args {direction: "themed"|"wildcard"|"scoped", query?, repo?, issueRef?, maxTier?, methodologyPath, crgDebugPath, farmDbPath, reposRoot, farmRunId}. Invoke ONLY when the user has explicitly passed --auto-bypass to /crg-farm and this file is installed (the crg-deterministic enabler copies it alongside crg-debug.js). Never invoke for the default, gated /crg-farm flow — that one needs AskUserQuestion and stays in the main loop.',
   phases: [
     { title: 'Recon', detail: 'gh search/issue-list + two-pass dedup + rank, capped to top 5' },
-    { title: 'Triage', detail: 'clone/sync + crg-debug --detect-only per candidate repo, then a security classification pass that excludes and hands off any security-sensitive bug' },
+    { title: 'Triage', detail: 'clone/sync + provision a dedicated cached container env + crg-debug --detect-only per candidate repo (unbuildable envs hand off as unfarmable), then a security classification pass that excludes and hands off any security-sensitive bug' },
     { title: 'Fix', detail: 'crg-debug --from-ledger with escalation; a regression climbs one tier, never a same-tier retry' },
     { title: 'PR', detail: 'auto commit, push, open as draft — stops there, GATE-SUBMIT stays human' },
   ],
@@ -38,6 +38,9 @@ const crgDebugPath = capText(a && a.crgDebugPath, 1000)
 const farmDbPath = capText(a && a.farmDbPath, 1000)
 const reposRoot = capText(a && a.reposRoot, 1000)
 const farmRunId = capText(a && a.farmRunId, 200) || 'auto-bypass-run'
+// The farm's clone cache is disposable, so it always provisions a dedicated, cached per-repo
+// container env (hand-installed system deps, language deps in a named volume, reused across runs).
+const env = ['none', 'container'].includes(a && a.env) ? a.env : 'container'
 
 if (!['themed', 'wildcard', 'scoped'].includes(direction)) {
   throw new Error('crg-farm-bypass requires args.direction: "themed" | "wildcard" | "scoped"')
@@ -51,7 +54,7 @@ for (const [k, v] of Object.entries({ methodologyPath, crgDebugPath, farmDbPath,
 
 const CANDIDATE_CAP = 5
 
-log(`crg-farm --auto-bypass (harness): direction=${direction} maxTier=${maxTier} farmRunId=${farmRunId}`)
+log(`crg-farm --auto-bypass (harness): direction=${direction} maxTier=${maxTier} env=${env} farmRunId=${farmRunId}`)
 
 // ---- Phase 1: RECON + dedup + rank ---------------------------------------------
 phase('Recon')
@@ -165,8 +168,13 @@ const settled = await pipeline(
     }
     const triage = await workflow(
       { scriptPath: crgDebugPath },
-      { repoRoot: clone.repoRoot, issueContext: candidate.title, issueRef: candidate.issueRef, model: 'haiku', fix: false, methodologyPath }
+      { repoRoot: clone.repoRoot, issueContext: candidate.title, issueRef: candidate.issueRef, model: 'haiku', fix: false, methodologyPath, env }
     )
+    // Env couldn't be built at this rung — crg-debug bailed rather than manufacture false bugs.
+    // Clean hand-off, NOT an escalation: no tier climb closes an unbuildable environment.
+    if (triage && triage.status === 'unfarmable') {
+      return { candidate, repoRoot: clone.repoRoot, outcome: 'unfarmable', reason: triage.reason || `environment not buildable (env=${env})` }
+    }
     if (!triage || !(triage.confirmedBugs || []).length) {
       return { candidate, repoRoot: clone.repoRoot, outcome: 'no-bugs-confirmed' }
     }
@@ -305,10 +313,12 @@ Return the PR URL and the branch name.`,
 const results = settled.filter(Boolean)
 const shipped = results.filter(r => r.outcome === 'shipped')
 const handedOff = results.filter(r => r.outcome !== 'shipped')
+const unfarmable = results.filter(r => r.outcome === 'unfarmable')
 
 log(
-  `Auto-bypass complete: ${shipped.length} PR(s) opened, ${handedOff.length} handed to human, ` +
-    `${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
+  `Auto-bypass complete: ${shipped.length} PR(s) opened, ${handedOff.length} handed off` +
+    (unfarmable.length ? ` (${unfarmable.length} unfarmable — env not buildable)` : '') +
+    `, ${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
 )
 
 return {

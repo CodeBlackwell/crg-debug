@@ -3,7 +3,7 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.8.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
@@ -103,6 +103,8 @@ depends on the direction you give it:
 /crg-farm --auto                   # auto-pass soft gates; still HARD-stops at commit + PR submit
 /crg-farm --auto-bypass            # fully unattended through commit + a draft PR, top-5 candidates; GATE-SUBMIT stays human
 /crg-farm --max-tier sonnet        # cap model escalation below opus
+/crg-farm --env container          # provision a dedicated cached Docker env per repo (default under the harness)
+/crg-farm --env none               # skip provisioning; baseline against the host as-is (no Docker)
 ```
 
 RECON (scoped `/xplore`, or a themed/wildcard `gh search issues`) → dedup → rank candidates by
@@ -126,6 +128,18 @@ and handed to a human instead of being committed. Prefers a code-enforced harnes
 (`workflows/crg-debug.farm-bypass.js`, installed by `crg-deterministic`) when available — `--prose`
 forces the prompt-driven path instead. See `skills/crg-farm/methodology.md` §Auto-bypass mode
 before using it.
+
+**Buildability (`--env`).** Before triaging a candidate, the harness makes its repo genuinely
+buildable so the baseline reflects the *code*, not a missing toolchain. `--env container` (the
+default) provisions a **dedicated, cached Docker environment per repo** — a slim base image,
+hand-installed system deps, language deps in a persistent named volume, source bind-mounted, and
+every build/typecheck/test command run inside it. The image is fingerprinted by the repo's
+manifests and reused as-is unless deps change, so an env is built once per repo, not once per run.
+Each baseline failure is then classified **`code`** (a real source defect → seeded as a bug) or
+**`env`** (a missing tool/dep/system library, or a build not applicable to the project); a repo that
+can't be made buildable is **`unfarmable`** and hands off cleanly rather than being mistaken for a
+bug. `--env none` (the standalone `/crg-debug` default) skips provisioning entirely. See
+`skills/crg-farm/methodology.md` §Environment provisioning.
 
 A bug flagged security-sensitive (injection, auth bypass, secrets exposure, SSRF/traversal,
 insecure deserialization, crypto misuse, memory-safety) never enters that pipeline at all —

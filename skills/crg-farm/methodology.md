@@ -168,6 +168,32 @@ root, mirroring `CRG_FARM_DB`):
 
 ---
 
+## Environment provisioning (`--env`, GATE-BUILDABILITY)
+
+A farm PR was once rejected because `uv build` failing on a repo that was never a library got
+"fixed" as a bug — an **un-provisioned environment misread as a code defect**. `--env` closes that
+gap: it makes each candidate genuinely buildable before TRIAGE, and classifies a failure that
+survives provisioning as *environment*, not *code*.
+
+- **`--env container` (default under the harness)** — right after the clone/sync above, crg-debug
+  provisions a **dedicated, cached Docker env for that repo** (`crg-env-<owner>-<repo>`): a slim base
+  image for its stack, `apt`-installed system deps (hand-installed iteratively — build, see what's
+  missing, install, retry), language deps in a persistent named volume (`crg-deps-<owner>-<repo>`),
+  source bind-mounted, and every toolchain command wrapped to run inside it. The image is
+  **fingerprinted by the repo's manifests + lockfiles** and reused untouched unless deps change — an
+  env is never rebuilt needlessly, so the cost is paid once per repo, not once per run. Full recipe
+  in `crg-debug.methodology.md` §Environment provisioning & baseline classification.
+- **`--env none`** — baseline runs against the host as-is (no Docker). Standalone `/crg-debug`'s
+  default; available to the farm when you don't want containers.
+- **GATE-BUILDABILITY (baseline classification).** crg-debug tags each baseline build/typecheck
+  failure `code` (a real source defect — seeded as a bug) or `env` (missing tool/dep/system lib the
+  mode couldn't supply, a build not applicable to the project, Docker down). **Any residual `env`
+  failure ⇒ the candidate is `unfarmable`:** the harness hands it off cleanly (no fix, no PR, no
+  invented bug) rather than climbing tiers against an unbuildable tree. Under `--auto-bypass` this is
+  a hand-off outcome alongside `handed-to-human`, reported in the run summary.
+
+---
+
 ## Named-Gate Protocol
 
 Every gate is a fixed `AskUserQuestion` (question + `header ≤12 chars` + 2–4 labeled options,
