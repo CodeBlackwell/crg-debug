@@ -3,7 +3,7 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.5.1-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.6.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
@@ -104,7 +104,8 @@ depends on the direction you give it:
 /crg-farm --max-tier sonnet        # cap model escalation below opus
 ```
 
-RECON (scoped `/xplore`, or a themed/wildcard `gh search issues`) → **GATE-RECON** → triage
+RECON (scoped `/xplore`, or a themed/wildcard `gh search issues`) → dedup → rank candidates by
+impact × review-likelihood (stars, issue severity, merge cadence) → **GATE-RECON** → triage
 (`--detect-only`) → **GATE-TRIAGE** → fix (`--from-ledger`, escalating haiku→sonnet→opus over only
 the unfixed bugs) → **GATE-ESCALATE** → **GATE-DIFF** → PR-prep → **GATE-SUBMIT**. `GATE-DIFF`
 (working-tree→commit) and `GATE-SUBMIT` (fork→upstream) always block for an explicit human "yes" —

@@ -21,7 +21,7 @@ complexity scoring, and escalation all run in this skill, around the Workflow.
 ## The loop
 
 ```
-RECON (/xplore | gh search)  → duplicate-fix check (§RECON)  → GATE-RECON    (soft)
+RECON (/xplore | gh search)  → duplicate-fix check + ranking (§RECON)  → GATE-RECON    (soft)
   → TRIAGE (crg-debug --detect-only → ledger)  + per-bug complexity score
                    → GATE-TRIAGE  (soft; the steering gate — pick bugs + start tier)
   → FIX (crg-debug --from-ledger @tier)  → escalate on failure (§Escalation)
@@ -85,6 +85,38 @@ Only **fresh** candidates advance. `in-flight`/`already-fixed` are shown at GATE
 with the competing PR URL*, so the human can override (e.g. the existing PR is stale/abandoned and
 worth superseding) — an override is an explicit `add-context` choice, never the default.
 
+### Ranking (impact × review-likelihood)
+
+An unordered dump of 20+ fresh candidates is not something a human can usefully triage — rank them
+before GATE-RECON. Two independent signals, gathered **once per distinct repo** (not per issue,
+themed/wildcard candidates often cluster on the same repo):
+
+- **Stars** — `gh repo view <owner>/<repo> --json stargazerCount` — proxy for blast radius / how
+  many users a correct fix actually helps.
+- **Review cadence** — `gh pr list -R <owner>/<repo> --state merged -L 5 --json mergedAt,number` —
+  read two things off the last 5 merge timestamps: how tightly spaced they are (tight = actively
+  reviewed) and the gap between `now` and the most recent one. A repo with historically tight
+  spacing but a stale recent gap (no merges in the last few weeks) has likely gone quiet —
+  demote it even though its historical cadence looks fast.
+
+**Impact** is scored per-candidate from the issue body itself, not just repo size: data loss /
+data corruption / security / safety-relevant bugs (locks, auth, payments) outrank plain functional
+breakage, which outranks cosmetic/UX issues. A tiny, low-star repo with a severe bug can rank above
+a huge repo with a cosmetic one — read the issue, don't just sort by stars.
+
+Sort the fresh candidates with **impact as the primary key, review-likelihood as the tiebreaker**
+(and as a demotion factor for repos that look stalled per above). Record the signals behind the
+rank on each `candidate` farm-DB row (`rankSignals: {stars, recentMergeSpanDays,
+daysSinceLastMerge}`) so GATE-RECON can show *why* something ranked where it did, and so a later
+run can compare against a repo's prior signals instead of re-deriving them from scratch.
+
+GATE-RECON then shows the ranked list, not a raw dump. Because a ranked list commonly runs past
+the 4-option cap the Named-Gate Protocol allows, `select-subset` (SKILL.md §GATE-RECON) is a
+two-step pick: post the full ranked list as plain text (repo, issue, one-line impact/cadence
+rationale per entry), then ask a small follow-up `AskUserQuestion` with cut points sized to the
+list — e.g. Top-5 (Recommended) / Top-10 / Top-N (everything but the flagged/low tier) / Custom —
+rather than trying to cram every candidate into one 4-option gate.
+
 ---
 
 ## Clone cache (repoRoot resolution)
@@ -119,7 +151,7 @@ logs the decision as `auto`; **hard** gates ignore `--auto`.
 
 | Gate | Fires after | Shows | Options | Class |
 |---|---|---|---|---|
-| **GATE-RECON** | RECON (`/xplore` scoped, or `gh search` themed/wildcard) | candidate areas / issues / suspected bugs (post-dedup) | approve-all / select-subset / add-context / abort | Soft |
+| **GATE-RECON** | RECON (`/xplore` scoped, or `gh search` themed/wildcard) | candidate areas / issues / suspected bugs, **ranked by impact × review-likelihood** (post-dedup, §Ranking) | approve-all / select-subset (ranked list + cut-point follow-up) / add-context / abort | Soft |
 | **GATE-TRIAGE** | `--detect-only` returns ledger + complexity scores | confirmedBugs by severity, per-bug complexity + recommended start tier, deferred/rejected counts | select-bugs / choose-tier / set-escalation-cap / abort | Soft (steering) |
 | **GATE-ESCALATE** | each fix pass leaving `unfixed[]` or a RED final gate | fixed/unfixed + reasons, current→next tier, final-gate status | escalate-tier / stop-keep-fixed / hand-to-human / abort | Soft → **HARD** on regression or tier cap |
 | **GATE-DIFF** | fixes settle, before any PR prep | `git diff`, files touched, final-gate status | approve-for-PR / revert-files / commit-local-only / abort | **HARD** |

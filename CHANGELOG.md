@@ -4,6 +4,22 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-06-30
+
+### Added
+- **`/crg-farm` RECON ranks fresh candidates by impact × review-likelihood.** Previously GATE-RECON
+  showed an unordered dump of fresh candidates, which stopped being triageable once a themed or
+  wildcard search returned 20+ results. RECON now pulls two signals per distinct repo —
+  `stargazerCount` (blast-radius proxy) and the last 5 merged-PR timestamps (review-cadence proxy:
+  tight spacing means active review, a stale gap since the last merge demotes a repo even if its
+  historical cadence looked fast) — and combines them with an impact read of the issue body itself
+  (data-loss/security/safety-relevant bugs outrank functional breakage, which outranks cosmetic
+  ones). Candidates sort impact-first, review-likelihood as tiebreaker/demotion, with the signals
+  recorded on each `candidate` farm-DB row (`rankSignals`). Because a ranked list commonly exceeds
+  the 4-option cap on a gate, `select-subset` at `GATE-RECON` is now a two-step pick: the ranked
+  list posted as plain text, then a compact cut-point follow-up (Top-5/Top-10/Top-N/Custom). See
+  `skills/crg-farm/methodology.md` §Ranking.
+
 ## [0.5.1] - 2026-06-30
 
 ### Fixed

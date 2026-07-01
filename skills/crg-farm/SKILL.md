@@ -10,7 +10,7 @@ user_invocable: true
 A main-loop orchestrator that turns crg-debug into a repeatable bug-farming loop:
 
 ```
-RECON (/xplore | gh search) → GATE-RECON → dedup → TRIAGE (--detect-only) → GATE-TRIAGE
+RECON (/xplore | gh search) → dedup → rank → GATE-RECON → TRIAGE (--detect-only) → GATE-TRIAGE
   → FIX (--from-ledger, escalating) → GATE-ESCALATE → GATE-DIFF → PR-PREP → GATE-SUBMIT → TRACK
 ```
 
@@ -84,9 +84,22 @@ bugs that are genuinely open AND not already being fixed:
 Append one `candidate` record per candidate with `status` and, when dropped, `competingPr` (the
 duplicate PR's URL).
 
-**GATE-RECON** (soft): show the **fresh** candidates to farm AND the dropped in-flight/already-fixed
-ones with their competing PR URLs (so the human can override a stale/abandoned PR via add-context);
-options approve-all *(Recommended)* / select-subset / add-context / abort. Log the `gate` decision.
+Then **rank the fresh candidates** (`methodology.md` §Ranking) before showing anything — an
+unordered dump of 15-30 candidates isn't triageable. Per distinct repo, pull `stargazerCount` and
+the last 5 merged-PR timestamps (`gh pr list -R <owner>/<repo> --state merged -L 5 --json
+mergedAt,number`) to score **impact** (repo reach, weighted up for severe issue content — data
+loss/corruption/security/safety — down for cosmetic) and **review-likelihood** (tight merge
+spacing = fast; a stale gap since the last merge demotes a repo even if its historical cadence
+looked fast). Sort impact-first, review-likelihood as tiebreaker/demotion. Record
+`rankSignals: {stars, recentMergeSpanDays, daysSinceLastMerge}` on each candidate's farm-DB row.
+
+**GATE-RECON** (soft): show the **fresh** candidates, ranked, to farm AND the dropped
+in-flight/already-fixed ones with their competing PR URLs (so the human can override a
+stale/abandoned PR via add-context); options approve-all *(Recommended)* / select-subset / add-context
+/ abort. When the ranked list is too long for a 4-option gate, execute `select-subset` as two
+steps: post the ranked list as plain text (repo, issue, one-line impact/cadence rationale), then
+ask a compact follow-up `AskUserQuestion` with cut points sized to the list (e.g. Top-5
+*(Recommended)* / Top-10 / Top-N / Custom). Log the `gate` decision.
 
 ## Step 2 — TRIAGE (`crg-debug --detect-only`) → GATE-TRIAGE
 
