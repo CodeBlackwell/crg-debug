@@ -21,7 +21,7 @@ complexity scoring, and escalation all run in this skill, around the Workflow.
 ## The loop
 
 ```
-RECON (/xplore)  → duplicate-fix check (§RECON)  → GATE-RECON    (soft)
+RECON (/xplore | gh search)  → duplicate-fix check (§RECON)  → GATE-RECON    (soft)
   → TRIAGE (crg-debug --detect-only → ledger)  + per-bug complexity score
                    → GATE-TRIAGE  (soft; the steering gate — pick bugs + start tier)
   → FIX (crg-debug --from-ledger @tier)  → escalate on failure (§Escalation)
@@ -35,6 +35,23 @@ the expensive FIX/escalation only fires on **fresh** candidates that pass verify
 ---
 
 ## RECON — sourcing + duplicate-fix check
+
+### Sourcing candidates (mode from `direction`)
+
+`/crg-farm` never assumes the current directory is the target. RECON picks a sourcing mode from
+`direction` (SKILL.md §Parse `$ARGUMENTS`):
+
+| mode | trigger | how |
+|---|---|---|
+| **scoped** | `direction` names a repo (`owner/repo`, a URL, a local path, or `--repo`) | Resolve/clone that repo (§Clone cache), then run `/xplore` (local `Explore` agents) framed as "open, PR-able bugs in `<repo>`" — or with `--issue`, "reproduce and localize `<issueRef>` in `<repo>`, plus adjacent open defects." Combine with `gh issue list --repo <owner>/<repo> --state open --label bug` so filed issues aren't missed alongside code-level findings. |
+| **themed** | `direction` is free text that isn't a repo (a topic, symptom, or language) | Cross-repo, `gh`-only — `Explore` agents can't reach remote GitHub: `gh search issues "<direction>" --state open --label bug --sort updated --json repository,number,title,url -L 30` (drop `--label bug` and retry if it returns too few hits; a `good-first-issue` label is a reasonable fallback filter). |
+| **wildcard** | no `direction` at all | Same `gh search issues`, unthemed: `gh search issues --state open --label bug --sort updated -L 30`. Quality-filter before candidates are recorded — drop any repo that's archived or has had no push in the last 12 months (`gh repo view <owner>/<repo> --json isArchived,pushedAt`), so triage budget never sinks into dead projects. |
+
+Each `gh search` hit becomes a raw candidate: `{repo:"owner/repo", issueRef:"#<n>", title, url,
+source:'gh-search'}`. `/xplore` hits (scoped mode) keep their existing shape. Both feed the same
+dedup pipeline below.
+
+### Duplicate-fix check
 
 Sourcing a candidate is not enough; before it costs any triage it must survive **two** dedup
 passes. A bug worth farming is one that is genuinely open AND not already being fixed by someone
@@ -70,6 +87,29 @@ worth superseding) — an override is an explicit `add-context` choice, never th
 
 ---
 
+## Clone cache (repoRoot resolution)
+
+`repoRoot` is no longer fixed before RECON runs — themed/wildcard candidates can span many repos,
+so each one is resolved lazily, right before it needs a working tree (TRIAGE, and again at
+PR-prep).
+
+Persistent cache at `~/.claude/crg-farm/repos/<owner>/<repo>` (`CRG_FARM_REPOS` overrides the
+root, mirroring `CRG_FARM_DB`):
+
+- **Missing** → `gh repo clone <owner>/<repo> <path>`.
+- **Present** → sync to the tip of the default branch: `git -C <path> fetch origin && git -C
+  <path> checkout <default-branch> && git -C <path> reset --hard origin/<default-branch> && git -C
+  <path> clean -fd`. This is the farm's own cache, not the user's working copy, so the hard reset
+  is safe — it guarantees every run starts from a clean, current tree instead of accumulating
+  drift from a prior run.
+- `repoRoot` for a candidate = its cache path. Candidates that share a repo share one `repoRoot`
+  and are triaged together in a single `--detect-only` pass (batch by repo, not per-bug).
+- The same clone is reused at PR-prep (§PR-prep) — `git remote get-url origin` there already
+  points at the cached clone, so `gh repo fork` (when push access is missing) just retargets it in
+  place.
+
+---
+
 ## Named-Gate Protocol
 
 Every gate is a fixed `AskUserQuestion` (question + `header ≤12 chars` + 2–4 labeled options,
@@ -79,7 +119,7 @@ logs the decision as `auto`; **hard** gates ignore `--auto`.
 
 | Gate | Fires after | Shows | Options | Class |
 |---|---|---|---|---|
-| **GATE-RECON** | `/xplore` recon | candidate areas / issues / suspected bugs (post-dedup) | approve-all / select-subset / add-context / abort | Soft |
+| **GATE-RECON** | RECON (`/xplore` scoped, or `gh search` themed/wildcard) | candidate areas / issues / suspected bugs (post-dedup) | approve-all / select-subset / add-context / abort | Soft |
 | **GATE-TRIAGE** | `--detect-only` returns ledger + complexity scores | confirmedBugs by severity, per-bug complexity + recommended start tier, deferred/rejected counts | select-bugs / choose-tier / set-escalation-cap / abort | Soft (steering) |
 | **GATE-ESCALATE** | each fix pass leaving `unfixed[]` or a RED final gate | fixed/unfixed + reasons, current→next tier, final-gate status | escalate-tier / stop-keep-fixed / hand-to-human / abort | Soft → **HARD** on regression or tier cap |
 | **GATE-DIFF** | fixes settle, before any PR prep | `git diff`, files touched, final-gate status | approve-for-PR / revert-files / commit-local-only / abort | **HARD** |
@@ -165,7 +205,7 @@ Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.
 | type | when | key fields |
 |---|---|---|
 | `run` | loop start | `repo`, `issueRef`, `scope`, `mode`, `farmRunId` |
-| `candidate` | per `/xplore`-surfaced candidate | `repo`, `source`, `title`, `url`, `keyOf`, `status` (fresh/in-flight/already-fixed), `competingPr` |
+| `candidate` | per sourced candidate (`/xplore` scoped, or `gh search` themed/wildcard) | `repo`, `source`, `title`, `url`, `keyOf`, `status` (fresh/in-flight/already-fixed), `competingPr` |
 | `gate` | per gate decision | `gate`, `decision`, `farmRunId` (+ `auto:true` under `--auto`) |
 | `attempt` | per fix pass | `tier`, `fixed:[keyOf]`, `unfixed:[{keyOf,reason}]`, `finalGateClean` |
 | `pr` | draft-create + submit | `repo`, `issueRef`, `url`, `state`, `keyOf` |

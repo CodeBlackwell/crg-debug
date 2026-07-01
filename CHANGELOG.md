@@ -4,6 +4,20 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-06-30
+
+### Fixed
+- **`/crg-farm` no longer defaults RECON to the current-directory repo.** The skill's `repoRoot`
+  resolution silently fell back to `git rev-parse --show-toplevel`, so an unscoped invocation would
+  farm bugs in whatever repo happened to be the working directory instead of sourcing candidates
+  from GitHub. RECON now resolves a mode from `direction`: **scoped** (a named repo, or `--issue`)
+  runs `/xplore` against that repo as before; **themed** (free-text topic, no repo) and **wildcard**
+  (no direction at all) run a cross-repo `gh search issues` instead, since `Explore` agents can't
+  reach remote GitHub. `repoRoot` is no longer resolved up front — each candidate's repo is
+  cloned/synced lazily via a new persistent clone cache at `~/.claude/crg-farm/repos/<owner>/<repo>`
+  once it survives `GATE-RECON`, and candidates sharing a repo are batched into one `--detect-only`
+  triage pass. See `skills/crg-farm/methodology.md` §Sourcing candidates and §Clone cache.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added

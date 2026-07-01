@@ -3,16 +3,18 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.5.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.1-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
 file-disjoint sets. It applies fixes to the working tree and **never commits**.
 
-`/crg-farm` 🌾 wraps that engine in a bug-farming loop: it sources real open bugs (via `/xplore`),
-verifies none are already fixed or in-flight upstream, triages them, escalates the model only where
-repair struggles, and ships **draft PRs** — pausing for your approval at every consequential
-boundary (commit and upstream submit are always hard stops). See **Usage** below.
+`/crg-farm` 🌾 wraps that engine in a bug-farming loop: it sources real open bugs — a named repo
+gets a scoped `/xplore` sweep, a topic runs a themed cross-repo GitHub search, and no direction at
+all wildcard-searches all of GitHub — verifies none are already fixed or in-flight upstream,
+triages them, escalates the model only where repair struggles, and ships **draft PRs**, pausing for
+your approval at every consequential boundary (commit and upstream submit are always hard stops).
+See **Usage** below.
 
 ---
 
@@ -90,21 +92,25 @@ is committed — review the diff, then ask to commit (named files only) or run `
 
 `/crg-farm` wraps `/crg-debug` in a repeatable loop that sources real open bugs, triages them
 cheaply, escalates the model only where repair struggles, and ships draft PRs — pausing for your
-approval at every boundary that matters.
+approval at every boundary that matters. It never assumes "the current repo" — what it sources
+depends on the direction you give it:
 
 ```
-/crg-farm                        # source + triage + fix bugs in this repo, interactive
-/crg-farm --issue owner/repo#123 # farm a specific reported issue
-/crg-farm --auto                 # auto-pass soft gates; still HARD-stops at commit + PR submit
-/crg-farm --max-tier sonnet      # cap model escalation below opus
+/crg-farm                          # no direction: wildcard-search all of GitHub for open bugs (gh search issues)
+/crg-farm memory leaks in async rust cli tools   # topic: themed cross-repo GitHub search
+/crg-farm owner/repo               # scoped: /xplore sweep of that one repo
+/crg-farm --issue owner/repo#123   # scoped: farm a specific reported issue
+/crg-farm --auto                   # auto-pass soft gates; still HARD-stops at commit + PR submit
+/crg-farm --max-tier sonnet        # cap model escalation below opus
 ```
 
-RECON (`/xplore`) → **GATE-RECON** → triage (`--detect-only`) → **GATE-TRIAGE** → fix
-(`--from-ledger`, escalating haiku→sonnet→opus over only the unfixed bugs) → **GATE-ESCALATE** →
-**GATE-DIFF** → PR-prep → **GATE-SUBMIT**. `GATE-DIFF` (working-tree→commit) and `GATE-SUBMIT`
-(fork→upstream) always block for an explicit human "yes" — `--auto` never bypasses them. Every run,
-candidate, gate decision, fix attempt, and PR is recorded to `~/.claude/crg-farm/history.jsonl` for
-cross-run dedup and audit.
+RECON (scoped `/xplore`, or a themed/wildcard `gh search issues`) → **GATE-RECON** → triage
+(`--detect-only`) → **GATE-TRIAGE** → fix (`--from-ledger`, escalating haiku→sonnet→opus over only
+the unfixed bugs) → **GATE-ESCALATE** → **GATE-DIFF** → PR-prep → **GATE-SUBMIT**. `GATE-DIFF`
+(working-tree→commit) and `GATE-SUBMIT` (fork→upstream) always block for an explicit human "yes" —
+`--auto` never bypasses them. Every candidate repo is cloned/synced into a persistent cache at
+`~/.claude/crg-farm/repos/<owner>/<repo>`, and every run, candidate, gate decision, fix attempt, and
+PR is recorded to `~/.claude/crg-farm/history.jsonl` for cross-run dedup and audit.
 
 ## 🗂️ Layout
 

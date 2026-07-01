@@ -1,7 +1,7 @@
 ---
 name: crg-farm
-description: Bug-farming loop over crg-debug — source real open bugs (via /xplore), triage cheaply, escalate model only where repair struggles, and ship draft PRs, with human approval at every consequential boundary. Use for /crg-farm, "farm bugs in this repo", "find and PR real bugs".
-argument-hint: "[repo path] [focus/issue] [--issue <ref>] [--auto] [--model <start-tier>] [--max-tier <haiku|sonnet|opus>]"
+description: Bug-farming loop over crg-debug — sources real open bugs (scoped /xplore over a named repo, or a themed/wildcard GitHub search when unscoped), triages cheaply, escalates model only where repair struggles, and ships draft PRs, with human approval at every consequential boundary. Use for /crg-farm, "farm bugs", "find and PR real bugs on GitHub".
+argument-hint: "[repo|topic|nothing=wildcard] [--repo <owner/repo|path>] [--issue <ref>] [--auto] [--model <start-tier>] [--max-tier <haiku|sonnet|opus>]"
 user_invocable: true
 ---
 
@@ -10,7 +10,7 @@ user_invocable: true
 A main-loop orchestrator that turns crg-debug into a repeatable bug-farming loop:
 
 ```
-RECON (/xplore) → GATE-RECON → dedup → TRIAGE (--detect-only) → GATE-TRIAGE
+RECON (/xplore | gh search) → GATE-RECON → dedup → TRIAGE (--detect-only) → GATE-TRIAGE
   → FIX (--from-ledger, escalating) → GATE-ESCALATE → GATE-DIFF → PR-PREP → GATE-SUBMIT → TRACK
 ```
 
@@ -26,11 +26,19 @@ escalation — prose mode can't provide that). If it's absent, tell the user to 
 
 ## Parse `$ARGUMENTS`
 
-- **repoRoot**: explicit path or `--repo <path>`; else `git rev-parse --show-toplevel`. Not a git
-  repo and no path → STOP and ask.
-- **scope / issue**: non-flag text is the focus; `--issue <ref>` (or an auto-detected GitHub ref)
-  seeds symptom-directed recon. Resolve it exactly as `/crg-debug` does (bundled issue-ref parser
-  → `issueContext` / `issueRef`).
+- **direction**: everything after the flags, resolved to a RECON mode
+  (`methodology.md` §Sourcing candidates). **Never default to the current-directory repo** —
+  that's a different tool (`/crg-debug` does that). Classify:
+  - names a repo (`owner/repo`, a URL, a local path, or `--repo <ref>`) → **scoped**: RECON looks
+    only at that repo.
+  - other non-empty free text (a topic, symptom, or language) → **themed**: RECON runs a cross-repo
+    `gh search` filtered by that text.
+  - nothing at all → **wildcard**: RECON runs a fully open cross-repo `gh search`.
+  `repoRoot` is **not** resolved here — each candidate's repo is cloned/synced lazily via the clone
+  cache (`methodology.md` §Clone cache) once it survives GATE-RECON.
+- **issue**: `--issue <ref>` (or an auto-detected GitHub ref) forces **scoped** mode against that
+  ref's repo and seeds symptom-directed recon. Resolve it exactly as `/crg-debug` does (bundled
+  issue-ref parser → `issueContext` / `issueRef`).
 - **startTier**: `--model <haiku|sonnet|opus>` sets the FIRST fix tier (default: the complexity
   score's recommendation at GATE-TRIAGE, falling back to `haiku`).
 - **maxTier**: `--max-tier` caps escalation (default `opus`).
@@ -46,11 +54,18 @@ farm DB at the start.
 `… query '<filter>'`. Record types + fields are in `methodology.md` (§Farm database). The
 cross-run identity is `keyOf = norm(file)::norm(rootCause)`.
 
-## Step 1 — RECON (`/xplore`) → GATE-RECON
+## Step 1 — RECON (mode-dependent sourcing) → GATE-RECON
 
-Run `/xplore` to source candidates. Frame the topic from the args: with an issue, "reproduce and
-localize <issueRef> in <repo>, plus adjacent open defects"; without, "open, PR-able bugs in
-<repo>." `/xplore` fans out `Explore` agents and synthesizes a candidate list.
+Source candidates per the resolved mode (`methodology.md` §Sourcing candidates):
+
+- **scoped** (a repo was named, or `--issue` given): clone/sync that repo via the clone cache, then
+  run `/xplore` — framed as "open, PR-able bugs in `<repo>`", or with an issue, "reproduce and
+  localize `<issueRef>` in `<repo>`, plus adjacent open defects" — alongside `gh issue list` for
+  that repo, so code-level and filed-issue candidates both surface.
+- **themed** (free-text direction, no repo): `gh search issues` filtered by the direction text,
+  across all of GitHub. No `/xplore` here — `Explore` agents can't reach remote repos.
+- **wildcard** (no direction at all): `gh search issues`, unthemed, quality-filtered to skip
+  archived/stagnant repos.
 
 Then run the **two-pass duplicate-fix check** (`methodology.md` §RECON) — the point is to farm only
 bugs that are genuinely open AND not already being fixed:
@@ -75,8 +90,10 @@ options approve-all *(Recommended)* / select-subset / add-context / abort. Log t
 
 ## Step 2 — TRIAGE (`crg-debug --detect-only`) → GATE-TRIAGE
 
-For the approved candidates, run detection ONLY (no edits) via the Workflow directly — use
-`scriptPath` (NOT `name`: the name registry is cached at session start and can be stale):
+Group the approved candidates by repo. For each distinct repo, resolve `repoRoot` via the clone
+cache (`methodology.md` §Clone cache — clone if missing, hard-sync to the default branch if
+present), then run detection ONLY (no edits) via the Workflow directly — use `scriptPath` (NOT
+`name`: the name registry is cached at session start and can be stale):
 
 ```
 Workflow({ scriptPath: '$HOME/.claude/workflows/crg-debug.js',
