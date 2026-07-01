@@ -4,6 +4,40 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-07-01
+
+### Changed
+- **`/crg-farm`'s security advisory track now picks a channel instead of always compiling a formal
+  report.** A live run confirmed the gap: a mechanical, one-line-fixable shell-injection bug whose
+  real-world reachability required an attacker to already control the target's own monitoring
+  infrastructure got escalated straight into a multi-page GHSA report — the maintainer rejected it,
+  pointing out the fix could have been a one-line PR with one sentence of motivation, "as
+  communication from human to human." New gate **`GATE-DISPATCH-CHANNEL`** fires after a *quick*
+  PoC-VERIFY/TRACE-EXPLOIT-PATH pass (TRACE-EXPLOIT-PATH now also produces a **marginal-risk
+  verdict**: does exploiting this require a precondition that already implies far more compromise
+  than the bug itself grants?) and a new **CHECK-CONTRIB-POLICY** step (fetches the target repo's
+  own `CONTRIBUTING.md`/`SECURITY.md` and checks for a private-reporting requirement or PR
+  conventions to honor). It picks `pr-with-motivation` — apply the fix and route through the
+  **normal** GATE-DIFF → PR-PREP → GATE-SUBMIT pipeline, PR body/commit message capped at 1-3
+  human-voiced sentences, no report prose — only when the fix is mechanical, the marginal risk is
+  small, AND the repo's policy doesn't forbid it; any one unfavorable signal falls back to
+  `advisory-report` (SEVERITY-CALIBRATE, now explicitly conservative, → COMPILE-REPORT, now short by
+  default → `GATE-ADVISORY-REVIEW`, disk-only, never transmitted). `GATE-SECURITY-ROUTE` is
+  unchanged (it only decides whether a bug is security-sensitive at all); the channel decision is
+  new and separate, and deliberately asymmetric — the safe branch is the fallback, not the PR
+  branch. `GATE-SUBMIT` still never auto-passes under any flag, so a security-sensitive bug still
+  only ever reaches a maintainer via the same draft-then-human-submits path every other bug uses.
+- **`/crg-farm --auto-bypass`'s harness can now run the whole security-dispatch decision itself,
+  unattended** — restoring (and improving on) the capability an interim design briefly removed.
+  Rather than trusting a model's summary of its own judgment, the channel decision is computed in
+  plain JS (`isDispatchSafe()` in `workflows/crg-debug.farm-bypass.js`) from structured booleans an
+  agent call returns (PoC verdict, fix-mechanicality, marginal-risk, contribution-policy) — the
+  model reports signals, the code decides. `pr-with-motivation` candidates rejoin the exact same
+  fix/PR-prep code path as any other bug (still stops at a **draft**, still never crosses
+  `GATE-SUBMIT`); everything else falls back to a short, conservative, disk-only report exactly like
+  the prose path. Re-added `ADVISORY_SCHEMA`(now `SECURITY_ASSESS_SCHEMA`)/the `Advisory` pipeline
+  phase/the `advisory-compiled` outcome that an interim version of this change had removed.
+
 ## [0.10.1] - 2026-07-01
 
 ### Fixed

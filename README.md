@@ -3,7 +3,7 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.9.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.11.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
@@ -142,15 +142,23 @@ bug. `--env none` (the standalone `/crg-debug` default) skips provisioning entir
 `skills/crg-farm/methodology.md` §Environment provisioning.
 
 A bug flagged security-sensitive (injection, auth bypass, secrets exposure, SSRF/traversal,
-insecure deserialization, crypto misuse, memory-safety) never enters that pipeline at all —
-**`GATE-SECURITY-ROUTE`** diverts it to a private advisory track instead: an actually-run PoC, a
-hop-by-hop exploit-path trace, an independently recalibrated severity, and a compiled Markdown
-report under `~/.claude/crg-farm/advisories/`, gated by **`GATE-ADVISORY-REVIEW`** before anything
-is finalized. This tool never files, emails, or discloses that report on your behalf under any
-option — disclosure stays your call. `--auto-bypass`'s harness runs this track itself too (excluding
-the bug from FIX/PR-prep, then auto-passing `GATE-ADVISORY-REVIEW` to save-only — report to disk,
-never a PR, never transmitted). See `skills/crg-farm/methodology.md` §Security classification & the
-advisory track.
+insecure deserialization, crypto misuse, memory-safety) never enters that pipeline silently —
+**`GATE-SECURITY-ROUTE`** diverts it to the advisory track instead: a quick, actually-run PoC, a
+hop-by-hop exploit-path trace, and a check of the target repo's own `CONTRIBUTING.md`/`SECURITY.md`,
+then **`GATE-DISPATCH-CHANNEL`** picks the channel from what that evidence actually showed — a
+short, human-voiced PR (`pr-with-motivation`) when the fix is mechanical, the marginal risk beyond
+the bug's own precondition is genuinely small, and the repo's own policy doesn't demand private
+reporting, or a short, conservatively-worded, disk-only report (`advisory-report`, gated by
+**`GATE-ADVISORY-REVIEW`**, never transmitted) the moment any of that isn't true. This exists
+because a live run once escalated a one-line-fixable bug into a multi-page formal report a
+maintainer rightly rejected as disproportionate — most security-sensitive bugs are worth fixing
+exactly like any other bug, just with the channel decided first, deliberately biased toward the
+safe fallback whenever anything is ambiguous. Whichever channel is chosen, this tool never files,
+emails, or discloses anything on your behalf under any option — disclosure stays your call, and no
+flag ever crosses `GATE-SUBMIT` unattended. `--auto-bypass`'s harness runs this whole check itself,
+unattended, using the same conservative computed default — a mechanical PR still only ever opens as
+a **draft**, same as any other bug. See `skills/crg-farm/methodology.md` §Security classification &
+the advisory track.
 
 ## 🗂️ Layout
 

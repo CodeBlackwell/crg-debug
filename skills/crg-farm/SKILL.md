@@ -1,6 +1,6 @@
 ---
 name: crg-farm
-description: Bug-farming loop over crg-debug — sources real open bugs (scoped /xplore over a named repo, or a themed/wildcard GitHub search when unscoped), triages cheaply, escalates model only where repair struggles, and ships draft PRs, with human approval at every consequential boundary (or, under --auto-bypass, fully unattended through commit and an opened draft PR — never past draft). Security-sensitive findings are routed to a private, human-reviewed advisory track (PoC + exploit-path verification, never a public PR) instead, and are always excluded from --auto-bypass. Use for /crg-farm, "farm bugs", "find and PR real bugs on GitHub".
+description: Bug-farming loop over crg-debug — sources real open bugs (scoped /xplore over a named repo, or a themed/wildcard GitHub search when unscoped), triages cheaply, escalates model only where repair struggles, and ships draft PRs, with human approval at every consequential boundary (or, under --auto-bypass, fully unattended through commit and an opened draft PR — never past draft). Security-sensitive findings go through a quick PoC + exploit-path check plus a repo contribution/security-policy check, then pick the right channel — a short, human-voiced PR for a mechanical, low-marginal-risk fix a repo's own policy doesn't forbid, or a private, concise, conservatively-worded report (never transmitted) when any of that isn't true — with a human deciding the channel by default, or a deliberately conservative computed default under --auto-bypass so the harness stays safe to run unattended. Use for /crg-farm, "farm bugs", "find and PR real bugs on GitHub".
 argument-hint: "[repo|topic|nothing=wildcard] [--repo <owner/repo|path>] [--issue <ref>] [--auto] [--auto-bypass] [--prose] [--model <start-tier>] [--max-tier <haiku|sonnet|opus>]"
 user_invocable: true
 ---
@@ -11,13 +11,21 @@ A main-loop orchestrator that turns crg-debug into a repeatable bug-farming loop
 
 ```
 RECON (/xplore | gh search) → dedup → rank → GATE-RECON → TRIAGE (--detect-only) → GATE-TRIAGE
-  security-sensitive bugs: → GATE-SECURITY-ROUTE → PoC-VERIFY → TRACE-EXPLOIT-PATH
-    → SEVERITY-CALIBRATE → COMPILE-REPORT → GATE-ADVISORY-REVIEW → TRACK  (never reaches PR-PREP;
-    the --auto-bypass harness auto-runs this track too, auto-passing GATE-ADVISORY-REVIEW to
-    save-only — report compiled to disk, never a PR, never transmitted)
+  security-sensitive bugs: → GATE-SECURITY-ROUTE → PoC-VERIFY (quick) → TRACE-EXPLOIT-PATH (quick)
+    → CHECK-CONTRIB-POLICY (repo's CONTRIBUTING.md/SECURITY.md — forbids direct PRs? requirements?)
+    → GATE-DISPATCH-CHANNEL (mechanical fix? small marginal risk? no policy objection? then...)
+      → pr-with-motivation: → GATE-DIFF → PR-PREP → GATE-SUBMIT → TRACK  (1-3 sentence PR, no
+        report prose — same pipeline as any other bug)
+      → advisory-report: → SEVERITY-CALIBRATE (conservative) → COMPILE-REPORT (short)
+        → GATE-ADVISORY-REVIEW → TRACK  (never reaches PR-PREP)
   everything else: → FIX (--from-ledger, escalating) → GATE-ESCALATE
     → GATE-DIFF → PR-PREP → GATE-SUBMIT → TRACK
 ```
+
+Under `--auto-bypass`, `GATE-DISPATCH-CHANNEL` and `GATE-ADVISORY-REVIEW` are both auto-passed —
+the harness runs the whole security fork itself, unattended, using a conservative computed default
+(pr-with-motivation only when every signal is favorable; falls back to advisory-report, never
+transmitted, the moment any one isn't). See §Step 2a below.
 
 `--auto-bypass` is a **separate, standalone flag** from `--auto` (never implied by it, never
 inferred from prior approvals): it auto-passes every gate through `GATE-DIFF` (commit), caps the
@@ -204,52 +212,92 @@ after its GATE-TRIAGE: append a `gate-asked` record (`gate:'GATE-SECURITY-ROUTE'
 *(Recommended)* / treat-as-normal-bug / drop / abort. Log the decision. `advisory-track` bugs go
 to the **Security advisory track** below instead of Step 3; `treat-as-normal-bug` rejoins the
 normal confirmedBugs set and proceeds through Step 3 like anything else. Under `--auto`, skip
-`gate-asked` — the recommended default (`advisory-track`) is auto-passed, nothing is shown.
+`gate-asked` — the recommended default (`advisory-track`) is auto-passed, nothing is shown. This
+gate only decides *whether this is genuinely security-sensitive* — the channel decision
+(PR-with-motivation vs. formal report) is a separate, later gate below, since it needs evidence
+this gate fires before any of it exists.
 
-**Under the `--auto-bypass` harness, `GATE-SECURITY-ROUTE` is auto-passed to `advisory-track`.** The
-harness classifies the same way inside its own Triage stage, then routes each security-sensitive
-candidate into the advisory track itself — running PoC-VERIFY/TRACE-EXPLOIT-PATH/SEVERITY-CALIBRATE/
-COMPILE-REPORT and auto-passing `GATE-ADVISORY-REVIEW` to `save-only` — see
-`workflows/crg-debug.farm-bypass.js` (the Advisory stage). Such a candidate never enters FIX/PR-prep,
-and the harness never files, emails, or transmits the report: the deliverable is the on-disk report
-only, under `~/.claude/crg-farm/advisories/`. The prose path (a plain `/crg-farm` run, or
-`--auto-bypass --prose`) runs the same track with a human present at `GATE-ADVISORY-REVIEW` in place
-of the auto-passed save-only.
+**Under the `--auto-bypass` harness, `GATE-SECURITY-ROUTE` is auto-passed to `advisory-track` and
+the harness runs the whole track below itself, unattended** — see `workflows/crg-debug.farm-bypass.js`.
+It doesn't skip the judgment; it uses the computed, conservative default at
+`GATE-DISPATCH-CHANNEL` below instead of asking. Every step is scoped to be quick, and the default
+is asymmetric — it only picks the branch that touches a third party's repo when every signal is
+favorable.
 
 ## Security advisory track (bugs routed by GATE-SECURITY-ROUTE)
 
-Never reaches GATE-DIFF, PR-PREP, or GATE-SUBMIT — no code is committed or pushed. Per bug (or
-tightly-coupled cluster sharing one root cause), per `methodology.md` §Security classification &
-the advisory track:
+Runs the same way with a human present (prose path) or not (`--auto-bypass` harness) — the harness
+just uses computed defaults where the prose path would ask. Per bug (or tightly-coupled cluster
+sharing one root cause), per `methodology.md` §Security classification & the advisory track.
+PoC-VERIFY, TRACE-EXPLOIT-PATH, and CHECK-CONTRIB-POLICY always run first, quickly — everything
+after `GATE-DISPATCH-CHANNEL` is a genuine fork, not two flavors of the same report.
 
-1. **PoC-VERIFY**: write and actually run a minimal, non-destructive PoC against the real cloned
-   code (§Clone cache) — a crafted malicious input through the real function/class, a harmless
-   side effect as proof (never a destructive payload). Record the PoC code, exact command, full
-   output, and a verdict: `confirmed-exploitable` / `confirmed-not-exploitable` /
-   `inconclusive-could-not-execute`.
-2. **TRACE-EXPLOIT-PATH**: grep every call site of the vulnerable function/sink and follow the
-   taint hop by hop from an attacker-reachable input to the vulnerable line. Produces a
-   reachability verdict (remote/unauthenticated, remote/authenticated, local-only,
-   operator-only-not-exploitable) backed by evidence, not a guess.
-3. **SEVERITY-CALIBRATE**: recompute severity from steps 1–2 (reachability × impact × PoC verdict)
-   — independent of any severity label a discovery/fix agent attached upstream. Cap at "potential"
-   when the PoC is inconclusive.
-4. **COMPILE-REPORT**: write the report to `node $HOME/.claude/workflows/crg-debug.farm-db.mjs
-   advisory-path '<owner/repo>' '<keyOf>'` (always outside the cloned repo's working tree) —
-   summary, affected file(s)/line(s), `vulnClass`, root cause, the taint trace, the PoC
-   (code/command/output), calibrated severity + rationale, a suggested fix in prose/diff form (not
-   applied), and a blank disclosure-timeline section. Append an `advisory` record (`repo`, `keyOf`,
+1. **PoC-VERIFY (quick)**: write and actually run a minimal, non-destructive PoC against the real
+   cloned code (§Clone cache) — the smallest crafted input and script that proves the point, a
+   harmless side effect as proof (never a destructive payload). Record the PoC code, exact command,
+   full output, and a verdict: `confirmed-exploitable` / `confirmed-not-exploitable` /
+   `inconclusive-could-not-execute`. Under `--auto-bypass`, `inconclusive` always falls through to
+   `advisory-report` at step 4.
+2. **TRACE-EXPLOIT-PATH (quick)**: grep every call site of the vulnerable function/sink and follow
+   the taint hop by hop from an attacker-reachable input to the vulnerable line — one line per hop,
+   not a paragraph. Produces a reachability verdict (remote/unauthenticated, remote/authenticated,
+   local-only, operator-only-not-exploitable) AND a **marginal-risk verdict**: does reaching the
+   sink require the attacker to already hold a precondition that dwarfs what this bug adds (e.g.
+   it's only reachable once they've already compromised the target's own core trusted
+   infrastructure)? Both are evidence, not guesses, and both feed `GATE-DISPATCH-CHANNEL`.
+3. **CHECK-CONTRIB-POLICY (quick)**: fetch `CONTRIBUTING.md` and `SECURITY.md` from the repo root
+   (`gh api repos/<owner>/<repo>/contents/SECURITY.md`, `.../CONTRIBUTING.md`; a 404 just means no
+   stated policy). Check for (a) an explicit instruction that security issues must be reported
+   privately, not via a public PR — if found, this alone forces `advisory-report` at the next step,
+   regardless of how trivial the fix is — and (b) contribution requirements a PR must follow (signed
+   commits/DCO, an issue must precede a PR, a required template). Record what's found; Step 4's
+   PR-PREP honors (b).
+4. **GATE-DISPATCH-CHANNEL**: append a `gate-asked` record (`gate:'GATE-DISPATCH-CHANNEL'`,
+   `farmRunId`, `repo`), then show the fix-mechanicality assessment, the marginal-risk verdict, and
+   CHECK-CONTRIB-POLICY's findings; options `pr-with-motivation` *(Recommended when all three are
+   favorable)* / `advisory-report` *(Recommended otherwise)* / `both` / `abort`. Log the decision.
+   **Under `--auto-bypass` (harness or prose), skip the ask — compute it instead:
+   `pr-with-motivation` only when the fix is a small, mechanical, obviously-safe diff (no design
+   decisions, no new API surface), the marginal-risk test came back small, AND
+   CHECK-CONTRIB-POLICY found no private-reporting requirement; otherwise `advisory-report`,
+   always.** Any one unfavorable signal falls back — the asymmetry is deliberate, the disk-only
+   branch costs nothing to pick wrong and the PR branch does. Log `bypass:true` for a computed
+   decision.
+   - `pr-with-motivation`: apply the fix to the working tree, then continue through **Step 4
+     (GATE-DIFF → PR-PREP → GATE-SUBMIT)** exactly like any other confirmed bug — still stops at a
+     **draft** PR under `--auto-bypass`, still never crosses `GATE-SUBMIT` unattended. PR body and
+     commit message capped at 1-3 human-voiced sentences (what was wrong, why the fix is safe; no
+     CVSS, no reachability breakdown, no report prose — the diff carries the technical content).
+     Honor any requirement CHECK-CONTRIB-POLICY found.
+   - `advisory-report`: continue to SEVERITY-CALIBRATE below.
+   - `both`: prose path only — the computed default under `--auto-bypass` never picks it.
+5. **SEVERITY-CALIBRATE (conservative)** (advisory-report branch): recompute severity from steps
+   1-2 (reachability × impact × PoC verdict) — independent of any severity label a discovery/fix
+   agent attached upstream, and **err toward the modest, literal reading, not the dramatic one**.
+   State both a mechanical score AND the marginal-risk verdict as its own explicit sentence — a high
+   raw score next to "but this needs a precondition that already implies far more compromise" is
+   more honest than the score alone. Cap at "potential" when the PoC is inconclusive.
+6. **COMPILE-REPORT (short, by default)** (advisory-report branch): write the report to
+   `node $HOME/.claude/workflows/crg-debug.farm-db.mjs advisory-path '<owner/repo>' '<keyOf>'`
+   (always outside the cloned repo's working tree). **Keep it short — quick PoC, one-paragraph
+   summary, the fix, the conservative severity line — full stop**, not a forensic writeup; skip
+   anything that doesn't change what the reader should do. Sections: summary (2-4 sentences),
+   affected file(s)/line(s), `vulnClass`, the PoC (kept minimal), reachability + marginal-risk
+   verdict (one line each), calibrated severity, a one-to-two-sentence suggested fix (not applied),
+   and a blank disclosure-timeline section. Append an `advisory` record (`repo`, `keyOf`,
    `vulnClass`, `severity`, `pocVerdict`, `reportPath`).
-5. **GATE-ADVISORY-REVIEW** (HARD by default — auto-passable under `--auto-bypass`, prose path
-   only): append a `gate-asked` record (`gate:'GATE-ADVISORY-REVIEW'`, `farmRunId`, `repo`), then
-   show the compiled report; options save-only *(Recommended)* / revise / discard / abort. Under
-   `--auto-bypass`, skip `gate-asked` — `save-only` is auto-passed, nothing is shown. **Never
-   file, email, or otherwise transmit the report on the human's behalf under any option, auto-passed
-   or not** — disclosure channel and timing stay the human's call. Append a second `advisory`
-   record with the final `decision`.
+7. **GATE-ADVISORY-REVIEW** (advisory-report branch; HARD by default under a plain invocation or
+   `--auto`; auto-passable under `--auto-bypass`, harness or prose): in the prose path, append a
+   `gate-asked` record (`gate:'GATE-ADVISORY-REVIEW'`, `farmRunId`, `repo`), then show the compiled
+   report; options save-only *(Recommended)* / revise (may loop back as far as
+   `GATE-DISPATCH-CHANNEL` if the human decides on reading it that this should have been a PR
+   instead) / discard / abort. Under `--auto-bypass` (harness or prose), skip `gate-asked` —
+   `save-only` is auto-passed, nothing is shown. **Never file, email, or otherwise transmit the
+   report on the human's behalf under any option, auto-passed or not** — disclosure channel and
+   timing stay the human's call. Append a second `advisory` record with the final `decision`.
 
-`close-run <farmRunId>` at TRACK here too (§Farm database) — the advisory track still closes out
-its run participation even though it never reaches PR-PREP.
+`close-run <farmRunId>` at TRACK either way (§Farm database) — via GATE-SUBMIT on the
+`pr-with-motivation` branch, or via save-only/discard/abort on the `advisory-report` branch.
 
 ## Step 3 — FIX + escalation → GATE-ESCALATE
 
@@ -325,17 +373,19 @@ exact human-wait time), fix attempts, PR outcomes, advisory reports, and duratio
 ## After it returns
 
 Summarize: candidates sourced, bugs confirmed/fixed/handed-to-human, the tier each bug closed at,
-any draft/submitted PR URLs, and any security advisories compiled (path + severity + decision).
-Nothing crossed GATE-DIFF or GATE-SUBMIT without an explicit human "yes" — or, under
-`--auto-bypass`, without that flag having been passed by name for this run. No security-sensitive
-bug entered the normal PR pipeline, bypass or not. Point the user at
-`~/.claude/crg-farm/history.jsonl` for the durable record, and at `~/.claude/crg-farm/advisories/`
-for any compiled reports.
+any draft/submitted PR URLs, and any security advisories compiled (path + severity + decision, and
+for each, which channel `GATE-DISPATCH-CHANNEL` picked and why). Nothing crossed GATE-DIFF or
+GATE-SUBMIT without an explicit human "yes" — or, under `--auto-bypass`, without that flag having
+been passed by name for this run, and even then a security-sensitive bug only reaches the normal PR
+pipeline when every `GATE-DISPATCH-CHANNEL` signal came back favorable (mechanical fix, small
+marginal risk, no repo policy against it) — any doubt falls back to a disk-only report, never
+transmitted. Point the user at `~/.claude/crg-farm/history.jsonl` for the durable record, and at
+`~/.claude/crg-farm/advisories/` for any compiled reports.
 
 **Under `--auto-bypass`**, this summary is mandatory and is the deliverable of the run (the human
-saw no gates): for each of the ≤5 candidates, report repo + issue, the tier it closed at, and
-either the **draft** PR URL (still awaiting a human `submit-upstream` before any maintainer sees
-it) or the hand-off reason + clone-cache path to its RED repro tests — including a security
-exclusion, called out explicitly so the human knows to re-run that candidate through the prose
-advisory track. Every `bypass:true` gate decision for this `farmRunId` is queryable in the farm DB
-for audit.
+saw no gates): for each of the ≤5 candidates, report repo + issue, the tier it closed at, and either
+the **draft** PR URL (still awaiting a human `submit-upstream` before any maintainer sees it) — for
+a `pr-with-motivation` security fix, note that explicitly, since it's still worth a closer look even
+though the computed default already screened it — or the hand-off reason + clone-cache path to its
+RED repro tests, or the compiled-report path for an `advisory-report` outcome. Every `bypass:true`
+gate decision for this `farmRunId` is queryable in the farm DB for audit.
