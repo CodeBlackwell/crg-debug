@@ -4,6 +4,47 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-07-01
+
+### Added
+- **Security advisory track for `/crg-farm`.** Confirmed bugs are classified against a fixed
+  vulnerability checklist (injection, auth/authz bypass, secrets exposure, SSRF/path-traversal,
+  insecure deserialization, crypto misuse, memory-safety) at the same pass as complexity scoring.
+  Flagged bugs never enter the normal PR pipeline — a new `GATE-SECURITY-ROUTE` (soft) diverts
+  them into a dedicated track: PoC-VERIFY (write and actually run a non-destructive proof of
+  concept against the real cloned code), TRACE-EXPLOIT-PATH (hop-by-hop taint trace from
+  attacker-reachable input to the vulnerable sink, with an explicit reachability verdict),
+  SEVERITY-CALIBRATE (recompute severity from evidence, independent of any label an upstream
+  agent attached), and COMPILE-REPORT (a Markdown report written under the new
+  `lib/farm-db.mjs advisory-path` — always outside any cloned repo's working tree). A new
+  `GATE-ADVISORY-REVIEW` gates the compiled report — HARD by default, auto-passable to
+  `save-only` under `--auto-bypass` (prose path only), and this tool never files, emails, or
+  otherwise transmits the report on the human's behalf under any option, auto-passed or not. The
+  `--auto-bypass` **harness** (`workflows/crg-debug.farm-bypass.js`) never attempts this track
+  itself — it classifies the same way inside its own Triage stage and excludes/hands off any
+  security-sensitive candidate wholesale rather than partially proceeding, since PoC/exploit-path
+  judgment stays in the prose path where a human reviews the report. New `advisory` farm-DB
+  record type. See `skills/crg-farm/methodology.md` §Security classification & the advisory
+  track.
+- **Exact human-wait tracking for `/crg-farm` gates.** A new `gate-asked` farm-DB record is
+  appended immediately before each non-auto/non-bypass `AskUserQuestion`, paired with the
+  existing `gate` decision record. `node lib/farm-db.mjs gate-waits '<filter>'` matches the two
+  per `farmRunId`+`gate`+`repo` and returns `waitMs` — the actual time a question sat in front of
+  the human — instead of a gap inferred from neighboring records, which previously conflated
+  agent work (diff prep, PR pushes) with human think time. No backfill for pre-existing runs:
+  there's no proxy timestamp for when an already-answered question was first shown.
+- **`/crg-farm` run duration tracking.** A new `run-end` farm-DB record type closes out each
+  `farmRunId` with `startedAt`/`endedAt`/`durationMs` — appended via
+  `node lib/farm-db.mjs close-run <farmRunId>` at TRACK on the happy path, or right after any
+  `abort` gate decision. `node lib/farm-db.mjs backfill-run-ends` retroactively reconstructs
+  `run-end` records for runs that predate this (`endedAt` = the latest `ts` among that run's own
+  records, marked `backfilled:true`); it's idempotent and skips any `farmRunId` already closed.
+
+### Fixed
+- **`GATE-ESCALATE`'s recommended default was undefined.** `escalate-tier` is now explicitly
+  `(Recommended)`, with the same "skip `gate-asked` under `--auto`" behavior documented for
+  `GATE-RECON`/`GATE-TRIAGE`.
+
 ## [0.7.0] - 2026-06-30
 
 ### Added

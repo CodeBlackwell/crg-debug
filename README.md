@@ -3,7 +3,7 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.7.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.8.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
@@ -126,6 +126,16 @@ and handed to a human instead of being committed. Prefers a code-enforced harnes
 (`workflows/crg-debug.farm-bypass.js`, installed by `crg-deterministic`) when available — `--prose`
 forces the prompt-driven path instead. See `skills/crg-farm/methodology.md` §Auto-bypass mode
 before using it.
+
+A bug flagged security-sensitive (injection, auth bypass, secrets exposure, SSRF/traversal,
+insecure deserialization, crypto misuse, memory-safety) never enters that pipeline at all —
+**`GATE-SECURITY-ROUTE`** diverts it to a private advisory track instead: an actually-run PoC, a
+hop-by-hop exploit-path trace, an independently recalibrated severity, and a compiled Markdown
+report under `~/.claude/crg-farm/advisories/`, gated by **`GATE-ADVISORY-REVIEW`** before anything
+is finalized. This tool never files, emails, or discloses that report on your behalf under any
+option — disclosure stays your call. `--auto-bypass`'s harness never attempts this track itself; it
+excludes and hands the bug off instead. See `skills/crg-farm/methodology.md` §Security
+classification & the advisory track.
 
 ## 🗂️ Layout
 

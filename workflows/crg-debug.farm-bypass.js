@@ -1,12 +1,12 @@
 export const meta = {
   name: 'crg-farm-bypass',
   description:
-    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 5 -> per-repo TRIAGE -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
+    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 5 -> per-repo TRIAGE (security-sensitive bugs are classified and excluded, never auto-PR-ed) -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, security exclusion, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
   whenToUse:
     'Requires args {direction: "themed"|"wildcard"|"scoped", query?, repo?, issueRef?, maxTier?, methodologyPath, crgDebugPath, farmDbPath, reposRoot, farmRunId}. Invoke ONLY when the user has explicitly passed --auto-bypass to /crg-farm and this file is installed (the crg-deterministic enabler copies it alongside crg-debug.js). Never invoke for the default, gated /crg-farm flow — that one needs AskUserQuestion and stays in the main loop.',
   phases: [
     { title: 'Recon', detail: 'gh search/issue-list + two-pass dedup + rank, capped to top 5' },
-    { title: 'Triage', detail: 'clone/sync + crg-debug --detect-only per candidate repo' },
+    { title: 'Triage', detail: 'clone/sync + crg-debug --detect-only per candidate repo, then a security classification pass that excludes and hands off any security-sensitive bug' },
     { title: 'Fix', detail: 'crg-debug --from-ledger with escalation; a regression climbs one tier, never a same-tier retry' },
     { title: 'PR', detail: 'auto commit, push, open as draft — stops there, GATE-SUBMIT stays human' },
   ],
@@ -170,6 +170,29 @@ const settled = await pipeline(
     if (!triage || !(triage.confirmedBugs || []).length) {
       return { candidate, repoRoot: clone.repoRoot, outcome: 'no-bugs-confirmed' }
     }
+
+    // Security exclusion: classify against the fixed checklist in methodology.md's §Security
+    // classification. Conservative by design — if ANY confirmed bug in this batch is flagged, the
+    // whole candidate is excluded from FIX/PR-prep rather than partially proceeding. The harness
+    // never attempts PoC-VERIFY/TRACE-EXPLOIT-PATH/COMPILE-REPORT itself; that judgment-heavy work
+    // stays in the prose path, where a human reviews the compiled report at GATE-ADVISORY-REVIEW.
+    const secCheck = await agent(
+      `Classify each of these confirmed bugs against the fixed security checklist in methodology.md's §Security classification & the advisory track (${methodologyPath}) — injection, auth/authz bypass, secrets exposure, SSRF/path-traversal, insecure deserialization, crypto misuse, memory-safety reachable from attacker input. Conservative on purpose: flag anything that plausibly fits even if reachability is unclear.\n\nconfirmedBugs: ${JSON.stringify(triage.confirmedBugs)}`,
+      {
+        phase: 'Triage',
+        schema: { type: 'object', required: ['securitySensitive'], properties: { securitySensitive: { type: 'boolean' }, vulnClasses: { type: 'array', items: { type: 'string' } } } },
+        label: `sec-classify:${candidate.repo}`,
+      }
+    )
+    if (secCheck && secCheck.securitySensitive) {
+      return {
+        candidate,
+        repoRoot: clone.repoRoot,
+        outcome: 'handed-to-human',
+        reason: `security-sensitive (${(secCheck.vulnClasses || []).join(', ') || 'unspecified class'}) — the auto-bypass harness never turns a security-sensitive bug into an autonomous PR; run without --auto-bypass (or with --prose) to route it through the advisory track (PoC-VERIFY/TRACE-EXPLOIT-PATH/GATE-ADVISORY-REVIEW)`,
+      }
+    }
+
     return { candidate, repoRoot: clone.repoRoot, ledgerPath: triage.ledgerPath, confirmedBugs: triage.confirmedBugs }
   },
 
