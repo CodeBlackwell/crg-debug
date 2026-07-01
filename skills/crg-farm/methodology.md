@@ -11,10 +11,14 @@ complexity scoring, and escalation all run in this skill, around the Workflow.
 
 > ## ⛔ NON-NEGOTIABLE — the two hard gates
 > **`GATE-DIFF` (working-tree → commit) and `GATE-SUBMIT` (fork → upstream) ALWAYS block for
-> explicit human approval. `--auto` does NOT bypass them. Ever.** These guard the two
-> irreversible boundaries: writing to version control, and publishing to a repo you don't own.
-> Auto-submitting a PR to a third-party maintainer is the one failure mode that burns
-> reputation irrecoverably — never cross either boundary without a human "yes".
+> explicit human approval under normal operation. `--auto` does NOT bypass them. Ever.** These
+> guard the two irreversible boundaries: writing to version control, and publishing to a repo you
+> don't own. Auto-submitting a PR to a third-party maintainer is the one failure mode that burns
+> reputation irrecoverably — **no flag ever crosses `GATE-SUBMIT` unattended.** `--auto-bypass`
+> (§Auto-bypass mode) is a separate, standalone flag — not an extension of `--auto`, not implied
+> by it — that *does* cross `GATE-DIFF` unattended (auto-commit), but every PR it opens stops at
+> **draft**. Flipping a PR to ready-for-review stays a deliberate, separate human action outside
+> the farm loop, no matter which flags were passed.
 
 ---
 
@@ -31,6 +35,10 @@ RECON (/xplore | gh search)  → duplicate-fix check + ranking (§RECON)  → GA
 
 Every stage appends to the farm DB (§Farm database). RECON→check→TRIAGE is cheap and runs broad;
 the expensive FIX/escalation only fires on **fresh** candidates that pass verify and GATE-TRIAGE.
+
+Under `--auto-bypass` (a separate flag, §Auto-bypass mode) every gate above auto-passes and the
+loop runs top-to-bottom unattended for up to 5 candidates concurrently — through `GATE-DIFF`
+(commit) and stopping at an opened **draft** PR; `GATE-SUBMIT` always resolves to `keep-draft`.
 
 ---
 
@@ -147,7 +155,13 @@ root, mirroring `CRG_FARM_DB`):
 Every gate is a fixed `AskUserQuestion` (question + `header ≤12 chars` + 2–4 labeled options,
 first option `(Recommended)` where one is). Every decision is appended to the farm DB as a `gate`
 record — the audit trail. `--auto` auto-passes **soft** gates with the recommended default and
-logs the decision as `auto`; **hard** gates ignore `--auto`.
+logs `auto:true`; **hard** gates ignore `--auto`. `--auto-bypass` (§Auto-bypass mode) is a
+separate flag that additionally auto-passes `GATE-DIFF` (and a HARD-promoted GATE-ESCALATE, which
+climbs one strictly-higher tier per regression — never a same-tier retry, so at most two hops from
+a `haiku` start) — logging `bypass:true` instead of `auto:true` so the audit trail always shows
+whether a decision came from a human, from `--auto`, or from `--auto-bypass`. `GATE-SUBMIT` is logged with
+`bypass:true` too, but its decision is always `keep-draft` — no flag ever resolves it to
+`submit-upstream` automatically.
 
 | Gate | Fires after | Shows | Options | Class |
 |---|---|---|---|---|
@@ -159,6 +173,69 @@ logs the decision as `auto`; **hard** gates ignore `--auto`.
 
 Abort at any gate ends the run cleanly, logs a `gate` record with `decision:'abort'`, and leaves
 the working tree exactly as it was at that point (nothing committed, nothing pushed).
+
+---
+
+## Auto-bypass mode (`--auto-bypass`)
+
+A distinct, standalone flag from `--auto` — **not** a superset of it and not implied by it.
+`--auto` only ever auto-passes the two soft gates and still stops hard at commit and upstream
+submit. `--auto-bypass` removes every pause up through commit, including `GATE-DIFF` and a
+HARD-promoted `GATE-ESCALATE`, so a run can go from `/crg-farm --auto-bypass …` straight to opened
+**draft** PRs with zero human interaction. It does **not** touch `GATE-SUBMIT` — every PR it opens
+stays a draft; flipping one to ready-for-review is a separate, deliberate action outside the farm
+loop, always. It trades the "diff reviewed before it commits" guarantee for full automation while
+keeping the "a human decides what reaches a maintainer" guarantee intact — opt in deliberately,
+and expect to ask for it by name every time; it is never inferred from `--auto` or from repeated
+approvals in a prior run.
+
+**Candidate cap.** Immediately after ranking (§Ranking) and before GATE-RECON would normally ask,
+auto-bypass truncates the fresh, ranked candidate list to the **top 5**. This is a hard cap, not a
+default suggestion — a bypass run never triages, fixes, or opens PRs for more than 5 candidates,
+regardless of how many survived dedup.
+
+**Concurrency cap.** Each surviving candidate's TRIAGE → FIX → escalate → PR-prep pipeline runs as
+its own `Workflow` invocation, keyed by repo. Launch each one as soon as it's ready rather than
+batching (don't wait for siblings to finish RECON/TRIAGE before starting a repo's FIX); auto-bypass
+runs pipelines **concurrently, capped at 5 in-flight at once** — satisfied by construction once
+the candidate cap above holds.
+
+**Gate behavior** — every gate auto-passes its recommended default and logs `bypass:true`:
+
+| Gate | Auto-bypass behavior |
+|---|---|
+| GATE-RECON | approve-all, already truncated to the top 5 |
+| GATE-TRIAGE | select-bugs: the confirmed non-conflicted set, tier = complexity recommendation |
+| GATE-ESCALATE (soft) | escalate-tier, up to `maxTier` (default opus) |
+| GATE-ESCALATE (HARD, regression) | escalate-tier, climbing to the **next, strictly higher** tier — never a retry of the tier that just regressed. Every tier gets exactly one shot, always, no exceptions (raised from the normal "escalate at most once" rule, §Escalation, only in that a regression at `haiku` can still climb through `sonnet` *and* `opus` — up to two hops — before running out of ladder). If the regression happens already at `maxTier`, there is no higher tier to climb to — hand off immediately, no retry. That candidate is dropped from PR-prep and marked `handed-to-human` in the final report; bypass never auto-commits a regressing diff |
+| GATE-DIFF | approve-for-PR, unconditionally, for any candidate whose final gate is clean |
+| GATE-SUBMIT | **always** `keep-draft` (unchanged mechanics, §PR-prep — `gh pr create --draft` and stop). Logged `bypass:true` for audit parity, but no flag ever resolves this to `submit-upstream` |
+
+**Reporting.** After every candidate's pipeline settles — shipped or handed-to-human — produce one
+summary for the whole run: per candidate, repo + issue, tier it closed at, and either the draft PR
+URL or the hand-off reason with a pointer to the RED repro tests left in the clone cache. Under
+`--auto-bypass` the user was not present for any gate, so this report — plus the drafts themselves,
+sitting unsubmitted until a human reviews and readies them — is the only record they see.
+
+### Prose vs. harness
+
+Like crg-debug itself, `--auto-bypass` has two enforcement modes over the same rules above — they
+differ in **who** enforces the candidate cap, the concurrency cap, and the one-shot-per-tier rule:
+
+| | Prose (default) | Harness (`workflows/crg-debug.farm-bypass.js`) |
+|---|---|---|
+| Enforcement | the model follows this section | real JS: `.slice(0, 5)`, a `pipeline()` over ≤5 items, a tier function that can only climb — it has no way to return the tier it was just called with |
+| RECON sourcing | scoped mode may use `/xplore` (main-loop-only) | `gh` only in every mode, including scoped — a Workflow agent cannot call `/xplore` |
+| Invocation | the `/crg-farm` skill runs Steps 1-4 itself | one `Workflow({scriptPath: '.../crg-debug.farm-bypass.js', args:{...}})` call replaces Steps 1-4 entirely |
+| When it's used | always available; the only option if the harness file isn't installed, or `--prose` is passed | preferred automatically once installed (`crg-deterministic` enabler), same convention as crg-debug's own Workflow |
+
+The harness exists because auto-bypass is the one mode where nothing a human would have caught
+gets a second look — every cap this section describes is exactly the kind of "the model is
+supposed to stop at 5" rule that is worth pinning in code instead of a prompt. It reuses
+`crg-debug.js` unmodified via the `workflow()` composition primitive (one Workflow calling
+another) for both TRIAGE and FIX passes, so the underlying detect/fix engine is identical between
+prose and harness auto-bypass — only the orchestration around it (RECON, ranking, the cap,
+escalation bookkeeping, PR-prep sequencing) moves from prompt-following to code.
 
 ---
 
@@ -238,7 +315,7 @@ Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.
 |---|---|---|
 | `run` | loop start | `repo`, `issueRef`, `scope`, `mode`, `farmRunId` |
 | `candidate` | per sourced candidate (`/xplore` scoped, or `gh search` themed/wildcard) | `repo`, `source`, `title`, `url`, `keyOf`, `status` (fresh/in-flight/already-fixed), `competingPr` |
-| `gate` | per gate decision | `gate`, `decision`, `farmRunId` (+ `auto:true` under `--auto`) |
+| `gate` | per gate decision | `gate`, `decision`, `farmRunId` (+ `auto:true` under `--auto`, or `bypass:true` under `--auto-bypass`) |
 | `attempt` | per fix pass | `tier`, `fixed:[keyOf]`, `unfixed:[{keyOf,reason}]`, `finalGateClean` |
 | `pr` | draft-create + submit | `repo`, `issueRef`, `url`, `state`, `keyOf` |
 

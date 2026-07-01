@@ -4,6 +4,36 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-06-30
+
+### Added
+- **`--auto-bypass` — a fully unattended `/crg-farm` run through commit and an opened draft PR.**
+  A separate, standalone flag from `--auto` (never implied by it, never inferred from prior
+  approvals): it auto-passes every gate up through `GATE-DIFF` (commit) and a HARD-promoted
+  `GATE-ESCALATE` on regression — which climbs to the next, strictly higher tier, **never a retry
+  of the tier that just failed**. Every tier gets exactly one shot, always; a `haiku` start can
+  still climb through two regressions (to `sonnet`, then `opus`) before running out of ladder.
+  Truncates ranked candidates to the top 5 (§Ranking) and runs their TRIAGE→FIX→PR pipelines
+  concurrently, capped at 5 in-flight. `GATE-SUBMIT` is never bypassed by any flag — every PR this
+  opens **stops at draft**; flipping one to ready-for-review stays a deliberate, separate human
+  action. A regression that's still unclean once `maxTier` itself has regressed drops that
+  candidate from PR-prep and marks it `handed-to-human` in the run's closing report instead of
+  committing an unclean diff. Every gate decision it auto-passes is logged `bypass:true` (never
+  `auto:true`), keeping the audit trail able to distinguish a human "yes" from `--auto`'s
+  soft-gate defaults from a fully unattended bypass. See `skills/crg-farm/methodology.md`
+  §Auto-bypass mode.
+- **`workflows/crg-debug.farm-bypass.js` — the harness-held option for `--auto-bypass`.** A new
+  deterministic Workflow, installed by the existing `crg-deterministic` enabler, that owns RECON
+  (dedup + rank + the top-5 cap), TRIAGE, FIX/escalation, and PR-prep in real JS instead of prompt
+  compliance — the top-5 cap, the 5-way concurrency cap, and the one-shot-per-tier escalation rule
+  are all enforced in code (a strictly-climbing tier function that cannot return the tier it was
+  just called with), not trusted to a model self-policing them across up to 5 parallel repos.
+  Composes the existing `crg-debug.js` Workflow unmodified via the `workflow()` nesting primitive
+  for both TRIAGE and FIX passes, so the underlying detect/fix engine is identical between prose
+  and harness auto-bypass. `/crg-farm --auto-bypass` prefers it automatically once installed;
+  `--prose` forces the prompt-driven path (needed for a scoped `/xplore` sweep, which a Workflow
+  agent can't run). See `skills/crg-farm/methodology.md` §Auto-bypass mode → "Prose vs. harness".
+
 ## [0.6.0] - 2026-06-30
 
 ### Added
