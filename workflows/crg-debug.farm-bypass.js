@@ -357,15 +357,25 @@ Return the PR URL and the branch name.`,
   }
 )
 
-const results = settled.filter(Boolean)
+// settled is index-aligned with capped: a stage that throws (e.g. a subagent completes without
+// structured output) drops that candidate's slot to null. Recover those slots as `errored` with the
+// candidate's original identity instead of filtering them away — every capped candidate must appear
+// in the run's outcome; a silent drop reads as "never ran" and loses the candidate entirely.
+const results = capped.map((candidate, i) => settled[i] || {
+  candidate,
+  outcome: 'errored',
+  reason: 'pipeline dropped this candidate — a stage subagent threw or completed without structured output (see the run failures log for the failing stage)',
+})
 const shipped = results.filter(r => r.outcome === 'shipped')
 const advisories = results.filter(r => r.outcome === 'advisory-compiled')
-const handedOff = results.filter(r => r.outcome !== 'shipped' && r.outcome !== 'advisory-compiled')
+const errored = results.filter(r => r.outcome === 'errored')
+const handedOff = results.filter(r => !['shipped', 'advisory-compiled', 'errored'].includes(r.outcome))
 const unfarmable = results.filter(r => r.outcome === 'unfarmable')
 
 log(
   `Auto-bypass complete: ${shipped.length} PR(s) opened, ${advisories.length} security advisory report(s) compiled, ${handedOff.length} handed off` +
     (unfarmable.length ? ` (${unfarmable.length} unfarmable — env not buildable)` : '') +
+    (errored.length ? `, ${errored.length} errored (pipeline drop — see failures log)` : '') +
     `, ${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
 )
 
@@ -377,5 +387,6 @@ return {
   droppedByCap: droppedByCap.map(c => ({ repo: c.repo, issueRef: c.issueRef })),
   shipped,
   advisories,
+  errored,
   handedOff,
 }

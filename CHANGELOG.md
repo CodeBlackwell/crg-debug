@@ -4,6 +4,17 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.1] - 2026-07-01
+
+### Fixed
+- **`/crg-farm --auto-bypass` no longer silently drops a candidate whose pipeline stage errors.**
+  When a per-candidate stage threw (e.g. a subagent completed without returning structured output),
+  `pipeline()` nulled that slot and `settled.filter(Boolean)` discarded it — the candidate vanished
+  from the run's outcome entirely, reading as if it never ran. The run aggregation now recovers
+  dropped slots by index (`settled` is index-aligned with the capped candidates) and surfaces each
+  as `outcome: 'errored'` with the candidate's original repo/issue identity and a reason, kept
+  distinct from `handedOff`. Added an `errored` bucket to the summary and the workflow return.
+
 ## [0.10.0] - 2026-07-01
 
 ### Changed
