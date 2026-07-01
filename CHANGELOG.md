@@ -4,6 +4,22 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-07-01
+
+### Changed
+- **Security-sensitive bugs are now auto-routed to the advisory track under `/crg-farm
+  --auto-bypass`** (previously they were excluded and handed off untouched, requiring a separate
+  `--prose` re-run to get a report). The bypass harness now runs the full advisory track itself in a
+  new **Advisory** pipeline stage — PoC-VERIFY → TRACE-EXPLOIT-PATH → SEVERITY-CALIBRATE →
+  COMPILE-REPORT — auto-passing `GATE-ADVISORY-REVIEW` to `save-only`. It writes the report to
+  `~/.claude/crg-farm/advisories/` and stops there. **The safety invariants are unchanged:**
+  security-sensitive candidates still never enter FIX/PR-prep, and the harness never files, emails,
+  commits, PRs, or otherwise transmits the report — the deliverable is the on-disk report only.
+  `GATE-SUBMIT` is still never crossed by any flag. The prose path is unchanged (a human reviews the
+  report at `GATE-ADVISORY-REVIEW`). Implemented in `workflows/crg-debug.farm-bypass.js`; the
+  `--auto-bypass` docs in `skills/crg-farm/SKILL.md`, `skills/crg-farm/methodology.md`, and
+  `README.md` were updated to match.
+
 ## [0.9.0] - 2026-07-01
 
 ### Added

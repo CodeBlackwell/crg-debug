@@ -1,12 +1,13 @@
 export const meta = {
   name: 'crg-farm-bypass',
   description:
-    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 5 -> per-repo TRIAGE (security-sensitive bugs are classified and excluded, never auto-PR-ed) -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, security exclusion, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
+    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 5 -> per-repo TRIAGE (security-sensitive bugs are classified and auto-routed to the advisory track — PoC-verify + exploit-path trace + calibrated report compiled to disk, never auto-PR-ed, never transmitted) -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, security exclusion, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
   whenToUse:
     'Requires args {direction: "themed"|"wildcard"|"scoped", query?, repo?, issueRef?, maxTier?, methodologyPath, crgDebugPath, farmDbPath, reposRoot, farmRunId}. Invoke ONLY when the user has explicitly passed --auto-bypass to /crg-farm and this file is installed (the crg-deterministic enabler copies it alongside crg-debug.js). Never invoke for the default, gated /crg-farm flow — that one needs AskUserQuestion and stays in the main loop.',
   phases: [
     { title: 'Recon', detail: 'gh search/issue-list + two-pass dedup + rank, capped to top 5' },
-    { title: 'Triage', detail: 'clone/sync + provision a dedicated cached container env + crg-debug --detect-only per candidate repo (unbuildable envs hand off as unfarmable), then a security classification pass that excludes and hands off any security-sensitive bug' },
+    { title: 'Triage', detail: 'clone/sync + provision a dedicated cached container env + crg-debug --detect-only per candidate repo (unbuildable envs hand off as unfarmable), then a security classification pass that excludes any security-sensitive bug from FIX/PR and auto-routes it to the advisory track' },
+    { title: 'Advisory', detail: 'security-sensitive candidates auto-routed here: PoC-verify + trace exploit path + calibrate severity + compile a report to disk. Never a fix, never a commit, never a PR, never transmitted — stops at save-only' },
     { title: 'Fix', detail: 'crg-debug --from-ledger with escalation; a regression climbs one tier, never a same-tier retry' },
     { title: 'PR', detail: 'auto commit, push, open as draft — stops there, GATE-SUBMIT stays human' },
   ],
@@ -147,6 +148,17 @@ if (!capped.length) {
   return { farmRunId, direction, candidatesConsidered: rankedFresh.length, candidatesRun: 0, droppedByCap: [], shipped: [], handedOff: [] }
 }
 
+const ADVISORY_SCHEMA = {
+  type: 'object',
+  required: ['reportPath', 'severity', 'pocVerdict'],
+  properties: {
+    reportPath: { type: 'string' },
+    severity: { type: 'string' },
+    pocVerdict: { type: 'string', enum: ['confirmed-exploitable', 'confirmed-not-exploitable', 'inconclusive-could-not-execute'] },
+    reachability: { type: 'string' },
+  },
+}
+
 // ---- Phase 2/3/4: per-candidate pipeline (TRIAGE -> FIX/escalate -> PR) --------
 // pipeline() gives each candidate its own stage chain with no barrier between
 // stages — repo A can be at PR while repo B is still triaging. Concurrency is
@@ -193,11 +205,15 @@ const settled = await pipeline(
       }
     )
     if (secCheck && secCheck.securitySensitive) {
+      // Auto-route to the advisory track (handled in Stage 2). It never turns into a fix/commit/PR
+      // and never transmits — it compiles a report to disk and stops at save-only.
       return {
         candidate,
         repoRoot: clone.repoRoot,
-        outcome: 'handed-to-human',
-        reason: `security-sensitive (${(secCheck.vulnClasses || []).join(', ') || 'unspecified class'}) — the auto-bypass harness never turns a security-sensitive bug into an autonomous PR; run without --auto-bypass (or with --prose) to route it through the advisory track (PoC-VERIFY/TRACE-EXPLOIT-PATH/GATE-ADVISORY-REVIEW)`,
+        ledgerPath: triage.ledgerPath,
+        confirmedBugs: triage.confirmedBugs,
+        vulnClasses: secCheck.vulnClasses || [],
+        outcome: 'security-advisory',
       }
     }
 
@@ -209,6 +225,34 @@ const settled = await pipeline(
   // exactly one shot. Regression at maxTier itself hands off immediately.
   // unfixed-but-clean escalates freely up the ladder, same rule.
   async (triaged, candidate) => {
+    // Security-sensitive → advisory track, auto-routed. Runs PoC-VERIFY -> TRACE-EXPLOIT-PATH ->
+    // SEVERITY-CALIBRATE -> COMPILE-REPORT and stops at save-only (GATE-ADVISORY-REVIEW auto-passed).
+    // The report is written to disk for the human; it is NEVER fixed, committed, PR-ed, filed,
+    // emailed, or otherwise transmitted on the human's behalf under any flag.
+    if (triaged.outcome === 'security-advisory') {
+      const adv = await agent(
+        `A confirmed security-sensitive bug in ${triaged.repoRoot} (${candidate.repo} ${candidate.issueRef}, vuln class(es): ${(triaged.vulnClasses || []).join(', ') || 'unspecified'}) is routed to the advisory track. Run the full track from methodology.md §"Security classification & the advisory track" (${methodologyPath}) against the REAL cloned code, in order:
+1. PoC-VERIFY: write and ACTUALLY RUN a minimal, non-destructive PoC (a crafted input through the real function/class, a harmless side effect as proof — never a destructive payload). Record the PoC code, the exact command, the full output, and a verdict: confirmed-exploitable / confirmed-not-exploitable / inconclusive-could-not-execute. If you cannot build/run the code, say so honestly and use inconclusive — never fabricate a passing PoC.
+2. TRACE-EXPLOIT-PATH: grep every call site of the vulnerable sink and follow the taint hop by hop from an attacker-reachable input to the vulnerable line. Produce a reachability verdict (remote-unauthenticated / remote-authenticated / local-only / operator-only-not-exploitable) backed by evidence.
+3. SEVERITY-CALIBRATE: recompute severity from steps 1-2 (reachability x impact x PoC verdict), independent of any upstream label. Cap at "potential" when the PoC is inconclusive.
+4. COMPILE-REPORT: get the report path with \`node ${farmDbPath} advisory-path '${candidate.repo}' '${candidate.repo}::${candidate.issueRef}'\` (always OUTSIDE the cloned repo tree) and write the report there — summary, affected file(s)/line(s), vuln class, root cause, the taint trace, the PoC (code/command/output), calibrated severity + rationale, a suggested fix in prose/diff form (NOT applied), and a blank "## Disclosure timeline" section. Then append one advisory record: \`node ${farmDbPath} append\` with {"type":"advisory","farmRunId":"${farmRunId}","repo":"${candidate.repo}","issueRef":"${candidate.issueRef}","keyOf":"${candidate.repo}::${candidate.issueRef}","vulnClass":${JSON.stringify((triaged.vulnClasses || []).join(', ') || 'unspecified')},"severity":"<calibrated>","pocVerdict":"<verdict>","reportPath":"<path>","decision":"save-only"} on stdin.
+
+GATE-ADVISORY-REVIEW is auto-passed to save-only under --auto-bypass: DO NOT file, email, open an issue/PR, or otherwise transmit the report anywhere. DO NOT modify, stage, or commit any file in the repo working tree. Save the report to disk only. Return the report path, calibrated severity, PoC verdict, and reachability verdict.
+
+confirmedBugs: ${JSON.stringify(triaged.confirmedBugs)}`,
+        { phase: 'Advisory', schema: ADVISORY_SCHEMA, label: `advisory:${candidate.repo}` }
+      )
+      return {
+        candidate,
+        repoRoot: triaged.repoRoot,
+        outcome: 'advisory-compiled',
+        reportPath: adv && adv.reportPath,
+        severity: adv && adv.severity,
+        pocVerdict: adv && adv.pocVerdict,
+        reachability: adv && adv.reachability,
+        vulnClasses: triaged.vulnClasses || [],
+      }
+    }
     if (triaged.outcome) return triaged
 
     const tierPick = await agent(
@@ -281,6 +325,9 @@ const settled = await pipeline(
   // Stage 3 — GATE-DIFF auto-approved (commit + push + open draft PR), GATE-SUBMIT
   // always logged as keep-draft (never bypassed by any flag) — or a hand-off report.
   async (fixed, candidate) => {
+    // Advisory-track candidates already compiled + logged their report in the Advisory stage; they
+    // never touch GATE-DIFF/PR-PREP/GATE-SUBMIT. Pass straight through.
+    if (fixed.outcome === 'advisory-compiled') return fixed
     if (fixed.outcome !== 'fixed') {
       await agent(
         `Append one farm-DB "gate" record via \`node ${farmDbPath} append\`: {"type":"gate","farmRunId":"${farmRunId}","gate":"GATE-ESCALATE","decision":"hand-to-human","bypass":true,"repo":"${candidate.repo}","reason":${JSON.stringify(fixed.reason || fixed.outcome)}} on stdin. Return {"logged":true}.`,
@@ -312,11 +359,12 @@ Return the PR URL and the branch name.`,
 
 const results = settled.filter(Boolean)
 const shipped = results.filter(r => r.outcome === 'shipped')
-const handedOff = results.filter(r => r.outcome !== 'shipped')
+const advisories = results.filter(r => r.outcome === 'advisory-compiled')
+const handedOff = results.filter(r => r.outcome !== 'shipped' && r.outcome !== 'advisory-compiled')
 const unfarmable = results.filter(r => r.outcome === 'unfarmable')
 
 log(
-  `Auto-bypass complete: ${shipped.length} PR(s) opened, ${handedOff.length} handed off` +
+  `Auto-bypass complete: ${shipped.length} PR(s) opened, ${advisories.length} security advisory report(s) compiled, ${handedOff.length} handed off` +
     (unfarmable.length ? ` (${unfarmable.length} unfarmable — env not buildable)` : '') +
     `, ${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
 )
@@ -328,5 +376,6 @@ return {
   candidatesRun: capped.length,
   droppedByCap: droppedByCap.map(c => ({ repo: c.repo, issueRef: c.issueRef })),
   shipped,
+  advisories,
   handedOff,
 }

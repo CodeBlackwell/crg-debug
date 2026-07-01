@@ -13,7 +13,8 @@ A main-loop orchestrator that turns crg-debug into a repeatable bug-farming loop
 RECON (/xplore | gh search) → dedup → rank → GATE-RECON → TRIAGE (--detect-only) → GATE-TRIAGE
   security-sensitive bugs: → GATE-SECURITY-ROUTE → PoC-VERIFY → TRACE-EXPLOIT-PATH
     → SEVERITY-CALIBRATE → COMPILE-REPORT → GATE-ADVISORY-REVIEW → TRACK  (never reaches PR-PREP;
-    the --auto-bypass harness excludes and hands these off instead of attempting the track)
+    the --auto-bypass harness auto-runs this track too, auto-passing GATE-ADVISORY-REVIEW to
+    save-only — report compiled to disk, never a PR, never transmitted)
   everything else: → FIX (--from-ledger, escalating) → GATE-ESCALATE
     → GATE-DIFF → PR-PREP → GATE-SUBMIT → TRACK
 ```
@@ -205,13 +206,17 @@ to the **Security advisory track** below instead of Step 3; `treat-as-normal-bug
 normal confirmedBugs set and proceeds through Step 3 like anything else. Under `--auto`, skip
 `gate-asked` — the recommended default (`advisory-track`) is auto-passed, nothing is shown.
 
-**Under the `--auto-bypass` harness, this gate is never reached.** The harness classifies the same
-way inside its own Triage stage, but instead of running the advisory track it excludes the whole
-candidate from FIX/PR and hands it off with the flagged `vulnClass`es in the reason — see
-`workflows/crg-debug.farm-bypass.js`. Only the prose path (a plain `/crg-farm` run, or
-`--auto-bypass --prose`) ever runs the track below.
+**Under the `--auto-bypass` harness, `GATE-SECURITY-ROUTE` is auto-passed to `advisory-track`.** The
+harness classifies the same way inside its own Triage stage, then routes each security-sensitive
+candidate into the advisory track itself — running PoC-VERIFY/TRACE-EXPLOIT-PATH/SEVERITY-CALIBRATE/
+COMPILE-REPORT and auto-passing `GATE-ADVISORY-REVIEW` to `save-only` — see
+`workflows/crg-debug.farm-bypass.js` (the Advisory stage). Such a candidate never enters FIX/PR-prep,
+and the harness never files, emails, or transmits the report: the deliverable is the on-disk report
+only, under `~/.claude/crg-farm/advisories/`. The prose path (a plain `/crg-farm` run, or
+`--auto-bypass --prose`) runs the same track with a human present at `GATE-ADVISORY-REVIEW` in place
+of the auto-passed save-only.
 
-## Security advisory track (bugs routed by GATE-SECURITY-ROUTE, prose path only)
+## Security advisory track (bugs routed by GATE-SECURITY-ROUTE)
 
 Never reaches GATE-DIFF, PR-PREP, or GATE-SUBMIT — no code is committed or pushed. Per bug (or
 tightly-coupled cluster sharing one root cause), per `methodology.md` §Security classification &

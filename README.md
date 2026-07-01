@@ -147,9 +147,10 @@ insecure deserialization, crypto misuse, memory-safety) never enters that pipeli
 hop-by-hop exploit-path trace, an independently recalibrated severity, and a compiled Markdown
 report under `~/.claude/crg-farm/advisories/`, gated by **`GATE-ADVISORY-REVIEW`** before anything
 is finalized. This tool never files, emails, or discloses that report on your behalf under any
-option — disclosure stays your call. `--auto-bypass`'s harness never attempts this track itself; it
-excludes and hands the bug off instead. See `skills/crg-farm/methodology.md` §Security
-classification & the advisory track.
+option — disclosure stays your call. `--auto-bypass`'s harness runs this track itself too (excluding
+the bug from FIX/PR-prep, then auto-passing `GATE-ADVISORY-REVIEW` to save-only — report to disk,
+never a PR, never transmitted). See `skills/crg-farm/methodology.md` §Security classification & the
+advisory track.
 
 ## 🗂️ Layout
 
