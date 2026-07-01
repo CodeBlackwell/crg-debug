@@ -3,11 +3,16 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.4.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
 file-disjoint sets. It applies fixes to the working tree and **never commits**.
+
+`/crg-farm` 🌾 wraps that engine in a bug-farming loop: it sources real open bugs (via `/xplore`),
+verifies none are already fixed or in-flight upstream, triages them, escalates the model only where
+repair struggles, and ships **draft PRs** — pausing for your approval at every consequential
+boundary (commit and upstream submit are always hard stops). See **Usage** below.
 
 ---
 
