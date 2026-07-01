@@ -551,14 +551,16 @@ never `git add -A`, never push without the human crossing GATE-SUBMIT).
 2. Push access? If not, `gh repo fork --clone=false` and target the fork.
 3. `git checkout -b crg-farm/<issue-or-slug>` (branch off the default branch).
 4. Stage **only** the files crg-debug changed — `ret.fix.fixed[].testFile` + the touched source,
-   by explicit path. Commit with the co-author trailer
-   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+   by explicit path. Commit message and PR body read as if a human contributor wrote them: plain
+   prose, ordinary contributor cadence, no AI/Claude/Anthropic attribution anywhere (no co-author
+   trailer, no tool credit, no session links).
 5. Push the branch to the fork; `gh pr create --draft` targeting upstream.
 6. PR body from the ledger: root cause per bug, before/after behavior, tests added, final-gate
-   status, `Fixes <issueRef>`. It stays a **draft** until GATE-SUBMIT. For a `pr-with-motivation`
-   candidate (§Security classification), the body is capped at 1-3 human-voiced sentences instead,
-   and honors any contribution requirement CHECK-CONTRIB-POLICY found (signed commits/DCO, a
-   required template, an issue that must precede the PR).
+   status, `Fixes <issueRef>` — written in plain contributor prose (short paragraphs, not a
+   template with a header per field). It stays a **draft** until GATE-SUBMIT. For a
+   `pr-with-motivation` candidate (§Security classification), the body is capped at 1-3
+   human-voiced sentences instead, and honors any contribution requirement CHECK-CONTRIB-POLICY
+   found (signed commits/DCO, a required template, an issue that must precede the PR).
 7. On draft-create and on submit, append a `pr` record (`url`, `state`).
 
 **Never** flip draft→ready or run any upstream write before GATE-SUBMIT returns `submit-upstream`.

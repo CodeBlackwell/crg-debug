@@ -4,6 +4,17 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2026-07-01
+
+### Changed
+- **crg-debug/crg-farm commits and PR bodies no longer carry any AI/Claude/Anthropic attribution.**
+  The co-author trailer previously added to every commit (`Co-Authored-By: Claude Opus 4.8 ...`)
+  is gone from the git/PR policy in `skills/crg-debug/methodology.md`, `skills/crg-farm/methodology.md`,
+  `agents/crg-debugger.md`, and the `--auto-bypass` harness's commit/PR-shipping prompt in
+  `workflows/crg-debug.farm-bypass.js`. Commit messages and PR bodies are now written in plain
+  contributor prose and cadence — no tool credit, no session link, no emoji — to avoid the stigma
+  against AI-assisted submissions on repos `/crg-farm` opens PRs against.
+
 ## [0.11.0] - 2026-07-01
 
 ### Changed

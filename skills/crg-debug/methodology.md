@@ -163,7 +163,7 @@ When re-auditing — a second sweep over an already-processed repo, the adversar
 - Edit source files only — never stage or hand-edit a generated artifact (`dist/`, `build/`, bundled/minified output, a lockfile) as if it were a fix; its bug lives in the source that produces it.
 - Commit **only when the user explicitly asks.** Default deliverable = fixes in the working tree + the report.
 - If on the default branch (`git branch --show-current` is `main`/`master`), create and switch to `crg-debug/<short-topic>` before the first commit.
-- Co-author trailer on every commit body: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+- No AI/Claude/Anthropic attribution in any commit — no co-author trailer, no tool credit, no session link, no emoji. Write commit messages the way the human fixing this bug themselves would: plain prose, ordinary cadence.
 - **Never `git push`.** Confirm before any destructive action (`git reset --hard`, `checkout -- <file>`, `clean`, `rm`, branch deletion, rebase).
 
 ### Report layout
