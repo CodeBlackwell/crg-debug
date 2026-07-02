@@ -1,0 +1,99 @@
+{
+  "note": "Reference only. Projects whose own docs welcome AI-agent contributions, curated as farm targets for a human choosing where to point crg-farm. Nothing in the harness reads this. evidenceType distinguishes an EXPLICIT written welcome ('AI-assisted contributions are welcome') from a repo that merely ships an agent-instruction file (AGENTS.md / copilot-instructions.md) — the file is a strong signal the maintainers use agents, but it is NOT consent (libsdl-org/SDL ships an AGENTS.md that BANS AI PRs). Verify a repo's live stance before farming, and check the registries + avoid list below. Most explicit-welcome repos REQUIRE an AI-assisted disclosure trailer on the PR — honor it per target.",
+  "registries": [
+    {
+      "name": "melissawm/open-source-ai-contribution-policies",
+      "url": "https://github.com/melissawm/open-source-ai-contribution-policies",
+      "purpose": "source of truth — permit-and-ban policy registry; cross-check every candidate here first"
+    },
+    {
+      "name": "brib/slopfree-software-index",
+      "url": "https://codeberg.org/brib/slopfree-software-index",
+      "purpose": "the ban catalog (~120 repos that reject AI code) — the negative list"
+    }
+  ],
+  "projects": [
+    {
+      "repo": "rjmurillo/moq.analyzers",
+      "stack": "C# / Roslyn analyzer",
+      "evidenceType": "explicit-welcome",
+      "evidence": "CONTRIBUTING.md §\"Universal Agent Success Principles for Project Maintainers\" plus .github/copilot-instructions.md, .github/chatmodes/, .github/instructions/ — deliberately structured for AI agents to contribute.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "rjmurillo/MemoryCache.Analyzers",
+      "stack": "C# / Roslyn analyzer",
+      "evidenceType": "agent-file",
+      "evidence": ".github/copilot-instructions.md is a template-clone of moq.analyzers ('PRs that do not comply will be closed, regardless of author (human or Copilot)'). Same maintainer, same buildable analyzer scaffold — closest true sibling.",
+      "note": "Verify merge cadence: no merged PRs since 2025-06 though the maintainer is active on moq.analyzers.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "meziantou/Meziantou.Analyzer",
+      "stack": "C# / Roslyn analyzer",
+      "evidenceType": "agent-file",
+      "evidence": "Root AGENTS.md + CLAUDE.md with detailed agent build/test/convention rules. Very active (weekly merges), small backlog, no CLA — strongest non-rjmurillo analyzer target.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "nunit/nunit",
+      "stack": "C# / test framework",
+      "evidenceType": "agent-file",
+      "evidence": "AGENTS.md is an explicit agent-PR workflow contract ('open the PR only after build and tests pass'). Closest thing to an actual welcome; testing-domain adjacency to the anchor.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "App-vNext/Polly",
+      "stack": "C# / .NET resilience",
+      "evidenceType": "agent-file",
+      "evidence": "Clean, build-command-rich AGENTS.md; mainstream .NET library.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "sqlfluff/sqlfluff",
+      "stack": "Python / SQL linter",
+      "evidenceType": "explicit-welcome",
+      "evidence": "CONTRIBUTING.md §\"AI-Assisted Contributions\": welcome when they meet the same quality standards. A linter — closely analogous to the analyzer anchor.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "coder/coder",
+      "stack": "Go",
+      "evidenceType": "explicit-welcome",
+      "evidence": "Dedicated docs/about/contributing/AI_CONTRIBUTING.md — whole file is an AI-onboarding policy; welcome with mandatory manual verification.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "gradle/gradle",
+      "stack": "Java / Kotlin",
+      "evidenceType": "explicit-welcome",
+      "evidence": "Dedicated AI_POLICY.md: 'We welcome AI-assisted contributions from people who understand what they're submitting and are ready to collaborate on it.'",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "better-auth/better-auth",
+      "stack": "TypeScript / auth",
+      "evidenceType": "explicit-welcome",
+      "evidence": "CONTRIBUTING.md §\"AI Policy\": AI-assisted contributions welcome as long as they solve a real problem, follow coding standards, and include tests. High issue volume.",
+      "added": "2026-07-02"
+    },
+    {
+      "repo": "huggingface/transformers",
+      "stack": "Python",
+      "evidenceType": "explicit-welcome",
+      "evidence": "CONTRIBUTING.md: AI-assisted contributions welcome, 'coordinated, scoped, and verified to keep review load manageable.' Top-star, but a stiff review bar.",
+      "added": "2026-07-02"
+    }
+  ],
+  "avoid": {
+    "note": "Explicit AI bans or PR-restrictions — do NOT farm. AGENTS.md presence does not override a ban (libsdl-org/SDL ships one that bans). Full catalog in the slopfree registry above.",
+    "examples": [
+      "curl/curl",
+      "qemu (qemu.org AI-generated-content policy)",
+      "ziglang/zig",
+      "openjdk (interim no-AI policy)",
+      "dotnet/roslyn-analyzers (ARCHIVED — no PRs; moved to dotnet/sdk)",
+      "libsdl-org/SDL (AGENTS.md that bans AI PRs — the file≠welcome trap case)"
+    ]
+  }
+}

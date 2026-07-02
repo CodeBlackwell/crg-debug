@@ -180,6 +180,21 @@ comparable-impact farmable one*. Under `--auto-bypass` the final demotion is re-
 `low` prior, recon's impact order preserved within each tier) — the cap that decides which repos
 actually run is enforced in code, not left to the model's own ordering.
 
+### AI-welcome greenlist (`greenlist.json`, reference only)
+
+`skills/crg-farm/greenlist.json` is a curated list of projects whose own docs welcome AI-agent
+contributions (e.g. `rjmurillo/moq.analyzers`). It is a **human aid for choosing where to farm**,
+not a harness input — nothing in RECON, ranking, or the PR channel reads it. Each entry tags its
+`evidenceType`: an **explicit-welcome** (docs literally say AI contributions are welcome) is real
+consent; an **agent-file** (repo merely ships `AGENTS.md`/`copilot-instructions.md`) is a strong
+*implicit* signal but not consent — `libsdl-org/SDL` ships an `AGENTS.md` that *bans* AI PRs, so
+never infer welcome from the file alone. The file also carries two authoritative `registries` (the
+`melissawm` permit-and-ban list, the `slopfree` ban catalog) to cross-check against, and an `avoid`
+list of explicit bans. Most explicit-welcome repos require an AI-assisted **disclosure trailer** on
+the PR — honor it per target if the farm ever opens external PRs there. Add a repo only after
+confirming its live stance, evidence recorded. If a real need to weight or gate on it appears, wire
+it then — until then it stays reference-only.
+
 GATE-RECON then shows the ranked list, not a raw dump. Because a ranked list commonly runs past
 the 4-option cap the Named-Gate Protocol allows, `select-subset` (SKILL.md §GATE-RECON) is a
 two-step pick: post the full ranked list as plain text (repo, issue, one-line impact/cadence
