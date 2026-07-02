@@ -112,6 +112,10 @@ const fleetPlan = parts => {
 }
 // <<< pure-helpers
 
+// Replaced with the plugin commit hash by bin/crg-deterministic at install time, and logged
+// on launch — so a stale ~/.claude/workflows/ install is visible in the first log line.
+const INSTALL_STAMP = 'dev-repo'
+
 // ---- args ---------------------------------------------------------------------
 const a = typeof args === 'string' ? JSON.parse(args) : args
 const repoRoot = a && a.repoRoot
@@ -340,6 +344,12 @@ const GATE_SCHEMA = {
   },
 }
 
+const ASSEMBLE_SCHEMA = {
+  type: 'object',
+  required: ['ok', 'rules', 'cut'],
+  properties: { ok: { type: 'boolean' }, rules: { type: 'integer' }, cut: { type: 'integer' } },
+}
+
 // ---- Score-phase schemas (Score + Compress, additions only) ---------------------
 // Compact ingest: the scorer's `rules` CLI prints counts + the indexed rule list judges credit
 // against. The full ledger NEVER transits an agent — a 100KB+ ledger through a model's
@@ -415,7 +425,7 @@ if (fromLedger) {
   if (fromLedger !== ledgerPath) {
     throw new Error(`fromLedger must be the canonical ${ledgerPath} — the scorer CLI reads only that path`)
   }
-  log(`crg-agentsmd score-from-ledger: ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}`)
+  log(`crg-agentsmd score-from-ledger: ${fromLedger} on ${repoRoot} · model: ${model || 'session default'} · build ${INSTALL_STAMP}`)
   const loaded = await agent(
     `Run this command inside the repo at ${repoRoot}, do NOT edit any file, and return the JSON it prints on stdout EXACTLY as written — every field, ruleList byte-for-byte:
 node ${scoreToolPath} rules ${repoRoot}
@@ -435,7 +445,7 @@ It reads the mined ledger and prints the indexed judged-rule list scoring credit
 
 if (!fromLedger) {
 // ---- Phase 0: Corpus ------------------------------------------------------------
-log(`crg-agentsmd on ${repoRoot} · model: ${model || 'session default'} · holdout ${Math.round(holdoutFraction * 100)}% · maxMiners ${maxMiners}`)
+log(`crg-agentsmd on ${repoRoot} · model: ${model || 'session default'} · holdout ${Math.round(holdoutFraction * 100)}% · maxMiners ${maxMiners} · build ${INSTALL_STAMP}`)
 
 const setup = await agent(
   `Prepare the review-corpus for an AGENTS.md mining run on the repo at ${repoRoot}.
@@ -607,17 +617,23 @@ rules.sort((x, y) => (x.restatement - y.restatement) || (y.modalities.length - x
 log(`Verify: ${rules.length} rules survive (${rules.filter(r => r.restatement).length} demoted as restatement) · ${cut.length} cut`)
 
 // ---- Persist the rules ledger -------------------------------------------------------------
-const ledger = {
-  repoRoot, generatedBy: 'crg-agentsmd', model: model || 'session',
-  inventory: inv, minersPlanned: miners.length,
-  rules, cut,
-  scoring: null, // filled by the scoring phase (holdout replay) in a later run
-}
+// Fragment + deterministic assemble: the heredoc carries only the rules fragment, the assemble
+// CLI builds ledger.json from disk fragments (inventory.json + rules.json), and the count
+// invariant catches a fragment truncated in transit — the write-side twin of the ingest check.
+const fragment = { generatedBy: 'crg-agentsmd', model: model || 'session', minersPlanned: miners.length, rules, cut }
 await agent(
-  persistPrompt(ledgerPath, JSON.stringify(ledger, null, 2)),
-  { label: 'persist', phase: 'Verify', model: mechModel },
+  persistPrompt(`${repoRoot}/.crg-agentsmd/rules.json`, JSON.stringify(fragment, null, 2)),
+  { label: 'persist:rules', phase: 'Verify', model: mechModel },
 )
-log(`Ledger persisted -> ${ledgerPath}`)
+const assembled = await agent(
+  `Run this command inside the repo at ${repoRoot}, do NOT edit any other file, and return the JSON it prints:
+node ${corpusToolPath} assemble ${repoRoot}`,
+  { label: 'assemble:ledger', phase: 'Verify', schema: ASSEMBLE_SCHEMA, model: mechModel },
+)
+if (!assembled || assembled.rules !== rules.length || assembled.cut !== cut.length) {
+  throw new Error(`ledger assembly mismatch: disk has ${assembled ? `${assembled.rules} rules · ${assembled.cut} cut` : 'nothing'} but the run produced ${rules.length} rules · ${cut.length} cut — the rules fragment was truncated in transit`)
+}
+log(`Ledger assembled -> ${ledgerPath} (${assembled.rules} rules · ${assembled.cut} cut)`)
 
 // ---- return --------------------------------------------------------------------------------
 return {

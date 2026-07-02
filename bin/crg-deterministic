@@ -22,6 +22,15 @@ cp "$plugin_root/workflows/crg-build.js" "$dest/crg-build.js"
 cp "$plugin_root/skills/crg-build/methodology.md" "$dest/crg-build.methodology.md"
 cp "$plugin_root/lib/build-profile.mjs" "$dest/crg-build.profile.mjs"
 
+# crg-agentsmd (AGENTS.md farming). The workflow is stamped with the plugin commit at install
+# time and logs it on launch, so a stale install is visible in the first log line of any run.
+# Lib copies get their relative imports rewritten to the installed filenames.
+stamp="$(git -C "$plugin_root" rev-parse --short HEAD 2>/dev/null || echo unknown)-$(date +%Y%m%d)"
+sed "s/dev-repo/${stamp}/" "$plugin_root/workflows/crg-agentsmd.js" > "$dest/crg-agentsmd.js"
+cp "$plugin_root/skills/crg-agentsmd/methodology.md" "$dest/crg-agentsmd.methodology.md"
+sed "s|'./issue-ref.mjs'|'./crg-debug.issue-ref.mjs'|" "$plugin_root/lib/corpus.mjs" > "$dest/crg-agentsmd.corpus.mjs"
+sed "s|'./corpus.mjs'|'./crg-agentsmd.corpus.mjs'|" "$plugin_root/lib/agentsmd-score.mjs" > "$dest/crg-agentsmd.score.mjs"
+
 echo "Installed deterministic crg-debug workflow:"
 echo "  $dest/crg-debug.js"
 echo "  $methodology"
@@ -33,6 +42,10 @@ echo "  $dest/crg-debug.farm-bypass.js        (/crg-farm --auto-bypass harness)"
 echo "  $dest/crg-build.js                    (/crg-build)"
 echo "  $dest/crg-build.methodology.md        (/crg-build)"
 echo "  $dest/crg-build.profile.mjs           (/crg-build)"
+echo "  $dest/crg-agentsmd.js                 (/crg-agentsmd, build ${stamp})"
+echo "  $dest/crg-agentsmd.methodology.md     (/crg-agentsmd)"
+echo "  $dest/crg-agentsmd.corpus.mjs         (/crg-agentsmd)"
+echo "  $dest/crg-agentsmd.score.mjs          (/crg-agentsmd)"
 echo "Run /crg-debug — it now prefers the Workflow (use --prose to force prose mode)."
 echo "/crg-farm --auto-bypass now prefers this harness too (use --prose to force prose mode)."
 echo "/crg-build now prefers its Workflow too (use --prose to force prose mode)."

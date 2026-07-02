@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { splitHoldout, detectEras, eraOf, buildInventory, estTokens } from '../lib/corpus.mjs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { splitHoldout, detectEras, eraOf, buildInventory, estTokens, assembleLedger } from '../lib/corpus.mjs'
 
 const pr = (number, reviewer, mergedAt, state = 'merged') => ({
   number, state, author: 'contrib', createdAt: mergedAt, mergedAt,
@@ -54,4 +57,21 @@ test('buildInventory math and thin-corpus gate', () => {
   assert.equal(inv.maintainerRoster[0].login, 'alice')
   const rich = buildInventory({ prs, comments, gitRows: [], holdout: [], minReviewedPRs: 20 })
   assert.equal(rich.thinCorpus, false)
+})
+
+test('assembleLedger builds ledger.json from fragments and resets scoring', () => {
+  const root = mkdtempSync(join(tmpdir(), 'corpus-assemble-'))
+  mkdirSync(join(root, '.crg-agentsmd', 'corpus'), { recursive: true })
+  writeFileSync(join(root, '.crg-agentsmd', 'corpus', 'inventory.json'), JSON.stringify({ reviewedPRs: 40 }))
+  writeFileSync(join(root, '.crg-agentsmd', 'rules.json'), JSON.stringify({
+    generatedBy: 'crg-agentsmd', model: 'sonnet', minersPlanned: 5,
+    rules: [{ rule: 'a' }, { rule: 'b' }], cut: [{ rule: 'c' }],
+  }))
+  const out = assembleLedger(root)
+  assert.deepEqual(out, { ok: true, rules: 2, cut: 1 })
+  const ledger = JSON.parse(readFileSync(join(root, '.crg-agentsmd', 'ledger.json'), 'utf8'))
+  assert.equal(ledger.inventory.reviewedPRs, 40)
+  assert.equal(ledger.minersPlanned, 5)
+  assert.equal(ledger.scoring, null)
+  assert.deepEqual(ledger.rules.map(r => r.rule), ['a', 'b'])
 })
