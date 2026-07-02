@@ -4,6 +4,41 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-07-02
+
+### Added
+- **Feed-forward resource caps on every gate container (`--cpus=4 --memory=6g`).** The concurrency
+  cap bounds candidate *count*, not build *weight* — three concurrent heavy gates (a `dotnet` /
+  `gradle` / `cargo` build each forks many compiler processes) still oversubscribed the host; one
+  uncapped run drove a 12-core machine to load 200+ and had to be killed. Every containerized
+  install/toolchain/gate command now carries a fixed CPU + memory cap, bounding worst-case load to
+  ~`CANDIDATE_CAP × cpus` at the container boundary where the resource is actually spent. The cap is
+  a constant, not derived from live load: the Workflow script has no shell to sample the machine and
+  a probe agent would add load and lag a spike — deterministic feed-forward beats a latent feedback
+  loop. Static heavy-toolchain serialization is documented as the next lever if caps prove
+  insufficient; runtime load-sensing is explicitly rejected.
+- **Recon-time security exclusion for `/crg-farm --auto-bypass` (`--no-security`, or "not
+  security" in the query).** Skips security-sensitive candidates during RECON so a wildcard run
+  fills its slots with directly-PR-able functional bugs. This is a heuristic pre-filter only; the
+  authoritative security decision remains TRIAGE's `secCheck` + the advisory track.
+- **In-process verbosity — transitions, decisions, and agent assignments are logged.** A `note()`
+  helper streams every stage transition and decision (with its *why*) to the `/workflows` narration,
+  and a `mark()` helper mirrors the key ones as pollable farm-DB `stage` records — so a run's
+  progress is trackable at a glance without waiting for it to finish.
+
+### Changed
+- **Concurrency lowered from 5 to 3** (candidate cap and in-flight pipeline cap). Combined with the
+  per-container resource caps, this keeps a wildcard run within a single host's headroom.
+
+### Fixed
+- **Fix-quality gates hardened after a stopped run surfaced unshippable fixes.** Two guards added to
+  the crg-debug methodology: a **dead-code guard** (Phase 4 diff review) — every symbol the fix
+  newly declares must have a call site in reachable production code, so an added-but-unused helper
+  can't ride along in a "green" diff; and a **repro-must-compile guard** (TDD RED) — a test that
+  fails to *compile* (wrong language version, a feature the repo's toolchain can't parse, an
+  undefined symbol) is not a valid RED, so a bug whose repro the repo can't express is marked
+  *suspected* rather than forced through.
+
 ## [0.13.0] - 2026-07-01
 
 ### Added

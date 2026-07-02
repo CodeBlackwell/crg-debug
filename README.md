@@ -101,7 +101,7 @@ depends on the direction you give it:
 /crg-farm owner/repo               # scoped: /xplore sweep of that one repo
 /crg-farm --issue owner/repo#123   # scoped: farm a specific reported issue
 /crg-farm --auto                   # auto-pass soft gates; still HARD-stops at commit + PR submit
-/crg-farm --auto-bypass            # fully unattended through commit + a draft PR, top-5 candidates; GATE-SUBMIT stays human
+/crg-farm --auto-bypass            # fully unattended through commit + a draft PR, top-3 candidates; GATE-SUBMIT stays human
 /crg-farm --max-tier sonnet        # cap model escalation below opus
 /crg-farm --env container          # provision a dedicated cached Docker env per repo (default under the harness)
 /crg-farm --env none               # skip provisioning; baseline against the host as-is (no Docker)
@@ -117,8 +117,8 @@ the unfixed bugs) → **GATE-ESCALATE** → **GATE-DIFF** → PR-prep → **GATE
 PR is recorded to `~/.claude/crg-farm/history.jsonl` for cross-run dedup and audit.
 
 `--auto-bypass` is a **separate flag from `--auto`**, never implied by it: it auto-passes every
-gate through commit (`GATE-DIFF`), so a run goes end-to-end unattended — top 5 ranked candidates,
-fixed concurrently (capped at 5 in-flight), committed, and opened as **draft** PRs, ending in a
+gate through commit (`GATE-DIFF`), so a run goes end-to-end unattended — top 3 ranked candidates,
+fixed concurrently (capped at 3 in-flight), committed, and opened as **draft** PRs, ending in a
 report of what opened. It never touches `GATE-SUBMIT` — nothing is ever flipped to
 ready-for-review automatically, no matter what flags were passed; a human still has to submit each
 draft. On a regression, escalation climbs to the next, strictly higher tier — never a retry of the

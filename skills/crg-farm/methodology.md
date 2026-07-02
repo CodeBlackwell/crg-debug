@@ -71,7 +71,7 @@ Every stage appends to the farm DB (§Farm database). RECON→check→TRIAGE is 
 the expensive FIX/escalation only fires on **fresh** candidates that pass verify and GATE-TRIAGE.
 
 Under `--auto-bypass` (a separate flag, §Auto-bypass mode) every gate above auto-passes and the
-loop runs top-to-bottom unattended for up to 5 candidates concurrently — through `GATE-DIFF`
+loop runs top-to-bottom unattended for up to 3 candidates concurrently — through `GATE-DIFF`
 (commit) and stopping at an opened **draft** PR; `GATE-SUBMIT` always resolves to `keep-draft`.
 Security-sensitive bugs go through the same fork above, unattended, with a deliberately
 conservative default at `GATE-DISPATCH-CHANNEL` (§Security classification).
@@ -176,7 +176,7 @@ filter). Two inputs:
 The prior is a **third-order sort key** (after impact and review-likelihood) so a farmable severe
 bug still outranks a farmable cosmetic one; it only sinks a predicted-unbuildable repo *below a
 comparable-impact farmable one*. Under `--auto-bypass` the final demotion is re-applied
-**deterministically in JS** right before the top-5 cap (`priorUnfarmable` sinks hardest, then a
+**deterministically in JS** right before the top-3 cap (`priorUnfarmable` sinks hardest, then a
 `low` prior, recon's impact order preserved within each tier) — the cap that decides which repos
 actually run is enforced in code, not left to the model's own ordering.
 
@@ -291,21 +291,33 @@ and expect to ask for it by name every time; it is never inferred from `--auto` 
 approvals in a prior run.
 
 **Candidate cap.** Immediately after ranking (§Ranking) and before GATE-RECON would normally ask,
-auto-bypass truncates the fresh, ranked candidate list to the **top 5**. This is a hard cap, not a
-default suggestion — a bypass run never triages, fixes, or opens PRs for more than 5 candidates,
+auto-bypass truncates the fresh, ranked candidate list to the **top 3**. This is a hard cap, not a
+default suggestion — a bypass run never triages, fixes, or opens PRs for more than 3 candidates,
 regardless of how many survived dedup.
 
 **Concurrency cap.** Each surviving candidate's TRIAGE → FIX → escalate → PR-prep pipeline runs as
 its own `Workflow` invocation, keyed by repo. Launch each one as soon as it's ready rather than
 batching (don't wait for siblings to finish RECON/TRIAGE before starting a repo's FIX); auto-bypass
-runs pipelines **concurrently, capped at 5 in-flight at once** — satisfied by construction once
+runs pipelines **concurrently, capped at 3 in-flight at once** — satisfied by construction once
 the candidate cap above holds.
+
+**Resource cap (feed-forward, not load-sensing).** The concurrency cap bounds candidate *count*, not
+build *weight* — three concurrent heavy gates (a `dotnet`/`gradle`/`cargo` build each forks many
+compiler processes) can still oversubscribe the host; one uncapped run drove a 12-core machine to
+load 200+ and had to be killed. So every gate container carries a fixed `--cpus=4 --memory=6g` cap
+(see crg-debug methodology, *Environment provisioning*), bounding worst-case load to ~`3 × cpus` at
+the container boundary. The cap is deliberately a **constant, not derived from live load**: the
+Workflow script has no shell to sample the machine, and a probe agent would itself add load and lag
+behind a spike — deterministic feed-forward control beats a latent feedback loop under this
+constraint. If three capped builds still prove too heavy on a smaller host, the next lever is static
+serialization of heavy toolchains (effective concurrency 1 for `.NET`/Gradle/Rust, known from RECON)
+— not runtime load-sensing.
 
 **Gate behavior** — every gate auto-passes its recommended default and logs `bypass:true`:
 
 | Gate | Auto-bypass behavior |
 |---|---|
-| GATE-RECON | approve-all, already truncated to the top 5 |
+| GATE-RECON | approve-all, already truncated to the top 3 |
 | GATE-TRIAGE | select-bugs: the confirmed non-conflicted set, tier = complexity recommendation |
 | GATE-ESCALATE (soft) | escalate-tier, up to `maxTier` (default opus) |
 | GATE-ESCALATE (HARD, regression) | escalate-tier, climbing to the **next, strictly higher** tier — never a retry of the tier that just regressed. Every tier gets exactly one shot, always, no exceptions (raised from the normal "escalate at most once" rule, §Escalation, only in that a regression at `haiku` can still climb through `sonnet` *and* `opus` — up to two hops — before running out of ladder). If the regression happens already at `maxTier`, there is no higher tier to climb to — hand off immediately, no retry. That candidate is dropped from PR-prep and marked `handed-to-human` in the final report; bypass never auto-commits a regressing diff |
@@ -609,6 +621,7 @@ Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.
 | `pr` | draft-create + submit | `repo`, `issueRef`, `url`, `state`, `keyOf` |
 | `advisory` | COMPILE-REPORT (draft) and GATE-ADVISORY-REVIEW (final decision) | `repo`, `keyOf`, `vulnClass`, `severity`, `pocVerdict`, `reportPath`, `decision` |
 | `buildability` | a candidate hands off as `unfarmable` (env not buildable at TRIAGE) | `repo`, `env`, `verdict` (`unfarmable`), `keyOf` (`repo::env`), `reason` |
+| `stage` | each coarse state change in the `--auto-bypass` harness (`recon-done`, `triaging`, `triage-done`, `fixing`, `escalating`, terminal) — the live progress stream | `repo`, `stage`, `detail`, `why`. Take the latest per `repo` (`query '{"type":"stage"}'`) as that candidate's current state; every transition also narrates to the live `/workflows` view for free |
 | `run-end` | loop finishes — TRACK, or any abort | `farmRunId`, `startedAt`, `endedAt`, `durationMs` (+ `backfilled:true` if reconstructed) |
 
 `keyOf` (`norm(file)::norm(rootCause)`, from `ledger-slice.mjs`) is the cross-run identity. The

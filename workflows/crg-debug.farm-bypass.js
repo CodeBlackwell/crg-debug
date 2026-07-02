@@ -1,11 +1,11 @@
 export const meta = {
   name: 'crg-farm-bypass',
   description:
-    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 5 -> per-repo TRIAGE (security-sensitive bugs get a quick PoC + exploit-path check + a repo contribution/security-policy check, then a computed, conservative channel decision: a mechanical low-marginal-risk fix a repo policy does not forbid rejoins the normal fix/PR pipeline with a 1-3-sentence PR; anything ambiguous falls back to a short, conservative report that never leaves local disk) -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, security decision, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
+    'The harness-held option for /crg-farm --auto-bypass: RECON + two-pass dedup + impact x review-likelihood rank, capped in real code to the top 3 -> per-repo TRIAGE (security-sensitive bugs get a quick PoC + exploit-path check + a repo contribution/security-policy check, then a computed, conservative channel decision: a mechanical low-marginal-risk fix a repo policy does not forbid rejoins the normal fix/PR pipeline with a 1-3-sentence PR; anything ambiguous falls back to a short, conservative report that never leaves local disk) -> FIX with escalation (a regression climbs to the next, strictly higher tier — never a retry of the tier that just failed; every tier gets exactly one shot) -> auto commit/push/open a draft PR. GATE-SUBMIT is never crossed by this script or any flag — every PR stops at draft. Every cap, retry limit, security decision, and gate this script crosses is enforced in JS, not trusted to a model following a prompt.',
   whenToUse:
     'Requires args {direction: "themed"|"wildcard"|"scoped", query?, repo?, issueRef?, maxTier?, methodologyPath, crgDebugPath, farmDbPath, reposRoot, farmRunId}. Invoke ONLY when the user has explicitly passed --auto-bypass to /crg-farm and this file is installed (the crg-deterministic enabler copies it alongside crg-debug.js). Never invoke for the default, gated /crg-farm flow — that one needs AskUserQuestion and stays in the main loop.',
   phases: [
-    { title: 'Recon', detail: 'gh search/issue-list + two-pass dedup + rank, capped to top 5' },
+    { title: 'Recon', detail: 'gh search/issue-list + two-pass dedup + rank, capped to top 3' },
     { title: 'Triage', detail: 'clone/sync + provision a dedicated cached container env + crg-debug --detect-only per candidate repo (unbuildable envs hand off as unfarmable)' },
     { title: 'Advisory', detail: 'security-sensitive bugs: quick PoC + exploit-path + contribution-policy check, then a JS-computed conservative channel decision (mechanical + low-marginal-risk + no policy objection -> rejoin the normal pipeline; anything ambiguous -> a short report, disk-only, never transmitted)' },
     { title: 'Fix', detail: 'crg-debug --from-ledger with escalation; a regression climbs one tier, never a same-tier retry' },
@@ -42,6 +42,9 @@ const farmRunId = capText(a && a.farmRunId, 200) || 'auto-bypass-run'
 // The farm's clone cache is disposable, so it always provisions a dedicated, cached per-repo
 // container env (hand-installed system deps, language deps in a named volume, reused across runs).
 const env = ['none', 'container'].includes(a && a.env) ? a.env : 'container'
+// "not security" / --no-security: drop security-sensitive candidates at RECON so slots aren't spent
+// on advisory-only routing (the TRIAGE secCheck stays the authoritative net for anything that slips).
+const excludeSecurity = !!(a && a.excludeSecurity)
 
 if (!['themed', 'wildcard', 'scoped'].includes(direction)) {
   throw new Error('crg-farm-bypass requires args.direction: "themed" | "wildcard" | "scoped"')
@@ -53,9 +56,27 @@ for (const [k, v] of Object.entries({ methodologyPath, crgDebugPath, farmDbPath,
   if (!isAbsSafe(v)) throw new Error(`crg-farm-bypass requires args.${k} as an absolute path with no '..' segments`)
 }
 
-const CANDIDATE_CAP = 5
+const CANDIDATE_CAP = 3
 
-log(`crg-farm --auto-bypass (harness): direction=${direction} maxTier=${maxTier} env=${env} farmRunId=${farmRunId}`)
+log(`crg-farm --auto-bypass (harness): direction=${direction} maxTier=${maxTier} env=${env}${excludeSecurity ? ' excludeSecurity=true' : ''} farmRunId=${farmRunId}`)
+
+// --- Progress instrumentation -------------------------------------------------------------------
+// Two channels so a run is trackable at a glance — what happened, what's happening, and why:
+//   note(): free, synchronous narration to the live /workflows view. Zero token cost, used for
+//     every agent spawn and branch decision. Prefixed [repo] so the interleaved concurrent
+//     pipelines still read as a per-candidate timeline.
+//   mark(): note() PLUS a pollable `stage` farm-DB record, written only at the coarse state changes
+//     (triaging → triage-done → fixing → escalating → terminal). A headless monitor can
+//     `query '{"type":"stage"}'` and take the latest record per repo as that candidate's current
+//     state — no transcript reading. Each mark() costs one tiny append agent, hence milestones only.
+const note = (repo, msg, why) => log(`[${repo || 'run'}] ${msg}${why ? ` — why: ${why}` : ''}`)
+const mark = async (repo, stage, detail, why, phase = 'Triage') => {
+  note(repo, `${stage}${detail ? `: ${detail}` : ''}`, why)
+  await agent(
+    `Append one farm-DB record via \`node ${farmDbPath} append\`: ${JSON.stringify({ type: 'stage', farmRunId, repo: repo || null, stage, detail: detail || null, why: why || null })} on stdin. Return {"logged":true}.`,
+    { phase, schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: `stage:${repo || 'run'}:${stage}` }
+  )
+}
 
 // ---- Phase 1: RECON + dedup + rank ---------------------------------------------
 phase('Recon')
@@ -94,7 +115,7 @@ const RECON_SCHEMA = {
         properties: {
           repo: { type: 'string' },
           issueRef: { type: 'string' },
-          status: { type: 'string', enum: ['in-flight', 'already-fixed'] },
+          status: { type: 'string', enum: ['in-flight', 'already-fixed', 'security-excluded'] },
           competingPr: { type: 'string' },
         },
       },
@@ -109,13 +130,14 @@ const reconPrompt =
       ? `Cross-repo GitHub search for open, PR-able bugs matching "${query}": \`gh search issues "${query}" --state open --label bug --sort updated --json repository,number,title,url -L 30\` (drop --label bug and retry if too few hits).`
       : `Unthemed cross-repo GitHub search for open, PR-able bugs: \`gh search issues --state open --label bug --sort updated -L 30\`. Quality-filter: drop any repo that is archived or has had no push in the last 12 months (\`gh repo view <owner>/<repo> --json isArchived,pushedAt\`).`
 
+note(null, `RECON spawn: sourcing candidates (${direction}${excludeSecurity ? ', excludeSecurity' : ''}) → two-pass dedup → farmability prior → rank`)
 const recon = await agent(
   `${reconPrompt}
 
 For each hit, run the two-pass duplicate-fix check from crg-farm's methodology — read ${methodologyPath}, section "RECON — sourcing + duplicate-fix check", for the exact judgment rules:
 1. Farm-DB dedup: \`node ${farmDbPath} query '{"type":"pr"}'\` — drop any candidate whose repo+issue we already shipped or exhausted.
 2. Upstream duplicate-fix check per surviving candidate: confirm the issue is still open (\`gh issue view <n> -R <owner>/<repo> --json state,title,body\`) and search for a PR that already addresses it (\`gh search prs "repo:<owner>/<repo> <n>" --state all\`, \`gh pr list -R <owner>/<repo> --state open --search "<n> in:body,title"\`). Classify fresh / in-flight / already-fixed.
-
+${excludeSecurity ? `\nSECURITY EXCLUSION (this run passed "not security"): after dedup, drop every fresh candidate whose issue text is security-sensitive — read the title/body and apply the checklist from methodology.md §"Security classification & the advisory track": injection, auth/authz bypass, secrets/credential exposure, SSRF/path-traversal, insecure deserialization, crypto misuse, or memory-safety reachable from attacker input (and anything CVE/advisory-flavored). This is a heuristic pre-filter on the issue description, so err toward keeping a candidate when it's genuinely ambiguous — the TRIAGE security check remains the authoritative net. Move each excluded candidate into dropped[] with status "security-excluded" (no competingPr). Only NON-security candidates continue to the farmability + ranking steps below.\n` : ''}
 Before ranking, score each fresh candidate's FARMABILITY prior — a cheap, no-clone guess at whether env=${env} can build it, so slots don't get spent on predictably unbuildable repos (per methodology.md §Farmability prior):
 - Prior verdicts (#1.5): \`node ${farmDbPath} query '{"type":"buildability"}'\` — for any fresh candidate whose repo has a record with verdict "unfarmable" AND env "${env}", set priorUnfarmable=true. That env already failed to build it.
 - Cheap metadata (#1, no clone): \`gh repo view <owner>/<repo> --json stargazerCount,primaryLanguage,diskUsage\` (language + size), plus one root listing \`gh api repos/<owner>/<repo>/contents --jq '.[].name'\` to spot build manifests. Classify farmabilityPrior:
@@ -144,11 +166,16 @@ const orderedFresh = rankedFresh
 const capped = orderedFresh.slice(0, CANDIDATE_CAP)
 const droppedByCap = orderedFresh.slice(CANDIDATE_CAP)
 
-log(
-  `Recon: ${rankedFresh.length} fresh candidate(s), ${dropped.length} dropped (in-flight/already-fixed). ` +
-    `Auto-bypass cap: running the top ${capped.length}` +
-    (droppedByCap.length ? `; ${droppedByCap.length} ranked candidate(s) NOT run this pass (past the top-${CANDIDATE_CAP} cap).` : '.')
+const secExcl = dropped.filter(d => d.status === 'security-excluded').length
+await mark(
+  null,
+  'recon-done',
+  `${rankedFresh.length} fresh, ${dropped.length} dropped (${secExcl} security-excluded), running top ${capped.length} of ${rankedFresh.length}` +
+    (droppedByCap.length ? `, ${droppedByCap.length} past cap` : ''),
+  null,
+  'Recon'
 )
+capped.forEach((c, i) => note(c.repo, `SELECTED #${i} (${c.severity || '?'}, farm:${c.priorUnfarmable ? 'priorUnfarm' : c.farmabilityPrior || '?'}) ${c.issueRef} — ${c.title || ''}`))
 
 await agent(
   `Append farm-DB records via \`node ${farmDbPath} append\` (one JSON object on stdin per call — call it once per record below):
@@ -198,12 +225,13 @@ const isDispatchSafe = a =>
 // ---- Phase 2/3/4: per-candidate pipeline (TRIAGE -> FIX/escalate -> PR) --------
 // pipeline() gives each candidate its own stage chain with no barrier between
 // stages — repo A can be at PR while repo B is still triaging. Concurrency is
-// capped at 5 in-flight by construction: `capped` never holds more than 5 items.
+// capped at 3 in-flight by construction: `capped` never holds more than 3 items.
 const settled = await pipeline(
   capped,
 
   // Stage 1 — clone/sync the farm's clone cache, then crg-debug --detect-only.
   async candidate => {
+    note(candidate.repo, `clone spawn: resolving working tree in clone cache`)
     const clone = await agent(
       `Resolve the working tree for ${candidate.repo} in the crg-farm clone cache at ${reposRoot}/${candidate.repo}. ` +
         `If missing: \`gh repo clone ${candidate.repo} ${reposRoot}/${candidate.repo}\`. ` +
@@ -212,8 +240,10 @@ const settled = await pipeline(
       { phase: 'Triage', schema: { type: 'object', required: ['repoRoot'], properties: { repoRoot: { type: 'string' } } }, label: `clone:${candidate.repo}` }
     )
     if (!clone || !isAbsSafe(clone.repoRoot)) {
+      await mark(candidate.repo, 'handed-off', 'clone failed', 'clone-cache resolution failed or returned an unsafe path', 'Triage')
       return { candidate, outcome: 'handed-to-human', reason: 'clone-cache resolution failed or returned an unsafe path' }
     }
+    await mark(candidate.repo, 'triaging', `crg-debug --detect-only`, `env=${env}`, 'Triage')
     const triage = await workflow(
       { scriptPath: crgDebugPath },
       { repoRoot: clone.repoRoot, issueContext: candidate.title, issueRef: candidate.issueRef, model: 'haiku', fix: false, methodologyPath, env }
@@ -229,11 +259,15 @@ const settled = await pipeline(
         `Append one farm-DB "buildability" record via \`node ${farmDbPath} append\`: {"type":"buildability","farmRunId":"${farmRunId}","repo":"${candidate.repo}","env":"${env}","verdict":"unfarmable","keyOf":"${candidate.repo}::${env}","reason":${JSON.stringify(unfarmReason)}} on stdin. Return {"logged":true}.`,
         { phase: 'Triage', schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: `log-unfarmable:${candidate.repo}` }
       )
+      await mark(candidate.repo, 'unfarmable', unfarmReason, 'env not buildable — clean hand-off, recorded for #1.5', 'Triage')
       return { candidate, repoRoot: clone.repoRoot, outcome: 'unfarmable', reason: unfarmReason }
     }
     if (!triage || !(triage.confirmedBugs || []).length) {
+      await mark(candidate.repo, 'no-bugs-confirmed', 'detection found no confirmed real bugs', 'nothing to fix — clean exit', 'Triage')
       return { candidate, repoRoot: clone.repoRoot, outcome: 'no-bugs-confirmed' }
     }
+    await mark(candidate.repo, 'triage-done', `${triage.confirmedBugs.length} bug(s) confirmed`, null, 'Triage')
+    note(candidate.repo, `security-classify spawn: screening ${triage.confirmedBugs.length} bug(s) against the security checklist`)
 
     // Security classification against the fixed checklist in methodology.md's §Security
     // classification. Conservative by design — if ANY confirmed bug in this batch is flagged, the
@@ -247,8 +281,10 @@ const settled = await pipeline(
       }
     )
     if (!secCheck || !secCheck.securitySensitive) {
+      note(candidate.repo, `security-classify: clear (non-security) → normal fix/PR pipeline`)
       return { candidate, repoRoot: clone.repoRoot, ledgerPath: triage.ledgerPath, confirmedBugs: triage.confirmedBugs }
     }
+    await mark(candidate.repo, 'security-flagged', (secCheck.vulnClasses || []).join(', ') || 'unspecified', 'advisory track: PoC + exploit-path + contrib-policy, then computed channel', 'Advisory')
 
     const vulnClasses = secCheck.vulnClasses || []
     // §Security classification, advisory track steps 1-3, run as one concise pass: a quick PoC (the
@@ -270,10 +306,12 @@ confirmedBugs: ${JSON.stringify(triage.confirmedBugs)}`,
 
     // A false positive at PoC time isn't actually security-sensitive — rejoin the normal pipeline.
     if (secAssess && secAssess.pocVerdict === 'confirmed-not-exploitable') {
+      note(candidate.repo, `security-assess: PoC confirmed NOT exploitable → rejoin normal fix/PR pipeline`)
       return { candidate, repoRoot: clone.repoRoot, ledgerPath: triage.ledgerPath, confirmedBugs: triage.confirmedBugs }
     }
 
     if (isDispatchSafe(secAssess)) {
+      note(candidate.repo, `GATE-DISPATCH-CHANNEL: pr-with-motivation`, `mechanical + small marginal risk + no policy objection`)
       // GATE-DISPATCH-CHANNEL computed pr-with-motivation: rejoin the SAME shape a normal bug
       // returns from this stage, so Stage 2/3's existing fix+PR code runs unchanged. securityPr
       // carries the PR-body constraint and any contribution requirements through to Stage 3.
@@ -292,6 +330,7 @@ confirmedBugs: ${JSON.stringify(triage.confirmedBugs)}`,
 
     // Fallback: advisory-report, disk-only, never transmitted. Any one unfavorable signal lands
     // here — the asymmetry is deliberate.
+    note(candidate.repo, `GATE-DISPATCH-CHANNEL: advisory-report (disk-only)`, `poc=${secAssess && secAssess.pocVerdict}, mechanical=${secAssess && secAssess.fixMechanical}, marginalRiskSmall=${secAssess && secAssess.marginalRiskSmall}`)
     const advisoryPath = await agent(
       `Get the report path: \`node ${farmDbPath} advisory-path '${candidate.repo}' '${candidate.repo}::${candidate.issueRef}'\`. Write a SHORT Markdown report there — quick PoC, one-paragraph summary, the fix, the conservative severity line, full stop. Not a forensic writeup; skip anything that doesn't change what the reader should do. Sections: summary (2-4 sentences: what's wrong, where, why it matters), affected file(s)/line(s), vuln class, the PoC (kept minimal — code/command/output from step 1 above), reachability + marginal-risk verdict (one line each), the conservative severity, a one-to-two-sentence suggested fix (prose/diff form, NOT applied, NOT committed — do not modify, stage, or commit any file in the repo working tree), and a blank "## Disclosure timeline" section. Then append one advisory record: \`node ${farmDbPath} append\` with {"type":"advisory","farmRunId":"${farmRunId}","repo":"${candidate.repo}","issueRef":"${candidate.issueRef}","keyOf":"${candidate.repo}::${candidate.issueRef}","vulnClass":${JSON.stringify(vulnClasses.join(', ') || 'unspecified')},"severity":${JSON.stringify(secAssess && secAssess.severity || 'unknown')},"pocVerdict":${JSON.stringify(secAssess && secAssess.pocVerdict || 'inconclusive-could-not-execute')},"reportPath":"<path>","decision":"save-only"} on stdin.
 
@@ -305,6 +344,7 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
       })}`,
       { phase: 'Advisory', schema: { type: 'object', required: ['reportPath'], properties: { reportPath: { type: 'string' } } }, label: `advisory:${candidate.repo}` }
     )
+    await mark(candidate.repo, 'advisory-compiled', `${vulnClasses.join(', ') || 'unspecified'} (${secAssess && secAssess.severity || 'unknown'})`, 'disk-only report, never transmitted', 'Advisory')
     return {
       candidate,
       repoRoot: clone.repoRoot,
@@ -326,6 +366,7 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
     // carry a pre-set outcome and just fall through untouched.
     if (triaged.outcome) return triaged
 
+    note(candidate.repo, `tier-pick spawn: impact-radius + severity → recommended start tier${triaged.securityPr ? ' (security → PR route)' : ''}`)
     const tierPick = await agent(
       `For each unique file among these confirmed bugs, call mcp__code-review-graph__get_impact_radius_tool against the repo at ${triaged.repoRoot} and combine blast radius + severity + language penalty per methodology.md's §Complexity scoring (${methodologyPath}) to recommend ONE starting fix tier for this whole batch: haiku, sonnet, or opus.\n\nconfirmedBugs: ${JSON.stringify(triaged.confirmedBugs)}`,
       { phase: 'Fix', schema: { type: 'object', required: ['tier'], properties: { tier: { type: 'string', enum: TIERS } } }, label: `tier:${candidate.repo}` }
@@ -336,10 +377,12 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
     let fixRet = null
     let outcome = null
     let reason = null
+    await mark(candidate.repo, 'fixing', `start tier ${tier}, ${(triaged.confirmedBugs || []).length} bug(s)`, null, 'Fix')
 
     // Hard backstop against a pathological infinite loop; every real exit path
     // above (clean+fixed, regression cap, tier cap) fires well before this.
     for (let attempt = 0; attempt < 6 && !outcome; attempt++) {
+      note(candidate.repo, `fix pass ${attempt + 1} at tier ${tier}: TDD waves (RED→GREEN), gated by exit codes`)
       fixRet = await workflow({ scriptPath: crgDebugPath }, { repoRoot: triaged.repoRoot, fromLedger: ledgerPath, fix: true, model: tier, methodologyPath })
       const fx = (fixRet && fixRet.fix) || { fixed: [], unfixed: [], finalGate: { clean: false } }
       const clean = !!(fx.finalGate && fx.finalGate.clean)
@@ -351,8 +394,10 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
         if (!nt) {
           outcome = 'handed-to-human'
           reason = `regression at the top tier (${tier}) — one shot per tier, no retry, no higher tier left`
+          note(candidate.repo, `fix: regressed at top tier ${tier} — no higher tier left`, `hand off`)
           break
         }
+        await mark(candidate.repo, 'escalating', `${tier} → ${nt}`, 'final gate regressed — climb one strictly-higher tier (one shot per tier)', 'Fix')
         await agent(
           `A crg-debug fix pass on ${triaged.repoRoot} regressed the final gate. Revert every file the working tree currently has dirty so the next tier starts from a clean RED, not a broken fix: run \`git -C ${triaged.repoRoot} diff --name-only\` then \`git -C ${triaged.repoRoot} checkout -- <those files>\`. Do not touch anything else.`,
           { phase: 'Fix', schema: { type: 'object', required: ['reverted'], properties: { reverted: { type: 'array', items: { type: 'string' } } } }, label: `revert:${candidate.repo}` }
@@ -363,15 +408,18 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
 
       if (unfixed.length === 0) {
         outcome = 'fixed'
+        note(candidate.repo, `fix: all bugs GREEN at tier ${tier} — final gate clean`)
         break
       }
 
       if (tier === maxTier) {
         outcome = 'handed-to-human'
         reason = `${unfixed.length} bug(s) still unfixed at the tier cap (${maxTier})`
+        note(candidate.repo, `fix: ${unfixed.length} bug(s) unfixed at tier cap ${maxTier}`, `hand off`)
         break
       }
 
+      note(candidate.repo, `fix: ${unfixed.length} bug(s) unfixed at ${tier} (gate clean) — retry higher tier on the remainder`)
       const sliced = await agent(
         `Write a JSON file to ${triaged.repoRoot}/.crg-debug/ledger-retry-${attempt}.json containing exactly {"confirmedBugs": <the array below, unchanged>} and nothing else — do not reformat, wrap in markdown, or add fields. Then return that absolute path.\n\nunfixed bugs to retry: ${JSON.stringify(unfixed)}`,
         { phase: 'Fix', schema: { type: 'object', required: ['ledgerPath'], properties: { ledgerPath: { type: 'string' } } }, label: `slice:${candidate.repo}` }
@@ -404,9 +452,11 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
         `Append one farm-DB "gate" record via \`node ${farmDbPath} append\`: {"type":"gate","farmRunId":"${farmRunId}","gate":"GATE-ESCALATE","decision":"hand-to-human","bypass":true,"repo":"${candidate.repo}","reason":${JSON.stringify(fixed.reason || fixed.outcome)}} on stdin. Return {"logged":true}.`,
         { phase: 'PR', schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: `log-handoff:${candidate.repo}` }
       )
+      await mark(candidate.repo, 'handed-off', fixed.outcome, fixed.reason || fixed.outcome, 'PR')
       return { candidate, outcome: fixed.outcome, reason: fixed.reason, prUrl: null }
     }
 
+    note(candidate.repo, `PR-prep spawn: branch + scoped stage + commit + push + draft PR${fixed.securityPr ? ' (security → 1-3 sentence body)' : ''} — stops at draft`)
     const branch = `crg-farm/${slug(candidate.issueRef) || slug(candidate.title).slice(0, 40)}`
     const securityPr = fixed.securityPr
     const bodyInstruction = securityPr
@@ -428,6 +478,7 @@ Return the PR URL and the branch name.`,
         label: `pr:${candidate.repo}`,
       }
     )
+    await mark(candidate.repo, 'shipped', `draft PR ${pr && pr.prUrl || '(url pending)'}`, `fixed at tier ${fixed.tier}, stops at draft`, 'PR')
     return { candidate, outcome: 'shipped', tier: fixed.tier, prUrl: pr && pr.prUrl, state: 'draft', branch: pr && pr.branch, securitySensitive: !!securityPr }
   }
 )
@@ -455,6 +506,7 @@ log(
     (errored.length ? `, ${errored.length} errored (pipeline drop — see failures log)` : '') +
     `, ${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
 )
+results.forEach(r => note(r.candidate && r.candidate.repo, `FINAL: ${r.outcome}${r.prUrl ? ` ${r.prUrl}` : ''}`, r.reason || undefined))
 
 return {
   farmRunId,

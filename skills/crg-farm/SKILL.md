@@ -1,7 +1,7 @@
 ---
 name: crg-farm
 description: Bug-farming loop over crg-debug — sources real open bugs (scoped /xplore over a named repo, or a themed/wildcard GitHub search when unscoped), triages cheaply, escalates model only where repair struggles, and ships draft PRs, with human approval at every consequential boundary (or, under --auto-bypass, fully unattended through commit and an opened draft PR — never past draft). Security-sensitive findings go through a quick PoC + exploit-path check plus a repo contribution/security-policy check, then pick the right channel — a short, human-voiced PR for a mechanical, low-marginal-risk fix a repo's own policy doesn't forbid, or a private, concise, conservatively-worded report (never transmitted) when any of that isn't true — with a human deciding the channel by default, or a deliberately conservative computed default under --auto-bypass so the harness stays safe to run unattended. Use for /crg-farm, "farm bugs", "find and PR real bugs on GitHub".
-argument-hint: "[repo|topic|nothing=wildcard] [--repo <owner/repo|path>] [--issue <ref>] [--auto] [--auto-bypass] [--prose] [--model <start-tier>] [--max-tier <haiku|sonnet|opus>]"
+argument-hint: "[repo|topic|nothing=wildcard] [--repo <owner/repo|path>] [--issue <ref>] [--auto] [--auto-bypass] [--no-security] [--prose] [--model <start-tier>] [--max-tier <haiku|sonnet|opus>]"
 user_invocable: true
 ---
 
@@ -29,7 +29,7 @@ transmitted, the moment any one isn't). See §Step 2a below.
 
 `--auto-bypass` is a **separate, standalone flag** from `--auto` (never implied by it, never
 inferred from prior approvals): it auto-passes every gate through `GATE-DIFF` (commit), caps the
-run at the top 5 ranked candidates run concurrently, and ends with a report of every draft PR
+run at the top 3 ranked candidates run concurrently, and ends with a report of every draft PR
 opened. It never touches `GATE-SUBMIT` — PRs always stop at draft, no matter what. See
 `methodology.md` §Auto-bypass mode — read it before honoring this flag.
 
@@ -102,9 +102,15 @@ every gate below marked "Under `--auto-bypass`" honored the same way.
   `GATE-DIFF` (commit) — including a HARD-promoted `GATE-ESCALATE`, which climbs to the next,
   strictly higher tier on a regression (never a retry of the tier that just failed — every tier
   gets exactly one shot, always) — logged `bypass:true` (never `auto:true`), truncates ranked
-  candidates to the top 5, and runs their pipelines concurrently capped at 5 in-flight. It never
+  candidates to the top 3, and runs their pipelines concurrently capped at 3 in-flight. It never
   resolves `GATE-SUBMIT` to `submit-upstream` — every PR it opens stops at draft. Full contract in
   `methodology.md` §Auto-bypass mode.
+- **excludeSecurity**: `--no-security` (or a bare `not security` in the direction text) drops
+  security-sensitive candidates at RECON so slots go to PR-able non-security bugs — the harness
+  already routes any security bug to the advisory track (never a PR), so without this a slot can
+  yield an advisory instead of a draft PR. Pass `excludeSecurity: true` into the harness args; the
+  TRIAGE security check stays the authoritative net for anything the recon-time heuristic misses.
+  Wildcard/themed only (a scoped run already targets one repo).
 - **prose**: `--prose` forces the prose path below even if the harness Workflow
   (`crg-debug.farm-bypass.js`) is installed — same convention as `/crg-debug --prose`.
 
@@ -165,7 +171,7 @@ long for a 4-option gate, execute `select-subset` as two steps: post the ranked 
 with cut points sized to the list (e.g. Top-5 *(Recommended)* / Top-10 / Top-N / Custom). Log the
 `gate` decision. Under `--auto`, skip `gate-asked` — nothing is shown.
 
-Under `--auto-bypass`: skip the ask — truncate the ranked list to the **top 5** and log
+Under `--auto-bypass`: skip the ask — truncate the ranked list to the **top 3** and log
 `approve-all` with `bypass:true`. This is the run's only candidate-selection point, so the cap
 applies here regardless of how many candidates survived dedup.
 
@@ -336,7 +342,7 @@ regressed, or the tier cap is reached with `unfixed[]` open, that candidate is d
 GATE-DIFF/PR-prep and recorded as `handed-to-human` for the final report — the run continues with
 the other candidates rather than stopping. Launch each repo's
 pipeline as soon as its ledger is ready rather than waiting for sibling repos to finish
-RECON/TRIAGE — concurrency is capped at 5 in-flight `Workflow` invocations, satisfied by
+RECON/TRIAGE — concurrency is capped at 3 in-flight `Workflow` invocations, satisfied by
 construction since GATE-RECON already capped candidates at 5.
 
 ## Step 4 — GATE-DIFF (HARD) → PR-PREP → GATE-SUBMIT (HARD) → TRACK
