@@ -4,6 +4,33 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.14.2] - 2026-07-02
+
+### Fixed
+- **`/crg-farm --auto-bypass` no longer races same-repo candidates over one working tree.** The
+  bypass harness fanned every capped candidate through a single flat pipeline, but the clone cache
+  is keyed by repo — so in scoped mode (all candidates one repo) three pipelines shared one working
+  tree and one git HEAD. Concurrent branch/commit/push stomped each other: only one PR survived and
+  the rest reported phantom success (one run shipped a fix its own gate had rejected). Candidates
+  are now grouped by repo and run sequentially within a repo, still concurrently across distinct
+  repos. The shipped result reports the branch the harness computed, never an agent's self-report,
+  so a candidate's PR can't be misattributed. In scoped mode this also drops peak concurrent
+  container builds from three to one.
+- **Farm runs now close themselves.** Every run appended a `run` record but never a `run-end`, on
+  either exit path (early RECON bail or normal completion), leaving every run permanently "open".
+  Both paths now append the `run-end` so history compaction can archive a finished run's telemetry.
+
+### Added
+- **Lossless history compaction (`lib/farm-db.mjs`: `compact` + `reconcile`).** The farm history is
+  one append-only JSONL scanned on every query, and ~3/4 of its bytes are write-only telemetry
+  (`candidate`, `gate`, `stage`) the hot path never reads. `compact` moves a closed run's telemetry
+  to an append-only `history-archive.jsonl`, keeping only the cross-run records (`pr`, `buildability`)
+  and any open run live — so dedup and demotion still resolve against a lean live file. It never
+  deletes: a pre-commit guard aborts unless every original record is either kept or archived, and
+  `reconcile` proves `live ∪ archive` equals everything ever written. `gate-waits` reads across the
+  archive so audits survive. Maintenance incantation when the live file grows: `backfill-run-ends &&
+  compact`.
+
 ## [0.14.1] - 2026-07-02
 
 ### Added

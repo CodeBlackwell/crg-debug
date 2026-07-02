@@ -78,6 +78,15 @@ const mark = async (repo, stage, detail, why, phase = 'Triage') => {
   )
 }
 
+// Close the run: append its run-end record (duration derived from the run record) on EVERY exit
+// path. An unclosed run never gets archived by farm-db compaction — its telemetry stays in the hot
+// live file forever — so this must fire whether the run ships PRs or bails early at RECON.
+const logRunEnd = () =>
+  agent(
+    `Close this farm run: run \`node ${farmDbPath} close-run ${farmRunId}\` — it reads the run record, computes durationMs, and appends one "run-end". If it reports no run record exists, return {"logged":false}; otherwise {"logged":true}.`,
+    { schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: 'run:close' }
+  )
+
 // ---- Phase 1: RECON + dedup + rank ---------------------------------------------
 phase('Recon')
 
@@ -192,6 +201,7 @@ Return {"logged":true} once every record above has been appended.`,
 
 if (!capped.length) {
   log('Recon found no fresh, unclaimed candidates — nothing to fix or ship this run.')
+  await logRunEnd()
   return { farmRunId, direction, candidatesConsidered: rankedFresh.length, candidatesRun: 0, droppedByCap: [], shipped: [], handedOff: [] }
 }
 
@@ -223,14 +233,16 @@ const isDispatchSafe = a =>
   !!a && a.pocVerdict === 'confirmed-exploitable' && a.fixMechanical === true && a.marginalRiskSmall === true && a.contribPolicyForbidsDirectPR !== true
 
 // ---- Phase 2/3/4: per-candidate pipeline (TRIAGE -> FIX/escalate -> PR) --------
-// pipeline() gives each candidate its own stage chain with no barrier between
-// stages — repo A can be at PR while repo B is still triaging. Concurrency is
-// capped at 3 in-flight by construction: `capped` never holds more than 3 items.
-const settled = await pipeline(
-  capped,
+// Concurrency is capped at 3 in-flight by construction: `capped` never holds more than 3 items.
+// Same-repo candidates share ONE clone-cache working tree — its path is keyed by repo
+// (<reposRoot>/<repo>), and crg-debug's env/dep-volume cache is keyed by that same path, so
+// isolating per candidate would fragment the cache. Instead the three stages run per candidate,
+// grouped by repo: sequential WITHIN a repo (concurrent branch/commit/push on one shared tree
+// used to stomp each other — one real PR survived, the rest reported phantom success), concurrent
+// ACROSS distinct repos. Grouped dispatch is after stage 3.
 
-  // Stage 1 — clone/sync the farm's clone cache, then crg-debug --detect-only.
-  async candidate => {
+// Stage 1 — clone/sync the farm's clone cache, then crg-debug --detect-only.
+const stageTriage = async candidate => {
     note(candidate.repo, `clone spawn: resolving working tree in clone cache`)
     const clone = await agent(
       `Resolve the working tree for ${candidate.repo} in the crg-farm clone cache at ${reposRoot}/${candidate.repo}. ` +
@@ -355,13 +367,13 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
       reachability: secAssess && secAssess.reachability,
       vulnClasses,
     }
-  },
+}
 
-  // Stage 2 — FIX with escalation. A regression climbs to the next, strictly
-  // higher tier — never a retry of the tier that just failed; every tier gets
-  // exactly one shot. Regression at maxTier itself hands off immediately.
-  // unfixed-but-clean escalates freely up the ladder, same rule.
-  async (triaged, candidate) => {
+// Stage 2 — FIX with escalation. A regression climbs to the next, strictly
+// higher tier — never a retry of the tier that just failed; every tier gets
+// exactly one shot. Regression at maxTier itself hands off immediately.
+// unfixed-but-clean escalates freely up the ladder, same rule.
+const stageFix = async (triaged, candidate) => {
     // Candidates that already settled in Stage 1 (advisory-compiled, unfarmable, no-bugs-confirmed)
     // carry a pre-set outcome and just fall through untouched.
     if (triaged.outcome) return triaged
@@ -439,11 +451,11 @@ Why this fell back to a report instead of a PR: ${JSON.stringify({
     )
 
     return { candidate, repoRoot: triaged.repoRoot, tier, outcome: outcome || 'handed-to-human', reason, fixRet, securityPr: triaged.securityPr }
-  },
+}
 
-  // Stage 3 — GATE-DIFF auto-approved (commit + push + open draft PR), GATE-SUBMIT
-  // always logged as keep-draft (never bypassed by any flag) — or a hand-off report.
-  async (fixed, candidate) => {
+// Stage 3 — GATE-DIFF auto-approved (commit + push + open draft PR), GATE-SUBMIT
+// always logged as keep-draft (never bypassed by any flag) — or a hand-off report.
+const stagePR = async (fixed, candidate) => {
     // advisory-compiled candidates already wrote their report and logged it in Stage 1; they never
     // touch GATE-DIFF/PR-PREP/GATE-SUBMIT.
     if (fixed.outcome === 'advisory-compiled') return fixed
@@ -479,8 +491,37 @@ Return the PR URL and the branch name.`,
       }
     )
     await mark(candidate.repo, 'shipped', `draft PR ${pr && pr.prUrl || '(url pending)'}`, `fixed at tier ${fixed.tier}, stops at draft`, 'PR')
-    return { candidate, outcome: 'shipped', tier: fixed.tier, prUrl: pr && pr.prUrl, state: 'draft', branch: pr && pr.branch, securitySensitive: !!securityPr }
-  }
+    // branch is the value WE computed and instructed above — authoritative. Never echo back the
+    // agent's self-reported branch: a stray report can't then misattribute one candidate's PR to
+    // another in the run summary.
+    return { candidate, outcome: 'shipped', tier: fixed.tier, prUrl: pr && pr.prUrl, state: 'draft', branch, securitySensitive: !!securityPr }
+}
+
+// Grouped dispatch: serialize candidates sharing a repo (one shared clone-cache tree),
+// parallelize across distinct repos. settled stays index-aligned with capped so the errored-slot
+// recovery below and every downstream filter keep each candidate's original identity.
+const repoGroups = new Map()
+capped.forEach((candidate, i) => {
+  const g = repoGroups.get(candidate.repo) || []
+  g.push({ candidate, i })
+  repoGroups.set(candidate.repo, g)
+})
+const settled = new Array(capped.length).fill(null)
+await parallel(
+  [...repoGroups.values()].map(group => async () => {
+    for (const { candidate, i } of group) {
+      // Match pipeline()'s drop-to-null semantics: a stage that throws leaves settled[i] null,
+      // recovered as 'errored' below — never silently lost.
+      try {
+        const triaged = await stageTriage(candidate)
+        const fixed = await stageFix(triaged, candidate)
+        settled[i] = await stagePR(fixed, candidate)
+      } catch (e) {
+        note(candidate.repo, `pipeline drop: ${capText(e && e.message, 200)}`, 'stage threw — recovered as errored')
+        settled[i] = null
+      }
+    }
+  })
 )
 
 // settled is index-aligned with capped: a stage that throws (e.g. a subagent completes without
@@ -507,6 +548,8 @@ log(
     `, ${droppedByCap.length} candidate(s) ranked but past the top-${CANDIDATE_CAP} cap.`
 )
 results.forEach(r => note(r.candidate && r.candidate.repo, `FINAL: ${r.outcome}${r.prUrl ? ` ${r.prUrl}` : ''}`, r.reason || undefined))
+
+await logRunEnd()
 
 return {
   farmRunId,

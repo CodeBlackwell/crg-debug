@@ -12,7 +12,7 @@ before(() => {
 after(() => rmSync(dir, { recursive: true, force: true }))
 
 // Imported AFTER the env var is set so dbPath() resolves to the temp file.
-const { append, query, dbPath, closeRun, backfillRunEnds, gateWaits, advisoryPath, advisoryRoot } =
+const { append, query, queryAll, dbPath, closeRun, backfillRunEnds, gateWaits, compact, reconcile, advisoryPath, advisoryRoot } =
   await import('../lib/farm-db.mjs')
 
 test('append round-trips and stamps ts', () => {
@@ -101,6 +101,79 @@ test('gateWaits leaves waitMs null when no matching gate-asked was logged', () =
   const [w] = gateWaits({ farmRunId: 'f4' })
   assert.equal(w.askedAt, undefined)
   assert.equal(w.waitMs, null)
+})
+
+test('compact archives closed-run telemetry, keeps durable + open-run records live', () => {
+  process.env.CRG_FARM_DB = join(dir, 'compact-basic.jsonl')
+  // closed run c1: telemetry + durable records
+  append({ type: 'run', farmRunId: 'c1' })
+  append({ type: 'candidate', farmRunId: 'c1', repo: 'r', keyOf: 'k1' })
+  append({ type: 'gate', farmRunId: 'c1', gate: 'GATE-DIFF' })
+  append({ type: 'pr', farmRunId: 'c1', repo: 'r', keyOf: 'k1', url: 'u', state: 'draft' })
+  append({ type: 'buildability', farmRunId: 'c1', repo: 'r', env: 'container', verdict: 'unfarmable' })
+  closeRun('c1')
+  // open run o1: never a run-end
+  append({ type: 'run', farmRunId: 'o1' })
+  append({ type: 'candidate', farmRunId: 'o1', repo: 'r2', keyOf: 'k2' })
+
+  const res = compact()
+  // durable stays live
+  assert.equal(query({ type: 'pr' }).length, 1)
+  assert.equal(query({ type: 'buildability' }).length, 1)
+  // open run untouched
+  assert.equal(query({ type: 'candidate', farmRunId: 'o1' }).length, 1)
+  assert.equal(query({ type: 'run', farmRunId: 'o1' }).length, 1)
+  // closed-run telemetry left the live file
+  assert.equal(query({ type: 'candidate', farmRunId: 'c1' }).length, 0)
+  assert.equal(query({ type: 'gate', farmRunId: 'c1' }).length, 0)
+  assert.equal(query({ type: 'run', farmRunId: 'c1' }).length, 0)
+  // but is preserved in the archive
+  assert.equal(queryAll({ type: 'candidate', farmRunId: 'c1' }).length, 1)
+  assert.equal(queryAll({ type: 'gate', farmRunId: 'c1' }).length, 1)
+  assert.ok(res.archived >= 3)
+})
+
+test('compact is lossless: live ∪ archive equals every record ever appended', () => {
+  process.env.CRG_FARM_DB = join(dir, 'compact-lossless.jsonl')
+  const N = 20
+  for (let i = 0; i < N; i++) append({ type: 'run', farmRunId: 'L' + i })
+  for (let i = 0; i < N; i++) append({ type: 'candidate', farmRunId: 'L' + i, keyOf: 'k' + i })
+  for (let i = 0; i < N; i++) closeRun('L' + i)
+  const before = reconcile().total
+  compact()
+  const r = reconcile()
+  assert.equal(r.total, before) // nothing lost
+  assert.ok(r.archive > 0) // something moved
+  assert.equal(r.byType.candidate, N) // all candidates still counted (now in archive)
+})
+
+test('compact keeps dedup working: a shipped pr keyOf stays queryable live', () => {
+  process.env.CRG_FARM_DB = join(dir, 'compact-dedup.jsonl')
+  append({ type: 'run', farmRunId: 'd1' })
+  append({ type: 'pr', farmRunId: 'd1', repo: 'numpy', keyOf: 'a.py::bug', url: 'u', state: 'draft' })
+  closeRun('d1')
+  compact()
+  const shipped = new Set(query({ type: 'pr' }).map(r => r.keyOf))
+  assert.ok(shipped.has('a.py::bug'))
+})
+
+test('compact on a missing db is a no-op', () => {
+  process.env.CRG_FARM_DB = join(dir, 'compact-missing.jsonl')
+  assert.deepEqual(compact(), { archived: 0, kept: 0 })
+})
+
+test('gateWaits still pairs decisions after their gate records were archived', () => {
+  process.env.CRG_FARM_DB = join(dir, 'compact-gatewaits.jsonl')
+  append({ type: 'run', farmRunId: 'g1' })
+  const asked = append({ type: 'gate-asked', farmRunId: 'g1', gate: 'GATE-DIFF', repo: 'a' })
+  const decided = append({ type: 'gate', farmRunId: 'g1', gate: 'GATE-DIFF', repo: 'a', decision: 'approve-for-PR' })
+  closeRun('g1')
+  compact()
+  assert.equal(query({ type: 'gate', farmRunId: 'g1' }).length, 0) // archived out of live
+  const [w] = gateWaits({ farmRunId: 'g1' })
+  assert.equal(w.askedAt, asked.ts)
+  assert.equal(w.decidedAt, decided.ts)
+  assert.ok(w.waitMs >= 0)
 })
 
 test('advisoryPath is deterministic and stays under CRG_FARM_ADVISORIES', () => {
