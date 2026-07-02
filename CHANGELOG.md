@@ -4,6 +4,19 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.14.1] - 2026-07-02
+
+### Added
+- **AI-welcome contribution greenlist (`skills/crg-farm/greenlist.json`, reference only).** A
+  curated list of projects whose own docs welcome AI-agent contributions, as a human aid for
+  choosing where to point `/crg-farm`. Each entry tags its `evidenceType` — an *explicit-welcome*
+  (docs state AI contributions are welcome) is real consent; an *agent-file* (repo merely ships
+  `AGENTS.md`/`copilot-instructions.md`) is a strong implicit signal but not consent (`libsdl-org/SDL`
+  ships an `AGENTS.md` that *bans* AI PRs). Carries two authoritative registries to cross-check
+  against and an `avoid` list of explicit bans. Nothing in the harness reads it — RECON, ranking,
+  and the PR channel are unchanged; it stays reference-only until a real need to weight or gate on
+  it appears.
+
 ## [0.14.0] - 2026-07-02
 
 ### Added
