@@ -4,6 +4,36 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-07-01
+
+### Added
+- **`/crg-build` — a readiness-campaign track that reuses the crg core for building instead of
+  debugging.** One invocation boots the target app (skill-owned daemons: the Workflow never starts
+  or stops a server — it returns `status:'app-down'` and the skill restarts), surveys readiness
+  gaps across seven dimensions (`stability, completeness, consistency, polish, reachability, docs,
+  launch-blockers`) with dimension-disjoint surveyors — the browser-driving ones serialized over
+  the single Playwright MCP instance — adversarially verifies every gap (refute = already-done /
+  intentional / out-of-scope; confirm must also refine every acceptance criterion into a testable
+  `command` or `browser` check), then persists a ranked readiness ledger for **GATE-SPEC**. Build
+  mode (`fromLedger` + `approvedGapIds`) packs approved gaps into dependency-ordered, file-disjoint
+  waves (`packWaves`: greedy earliest-fit, deterministic cycle-break toward the earlier-ranked gap,
+  dep-deferred cascade) and closes each gap only when **Gate A** (every command criterion re-run
+  blind, exit codes judged by the script) AND **Gate B** (a serialized headless browser gate —
+  `browserVerdict` in JS over httpStatus / non-allowlisted console errors / screenshot / assertions,
+  one retry after an infra-shaped failure, two → `app-down`) both pass. Each green wave is
+  committed per subrepo with a script-verified allowlist (`commitFilesOk` ⊆ check), a
+  script-composed message, and the no-attribution rule enforced in code (`commitMessageOk` — a
+  violating commit is reverted with `git reset --mixed`). Never pushes. New files:
+  `skills/crg-build/{SKILL.md,methodology.md}`, `workflows/crg-build.js`, `lib/build-profile.mjs`
+  (`validateProfile` / `autoApprove` — the `--auto-bypass` GATE-SPEC replacement: High|Medium
+  impact, S|M effort, `launch-blockers` always excluded, top-12 cap / `scoreUx` — two-scorer merge,
+  mean or min-on-disagreement), plus extraction-pattern test suites
+  `test/crg-build-helpers.test.mjs` and `test/build-profile.test.mjs`. The campaign loop (PROFILE →
+  STABILIZE via composing crg-debug per subrepo → BOOT → SURVEY → GATE-SPEC → BUILD → UX-REVIEW →
+  LOOP) lives in the skill; campaign state reuses `farm-db.mjs` unchanged via
+  `CRG_FARM_DB=<appRoot>/.crg-build/campaign.jsonl`. The enabler now also installs `crg-build.js`,
+  `crg-build.methodology.md`, and `crg-build.profile.mjs`.
+
 ## [0.11.1] - 2026-07-01
 
 ### Changed
