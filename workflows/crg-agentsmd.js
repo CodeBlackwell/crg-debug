@@ -341,14 +341,16 @@ const GATE_SCHEMA = {
 }
 
 // ---- Score-phase schemas (Score + Compress, additions only) ---------------------
-// Shape of a persisted ledger when re-ingested for a score-from-ledger run.
-const SCORE_LEDGER_SCHEMA = {
+// Compact ingest: the scorer's `rules` CLI prints counts + the indexed rule list judges credit
+// against. The full ledger NEVER transits an agent — a 100KB+ ledger through a model's
+// structured return silently truncates (the failure that invalidated the first score run).
+const RULELIST_SCHEMA = {
   type: 'object',
-  required: ['rules'],
+  required: ['count', 'ruleList'],
   properties: {
-    inventory: { type: 'object' },
-    rules: { type: 'array', items: { type: 'object' } },
-    cut: { type: 'array', items: { type: 'object' } },
+    count: { type: 'integer' }, rules: { type: 'integer' }, cut: { type: 'integer' },
+    unverified: { type: 'integer' },
+    ruleList: { type: 'string', description: 'The indexed rule list, one "i: [scope] rule" line each, copied EXACTLY' },
   },
 }
 
@@ -378,17 +380,16 @@ const JUDGE_SCHEMA = {
   },
 }
 
-// The scorer's structured return — the SCRIPT reads these numbers, never judge prose.
+// The scorer's compact stdout summary — the full scores.json stays on disk (the synthesis
+// agent reads it there); only these small numbers transit the gate agent's return.
 const SCORES_SCHEMA = {
   type: 'object',
   required: ['fileCoverage', 'applicable', 'kept'],
   properties: {
     fileCoverage: { type: 'number' }, applicable: { type: 'integer' },
     totalComments: { type: 'integer' }, holdoutTotal: { type: 'integer' }, unjudged: { type: 'integer' },
-    perRule: { type: 'array', items: { type: 'object' } },
-    kept: { type: 'array', items: { type: 'object' } },
-    cutZeroPredictive: { type: 'array', items: { type: 'object' } },
-    rescued: { type: 'array', items: { type: 'string' } },
+    kept: { type: 'integer' }, cutZeroPredictive: { type: 'integer' }, rescued: { type: 'integer' },
+    topKept: { type: 'array', items: { type: 'object' } },
   },
 }
 
@@ -398,24 +399,38 @@ const DRAFT_SCHEMA = {
   properties: { draft: { type: 'string' }, lineCount: { type: 'integer' } },
 }
 
+const STAMP_SCHEMA = {
+  type: 'object',
+  required: ['ok'],
+  properties: { ok: { type: 'boolean' }, kept: { type: 'integer' }, cut: { type: 'integer' } },
+}
+
 // Cross-phase state the Score/Compress path needs; the fromLedger ingest fills it. The mine path
 // (below) returns before Score is reached, so these stay unset there.
-let scoreInv, scoreRules = [], scoreCut = [], scoreLedgerPath = ledgerPath
+let ruleCount = 0, ruleList = '', ingestCounts = { rules: 0, cut: 0 }
 
 if (fromLedger) {
-  // Skip Corpus->Verify: one agent deserializes the prior ledger (the sandbox can't read files),
-  // then we jump to Score. Mirrors crg-debug.js's fix-from-ledger hand-off.
-  log(`crg-agentsmd score-from-ledger: ingesting ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}`)
+  // Skip Corpus->Verify. The scorer CLI owns the judged-rule index space — the ingest agent
+  // only relays the compact list it prints, and the line-count invariant catches truncation.
+  if (fromLedger !== ledgerPath) {
+    throw new Error(`fromLedger must be the canonical ${ledgerPath} — the scorer CLI reads only that path`)
+  }
+  log(`crg-agentsmd score-from-ledger: ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}`)
   const loaded = await agent(
-    `Read the JSON file at ${fromLedger} (repo at ${repoRoot}) and return its parsed contents. Do NOT edit any file. It is a crg-agentsmd ledger: an object with inventory{}, rules[], cut[]. Return inventory, rules, and cut EXACTLY as parsed, in the SAME order, unmodified.`,
-    { label: 'ingest-ledger', phase: 'Score', schema: SCORE_LEDGER_SCHEMA, model: mechModel },
+    `Run this command inside the repo at ${repoRoot}, do NOT edit any file, and return the JSON it prints on stdout EXACTLY as written — every field, ruleList byte-for-byte:
+node ${scoreToolPath} rules ${repoRoot}
+It reads the mined ledger and prints the indexed judged-rule list scoring credits against.`,
+    { label: 'ingest-ledger', phase: 'Score', schema: RULELIST_SCHEMA, model: mechModel },
   )
-  if (!loaded) throw new Error(`score-from-ledger: could not read/parse ledger at ${fromLedger}`)
-  scoreInv = loaded.inventory || {}
-  scoreRules = loaded.rules || []
-  scoreCut = loaded.cut || []
-  scoreLedgerPath = fromLedger
-  log(`Ingested ledger: ${scoreRules.length} rules · ${scoreCut.length} cut`)
+  if (!loaded || !loaded.count || !loaded.ruleList) throw new Error(`score-from-ledger: rules CLI returned nothing for ${ledgerPath}`)
+  const listLines = loaded.ruleList.split('\n').filter(Boolean).length
+  if (listLines !== loaded.count) {
+    throw new Error(`score-from-ledger: ruleList has ${listLines} lines but count=${loaded.count} — the ingest agent truncated it`)
+  }
+  ruleCount = loaded.count
+  ruleList = loaded.ruleList
+  ingestCounts = { rules: loaded.rules || 0, cut: loaded.cut || 0 }
+  log(`Ingested rule list: ${ruleCount} judged rules (${loaded.unverified || 0} unverified) from ${ingestCounts.rules} rules · ${ingestCounts.cut} cut`)
 }
 
 if (!fromLedger) {
@@ -623,19 +638,10 @@ return {
 
 // ---- Phase Score + Compress (score-from-ledger hand-off) ---------------------------------------
 if (!score) {
-  return { repoRoot, status: 'ingested', ledgerPath: scoreLedgerPath, note: 'score:false — ledger ingested, no scoring run', rules: scoreRules.length, cut: scoreCut.length }
+  return { repoRoot, status: 'ingested', ledgerPath, note: 'score:false — ledger ingested, no scoring run', rules: ingestCounts.rules, cut: ingestCounts.cut }
 }
 
 const scoreBase = `${repoRoot}/.crg-agentsmd`
-// The judged rule list judges credit against, by index — MUST equal agentsmd-score.mjs judgedRules():
-// mined rules first (verified), then rescued env-false-kills (unverified). The scorer rebuilds the same
-// order from the on-disk ledger, so an index in a judge's creditedRules maps to the same rule both ways.
-const judged = [
-  ...scoreRules.map(r => ({ ...r, unverifiedCommand: !!r.unverifiedCommand })),
-  ...scoreCut.filter(c => RESCUE_RE.test(String(c.cutReason || ''))).map(c => ({ ...c, unverifiedCommand: true })),
-]
-const ruleList = judged.map((r, i) => `${i}: [${r.scope}]${r.unverifiedCommand ? ' (unverified command)' : ''} ${r.rule}`).join('\n')
-log(`Score: ${judged.length} judged rules (${judged.filter(r => r.unverifiedCommand).length} rescued env-false-kills)`)
 
 // ---- Phase Score: prep (deterministic holdout extraction) --------------------------------------
 const prep = await agent(
@@ -683,33 +689,26 @@ await agent(
   { label: 'persist:panel', phase: 'Score', model: mechModel },
 )
 
-// Gate-style agent: run the deterministic scorer and return scores.json. The SCRIPT reads the numbers.
+// Gate-style agent: run the deterministic scorer. The full scores.json lands on DISK; only the
+// compact summary it prints transits the agent's return (a 90KB scores.json through a model
+// mangled the numbers in the first run).
 const scores = await agent(
-  `Run this command inside the repo at ${repoRoot}, do NOT edit any file, and return the JSON it prints on stdout EXACTLY as written:
+  `Run this command inside the repo at ${repoRoot}, do NOT edit any file, and return the compact summary JSON it prints on stdout EXACTLY as written:
 node ${scoreToolPath} score ${repoRoot}
-It reads ${scoreBase}/panel.json + ${scoreBase}/ledger.json + the corpus and writes ${scoreBase}/scores.json. Return every field of that JSON unmodified.`,
+It reads ${scoreBase}/panel.json + ${scoreBase}/ledger.json + the corpus, writes the full ${scoreBase}/scores.json to disk, and prints ONLY a summary. Return every field of that summary unmodified.`,
   { label: 'score', phase: 'Score', schema: SCORES_SCHEMA, model: mechModel },
 )
-if (!scores) throw new Error('Score phase: scorer returned no scores.json')
-log(`Score: fileCoverage ${(scores.fileCoverage * 100).toFixed(0)}% of ${scores.applicable} applicable · kept ${scores.kept.length} · cut ${(scores.cutZeroPredictive || []).length} zero-predictive · rescued ${(scores.rescued || []).length}`)
+if (!scores) throw new Error('Score phase: scorer returned no summary')
+log(`Score: fileCoverage ${(scores.fileCoverage * 100).toFixed(0)}% of ${scores.applicable} applicable · kept ${scores.kept} · cut ${scores.cutZeroPredictive || 0} zero-predictive · rescued ${scores.rescued || 0}`)
 
 // ---- Phase Compress: one synthesis agent (no fan-out) ------------------------------------------
-const keptSorted = [...(scores.kept || [])].sort(
-  (x, y) => (Number(!!x.restatement) - Number(!!y.restatement)) || ((y.coverage || 0) - (x.coverage || 0)),
-)
-const synthInput = keptSorted
-  .map((r, i) => `${i + 1}. [${r.category} · ${r.scope}] coverage=${r.coverage || 0}${r.restatement ? ' (restatement — demote/drop)' : ''}\n   RULE: ${r.rule}\n   WHY: ${r.why}`)
-  .join('\n')
-
+// The synthesis agent reads the full kept[] from scores.json on disk — never inlined here.
 const synth = await agent(
   `You are the synthesis agent for an AGENTS.md farming run on the repo at ${repoRoot}. Read the "Synthesis" section of ${SKILL} and follow it line-by-line.
 
-Write a single AGENTS.md draft — HARD budget: 60 lines total. The rules below survived adversarial verification AND retrodictive holdout scoring; they are already sorted by measured predictive value (coverage = how many held-out human review corrections following the rule would have prevented). restatement-flagged rules are demoted last and most should be DROPPED, not written. Order the file by that value, match the repo's existing documentation voice, and give each rule its imperative sentence + a one-line why. A mechanical rule a linter/CI could enforce gets flagged \`graduate-to-CI\`.
+Read ${scoreBase}/scores.json. Its kept[] array holds the rules that survived adversarial verification AND retrodictive holdout scoring; each has rule, why, scope, category, coverage (how many held-out human review corrections following it would have prevented) and restatement. Sort restatement-flagged rules last, then by coverage descending — that measured predictive value is the file's order. Most restatement-flagged rules should be DROPPED, not written.
 
-The file's header MUST state it was machine-mined from this repo's review history and name the ledger at ${scoreLedgerPath} as provenance — never fabricate authorship.
-
-SCORED RULES (already sorted; higher coverage = more predictive):
-${synthInput}
+Write a single AGENTS.md draft — HARD budget: 60 lines total. Match the repo's existing documentation voice and give each rule its imperative sentence + a one-line why. A mechanical rule a linter/CI could enforce gets flagged \`graduate-to-CI\`. The file's header MUST state it was machine-mined from this repo's review history and name the ledger at ${ledgerPath} as provenance — never fabricate authorship.
 
 Write the draft to ${scoreBase}/AGENTS.md (create the dir if needed), overwriting any existing file, then return it as \`draft\` with its \`lineCount\`. This draft is NEVER committed.`,
   { label: 'compress', phase: 'Compress', schema: DRAFT_SCHEMA, model: synthModel },
@@ -717,28 +716,23 @@ Write the draft to ${scoreBase}/AGENTS.md (create the dir if needed), overwritin
 if (!synth) throw new Error('Compress phase: synthesis agent returned no draft')
 log(`Compress: AGENTS.md draft ${synth.lineCount || '?'} lines -> ${scoreBase}/AGENTS.md`)
 
-// Fill the ledger's scoring block via read-modify-write so every other field is preserved byte-for-byte.
-const scoring = {
-  fileCoverage: scores.fileCoverage,
-  applicable: scores.applicable,
-  totalComments: scores.totalComments,
-  perRule: scores.perRule,
-  cutZeroPredictive: (scores.cutZeroPredictive || []).map(r => r.rule),
-  rescued: scores.rescued || [],
-}
-await agent(
-  `In the repo at ${repoRoot}, read the JSON file at ${scoreLedgerPath}, set its top-level "scoring" field to EXACTLY the JSON below (replacing any existing value), and write the result back to ${scoreLedgerPath}. Change NOTHING else — preserve every other field and the rules[]/cut[] arrays byte-for-byte. Output nothing else.\n\n${JSON.stringify(scoring, null, 2)}`,
-  { label: 'persist:ledger', phase: 'Compress', model: mechModel },
+// Deterministic stamp: the CLI fills ledger.scoring from scores.json on disk — replaces the
+// read-modify-write agent that round-tripped the whole ledger through a model.
+const stamped = await agent(
+  `Run this command inside the repo at ${repoRoot}, do NOT edit any other file, and return the JSON it prints:
+node ${scoreToolPath} stamp ${repoRoot}`,
+  { label: 'stamp:ledger', phase: 'Compress', schema: STAMP_SCHEMA, model: mechModel },
 )
-log(`Ledger scoring filled -> ${scoreLedgerPath}`)
+if (!stamped || !stamped.ok) throw new Error('Compress phase: ledger scoring stamp failed')
+log(`Ledger scoring stamped -> ${ledgerPath}`)
 
 return {
-  repoRoot, status: 'scored', ledgerPath: scoreLedgerPath, draftPath: `${scoreBase}/AGENTS.md`,
+  repoRoot, status: 'scored', ledgerPath, draftPath: `${scoreBase}/AGENTS.md`,
   scoring: {
     fileCoverage: scores.fileCoverage, applicable: scores.applicable, totalComments: scores.totalComments,
     holdoutTotal: scores.holdoutTotal, unjudged: scores.unjudged,
-    kept: (scores.kept || []).length, cutZeroPredictive: (scores.cutZeroPredictive || []).length, rescued: (scores.rescued || []).length,
+    kept: scores.kept, cutZeroPredictive: scores.cutZeroPredictive || 0, rescued: scores.rescued || 0,
   },
   judges: batches.length,
-  topRules: keptSorted.slice(0, 15).map(r => ({ rule: r.rule, scope: r.scope, category: r.category, coverage: r.coverage || 0, restatement: !!r.restatement })),
+  topRules: scores.topKept || [],
 }
