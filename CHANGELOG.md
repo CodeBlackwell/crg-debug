@@ -4,6 +4,56 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`/crg-agentsmd` — farm a demonstrably accurate AGENTS.md from a repo's review history
+  (`workflows/crg-agentsmd.js`, `lib/corpus.mjs`, `lib/agentsmd-score.mjs`,
+  `skills/crg-agentsmd/methodology.md`).** Existing AGENTS.md generators read the code and emit
+  plausible-sounding rules; maintainers dismiss them because they restate what any reader sees
+  instead of the tacit properties that shape the code. This pipeline mines where tacit knowledge
+  actually fossilizes — PR review threads (a maintainer correcting a contributor is a labeled rule
+  violation), first-push-vs-merged diff evolution, revert/fixup git archaeology, code invariants,
+  and existing docs — then makes every rule earn its place twice:
+  - *Accuracy gates rules*: every candidate needs verbatim cited evidence at the JSON-schema
+    boundary, then survives three adversarial attacks — a counterexample hunt over the current
+    tree (which also refutes any rule whose quoted evidence doesn't exist at its ref), an
+    executability check whose exit codes the script reads, and a restatement detector that demotes
+    exactly the derivable-from-one-file failure mode.
+  - *Effectiveness gates the file*: a stratified ~20% of reviewed PRs is held out at corpus time
+    (enforced structurally — miners only ever see train-split files), and batched judges replay
+    every held-out human review correction against the surviving rules ("would an agent that had
+    READ this rule have avoided the code that drew this comment?" — mechanism match, not topic
+    overlap). Zero-predictive rules are cut; the synthesized draft orders rules by measured
+    coverage. The deterministic scorer (`agentsmd-score.mjs`) owns all math; judges only emit
+    structured credit rows.
+  A thin fossil record returns `thin-corpus` instead of padding with guesses. The draft is written
+  beside the ledger and never committed or posted. Not yet packaged (no SKILL.md, enabler untouched);
+  runs via `Workflow({scriptPath})` with explicit `methodologyPath`/`corpusToolPath`/`scoreToolPath`.
+  The `fromLedger` seam re-runs Score+Compress from a persisted ledger without re-mining.
+- **Fan-out cost gates (`assertFleet`).** The first pilot ballooned to ~90 verify agents because
+  per-rule attack agents multiplied by a data-dependent rule count nobody evaluated before
+  spawning. Every fan-out now logs its agent arithmetic (`8 cx + 3 rs + 2 cmd = 13 agents`) and
+  throws past `maxPhaseAgents` (default 40) — a phase can no longer scale its fleet silently.
+  Verification is batched by design: ~6 same-scope rules per counterexample attacker, ~20 rules
+  per restatement judge, ~20 holdout comments per scoring judge.
+- **Per-role model tiers.** `minerModel`/`judgeModel` default to `model`, `mechModel` (persists,
+  executability, corpus prep, score gate) defaults to haiku, and `synthModel` inherits the session
+  model — the permanent synthesized artifact gets the strongest leg while mechanical steps run cheap.
+- **`corpus.mjs` hardening.** A one-result `gh pr list` probe fails bad field names in seconds
+  before any long paginated pull; raw `--slurp` pages land on disk before parsing so a parse
+  failure never costs a re-download; `write-file` writes stdin to disk verbatim so persist agents
+  heredoc large JSON instead of a model re-typing it as output.
+
+### Fixed
+- **Environment gaps no longer disprove command claims.** The pilot cut three real rules because
+  `nix-shell`/`pre-commit` don't exist on the host — the same code-vs-env failure class crg-debug's
+  baseline already classifies. The executability gate now returns `failureKind: code|env` (with a
+  script-side stderr override that doesn't trust the agent's classification); env failures keep the
+  rule flagged `unverifiedCommand`, and the scorer rescues previously env-cut rules into the judged
+  list, where they survive only on earned holdout coverage. `judgedRules()` preserves the flag so
+  workflow and scorer stay index-aligned.
+
 ## [0.14.2] - 2026-07-02
 
 ### Fixed
