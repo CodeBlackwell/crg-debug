@@ -9,7 +9,7 @@ export const meta = {
     { title: 'Plan', detail: 'size N miners from the inventory: modality floor, volume shards, era/reviewer splits' },
     { title: 'Mine', detail: 'N corpus-slice miners emit evidence-backed candidate rules' },
     { title: 'Merge', detail: 'exact + semantic dedup; cross-modality confirmation folded into canonicals' },
-    { title: 'Verify', detail: 'per-rule adversarial attacks: counterexample, executability, restatement' },
+    { title: 'Verify', detail: 'batched adversarial attacks: counterexample (per scope-batch), restatement (batched judge), executability' },
   ],
 }
 
@@ -31,6 +31,9 @@ const minReviewedPRs = Math.max(1, Number(a && a.minReviewedPRs) || 30)
 const maxMiners = Math.max(1, Number(a && a.maxMiners) || 12)
 const maxPRs = Math.max(10, Number(a && a.maxPRs) || 1000)
 const fromCorpus = !!(a && a.fromCorpus)
+// Optional effort override for the extraction-heavy miner agents (e.g. 'low'). Applied via
+// conditional spread so omitting it leaves agent opts byte-identical (resume-cache safe).
+const minerEffort = capText(a && a.minerEffort, 20)
 // Absolute paths supplied by the caller — no install-time path baking (crg-debug idiom).
 const methodologyPath = capText(a && a.methodologyPath, 1000)
 const corpusToolPath = capText(a && a.corpusToolPath, 1000)
@@ -147,23 +150,46 @@ const DEDUP_SCHEMA = {
   },
 }
 
-const ATTACK_SCHEMA = {
+// Batched attacks: one agent judges a batch of rules and returns one verdict row per
+// global index. Batching exists because per-rule agents ballooned the fleet: attacks
+// are mostly grep + judgment, so one attacker can cover several same-scope rules.
+const BATCH_ATTACK_SCHEMA = {
   type: 'object',
-  required: ['verdict', 'reason'],
+  required: ['verdicts'],
   properties: {
-    verdict: { type: 'string', enum: ['holds', 'refuted', 'rescope'], description: 'holds = survives your attack; refuted = kill it; rescope = true but for a narrower scope' },
-    reason: { type: 'string' },
-    rescopedTo: { type: 'string', description: 'The narrower scope, when verdict=rescope' },
-    violationsFound: { type: 'integer', description: 'Counterexample attack only: how many current-code violations you located' },
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['index', 'verdict', 'reason'],
+        properties: {
+          index: { type: 'integer', description: 'The rule\'s global index as given in the prompt' },
+          verdict: { type: 'string', enum: ['holds', 'refuted', 'rescope'], description: 'holds = survives your attack; refuted = kill it; rescope = true but for a narrower scope' },
+          reason: { type: 'string' },
+          rescopedTo: { type: 'string', description: 'The narrower scope, when verdict=rescope' },
+          violationsFound: { type: 'integer', description: 'How many current-code violations you located' },
+        },
+      },
+    },
   },
 }
 
-const RESTATEMENT_SCHEMA = {
+const BATCH_RESTATEMENT_SCHEMA = {
   type: 'object',
-  required: ['restatement', 'reason'],
+  required: ['verdicts'],
   properties: {
-    restatement: { type: 'boolean', description: 'true if the rule is derivable by reading any single file — no cross-PR/tacit knowledge needed' },
-    reason: { type: 'string' },
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['index', 'restatement', 'reason'],
+        properties: {
+          index: { type: 'integer', description: 'The rule\'s global index as given in the prompt' },
+          restatement: { type: 'boolean', description: 'true if the rule is derivable by reading any single file — no cross-PR/tacit knowledge needed' },
+          reason: { type: 'string' },
+        },
+      },
+    },
   },
 }
 
@@ -256,7 +282,7 @@ Read the "Miner discipline" and "${m.modality}" sections of ${SKILL} and follow 
 
 Every rule row needs: one imperative sentence (rule), the shaping property behind it (why), where it applies (scope), a category, and >=1 VERBATIM evidence quote with its URL/path ref. A rule you cannot quote evidence for does not exist — do not pad. Mechanical rules asserting a runnable command must put it in commandClaim. If enforcement looks era-bound (corrected constantly in early PRs, never recently), say so in eraNote rather than presenting it as live.
 ${UNTRUSTED}`,
-    { agentType: 'Explore', label: `mine:${m.minerId}`, phase: 'Mine', schema: RULES_SCHEMA, model },
+    { agentType: 'Explore', label: `mine:${m.minerId}`, phase: 'Mine', schema: RULES_SCHEMA, model, ...(minerEffort ? { effort: minerEffort } : {}) },
   )
 
 const mined = (await parallel(miners.map(m => () => miner(m).then(r => ({ m, r }))))).filter(Boolean)
@@ -319,56 +345,79 @@ Return duplicateGroups: inner arrays of indices that are the same rule (2+ membe
 mergedRules.sort((x, y) => (y.modalities.length - x.modalities.length) || (y.evidence.length - x.evidence.length))
 log(`Merge: ${candidates.length} candidates -> ${byKey.size} exact-fold -> ${mergedRules.length} after semantic merge`)
 
-// ---- Phase 4: Verify ---------------------------------------------------------------------
-const ruleFence = r => fence(
-  `rule: ${r.rule}\nwhy: ${r.why}\nscope: ${r.scope}\ncategory: ${r.category}\nevidence: ${r.evidence.slice(0, 5).map(e => `${e.kind} ${e.ref} :: ${e.quote}`).join(' | ')}`,
+// ---- Phase 4: Verify (batched) -------------------------------------------------------------
+const chunk = (arr, n) => {
+  const out = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
+const ruleBlock = (r, i) => fence(
+  `index: ${i}\nrule: ${r.rule}\nwhy: ${r.why}\nscope: ${r.scope}\ncategory: ${r.category}\nevidence: ${r.evidence.slice(0, 5).map(e => `${e.kind} ${e.ref} :: ${e.quote}`).join(' | ')}`,
 )
 
-const counterexample = r =>
+// Counterexample: batches grouped by scope so one attacker greps one neighborhood.
+const CX_BATCH = 6
+const idxByScope = [...mergedRules.keys()].sort((x, y) =>
+  String(mergedRules[x].scope || '').localeCompare(String(mergedRules[y].scope || '')))
+const cxBatch = indices =>
   agent(
-    `You are an adversarial reviewer attacking ONE candidate AGENTS.md rule for the repo at ${repoRoot}. Hunt COUNTEREXAMPLES in the CURRENT working tree: places where merged, accepted code violates the rule. Also spot-check the cited evidence — open each ref; if a quote does not exist at its ref, that alone refutes the rule (fabricated evidence).
-${ruleFence(r)}
-Search honestly (grep/glob across the claimed scope). Verdict: many violations in current accepted code -> 'refuted' (it is not a real rule) OR 'rescope' if it clearly holds in a narrower scope (name it in rescopedTo). Scattered stragglers in old code with strong recent enforcement still 'holds' — note it. Report violationsFound. ${UNTRUSTED}`,
-    { label: `attack:cx:${r.minerIds[0]}`, phase: 'Verify', schema: ATTACK_SCHEMA, model },
+    `You are an adversarial reviewer attacking ${indices.length} candidate AGENTS.md rules for the repo at ${repoRoot}. For EACH rule INDEPENDENTLY, hunt COUNTEREXAMPLES in the CURRENT working tree: places where merged, accepted code violates it. Also spot-check its cited evidence — open at least the first ref; a quote that does not exist at its ref refutes that rule by itself (fabricated evidence).
+
+${indices.map(i => ruleBlock(mergedRules[i], i)).join('\n')}
+
+Search honestly (grep/glob across each claimed scope). Per rule: many violations in current accepted code -> 'refuted' OR 'rescope' if it clearly holds in a narrower scope (name it in rescopedTo). Scattered stragglers in old code with strong recent enforcement still 'holds' — note it. Report violationsFound. Return EXACTLY one verdicts[] row per index above — a skipped index counts as an unattacked rule and voids the batch. ${UNTRUSTED}`,
+    { label: `attack:cx:${indices[0]}-${indices[indices.length - 1]}`, phase: 'Verify', schema: BATCH_ATTACK_SCHEMA, model },
   )
 
-const restatement = r =>
+// Restatement: pure judgment over the rule text + a quick file peek — large batches.
+const RS_BATCH = 20
+const rsBatch = indices =>
   agent(
-    `You are the restatement detector in an AGENTS.md pipeline for the repo at ${repoRoot}. The known failure mode of machine-written contributor docs: repeating what any reader sees in the code instead of stating the tacit property that SHAPES it.
-${ruleFence(r)}
-Question: could a competent engineer derive this rule by reading any SINGLE file of the repo (the file it points at, a config, an obvious convention on one screen)? If yes -> restatement=true. It earns restatement=false only if knowing it requires cross-PR history, reviewer corrections, or invisible boundary conditions. ${UNTRUSTED}`,
-    { label: `attack:rs:${r.minerIds[0]}`, phase: 'Verify', schema: RESTATEMENT_SCHEMA, model },
+    `You are the restatement detector in an AGENTS.md pipeline for the repo at ${repoRoot}. The known failure mode of machine-written contributor docs: repeating what any reader sees in the code instead of stating the tacit property that SHAPES it. Judge EACH rule INDEPENDENTLY:
+
+${indices.map(i => ruleBlock(mergedRules[i], i)).join('\n')}
+
+Per rule: could a competent engineer derive it by reading any SINGLE file of the repo (the file it points at, a config, an obvious convention on one screen)? If yes -> restatement=true. It earns restatement=false only if knowing it requires cross-PR history, reviewer corrections, or invisible boundary conditions. Return EXACTLY one verdicts[] row per index above. ${UNTRUSTED}`,
+    { label: `attack:rs:${indices[0]}-${indices[indices.length - 1]}`, phase: 'Verify', schema: BATCH_RESTATEMENT_SCHEMA, model },
   )
 
-const executability = r =>
+const executability = (r, i) =>
   agent(
     `Run this command claim from a candidate rule, inside the repo at ${repoRoot}. Do NOT edit any file. Run it EXACTLY as written and report the REAL exit code and output tail — do not interpret pass/fail.
 ${fence(r.commandClaim)}
 Return one results[] row: {command, exitCode, stdout, stderr}.`,
-    { label: `attack:cmd:${r.minerIds[0]}`, phase: 'Verify', schema: GATE_SCHEMA, model },
+    { label: `attack:cmd:${i}`, phase: 'Verify', schema: GATE_SCHEMA, model },
   )
 
-const attacked = await parallel(
-  mergedRules.map(r => () =>
-    Promise.all([
-      counterexample(r),
-      restatement(r),
-      r.commandClaim ? executability(r) : Promise.resolve(null),
-    ]).then(([cx, rs, cmd]) => ({ r, cx, rs, cmd })),
-  ),
-)
+const cmdIndices = [...mergedRules.keys()].filter(i => mergedRules[i].commandClaim)
+const [cxResults, rsResults, cmdResults] = await Promise.all([
+  parallel(chunk(idxByScope, CX_BATCH).map(b => () => cxBatch(b))),
+  parallel(chunk([...mergedRules.keys()], RS_BATCH).map(b => () => rsBatch(b))),
+  parallel(cmdIndices.map(i => () => executability(mergedRules[i], i).then(g => ({ i, g })))),
+])
+
+// Fold batch verdicts back by global index. A missing cx verdict = unattacked -> cut.
+const cxByIdx = new Map()
+for (const b of cxResults.filter(Boolean)) for (const v of b.verdicts || []) cxByIdx.set(v.index, v)
+const rsByIdx = new Map()
+for (const b of rsResults.filter(Boolean)) for (const v of b.verdicts || []) rsByIdx.set(v.index, v)
+const cmdByIdx = new Map()
+for (const item of cmdResults.filter(Boolean)) cmdByIdx.set(item.i, item.g)
 
 const rules = []
 const cut = []
-for (const item of attacked.filter(Boolean)) {
-  const { r, cx, rs, cmd } = item
+for (let i = 0; i < mergedRules.length; i++) {
+  const r = mergedRules[i]
+  const cx = cxByIdx.get(i)
+  const rs = rsByIdx.get(i)
   // Executability: the SCRIPT reads the exit code — a dead command kills a mechanical rule.
   if (r.commandClaim) {
+    const cmd = cmdByIdx.get(i)
     const ok = !!(cmd && (cmd.results || []).length && cmd.results.every(x => x.exitCode === 0))
     if (!ok) { cut.push({ ...r, cutReason: `commandClaim failed: ${(cmd && cmd.results && cmd.results[0] && cmd.results[0].stderr) || 'no result'}` }); continue }
   }
-  if (cx && cx.verdict === 'refuted') { cut.push({ ...r, cutReason: `counterexample: ${cx.reason}` }); continue }
-  if (!cx) { cut.push({ ...r, cutReason: 'counterexample attack failed to return a verdict' }); continue }
+  if (!cx) { cut.push({ ...r, cutReason: 'counterexample attack returned no verdict for this rule' }); continue }
+  if (cx.verdict === 'refuted') { cut.push({ ...r, cutReason: `counterexample: ${cx.reason}` }); continue }
   const out = { ...r }
   if (cx.verdict === 'rescope' && cx.rescopedTo) { out.scope = cx.rescopedTo; out.rescoped = true }
   if (cx.violationsFound) out.violationsFound = cx.violationsFound
