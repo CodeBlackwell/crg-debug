@@ -4,6 +4,29 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-07-01
+
+### Added
+- **Farmability prior — `/crg-farm --auto-bypass` demotes predictably-unbuildable repos before the
+  top-5 cap.** Wildcard runs were spending every slot on repos a slim container can't build
+  (C++/premake, Android/Gradle, giant RN monorepos) and shipping nothing. RECON now scores a cheap,
+  no-clone farmability prior per candidate from repo metadata (language, build manifests, size) and
+  from prior `unfarmable` verdicts recorded per `repo::env`, then sinks low-prior and
+  previously-unbuildable candidates below comparable-impact farmable ones. The prior is a
+  third-order sort key and the final demotion + cap are enforced in JS, so it over-selects farmable
+  repos without ever hard-excluding one — a demoted repo still runs when fewer than five farmable
+  candidates exist. New farm-DB record type `buildability` lets the farm learn a repo's env
+  verdict across runs instead of re-deriving it.
+
+### Fixed
+- **Container env provisioning: the deps volume is now mounted on every toolchain command.** The
+  setup agent installed language deps into the `crg-deps-<slug>` volume but could run the baseline
+  typecheck without the `-v crg-deps-<slug>:/work/<depDir>` mount, so installed binaries (`tsc`,
+  `pytest`, `eslint`) went missing and an unbuildable env was misread as a broken build
+  (`Expensify/App` handed off unfarmable on `tsc: not found`). The dep dir is pinned at install, the
+  mount is required on every command, and a `not found` failure self-corrects — re-add the mount and
+  rerun before classifying env vs code.
+
 ## [0.12.0] - 2026-07-01
 
 ### Added
