@@ -80,6 +80,9 @@ const RECON_SCHEMA = {
           stars: { type: 'number' },
           recentMergeSpanDays: { type: 'number' },
           daysSinceLastMerge: { type: 'number' },
+          farmabilityPrior: { type: 'string', enum: ['high', 'medium', 'low'], description: 'cheap-metadata guess at whether the env is buildable in the current --env mode (no clone)' },
+          farmabilitySignals: { type: 'string', description: 'one line: language, build manifests, size, and any prior verdict behind the prior' },
+          priorUnfarmable: { type: 'boolean', description: 'true if the farm DB already recorded this repo unfarmable in this env mode' },
         },
       },
     },
@@ -113,7 +116,15 @@ For each hit, run the two-pass duplicate-fix check from crg-farm's methodology �
 1. Farm-DB dedup: \`node ${farmDbPath} query '{"type":"pr"}'\` — drop any candidate whose repo+issue we already shipped or exhausted.
 2. Upstream duplicate-fix check per surviving candidate: confirm the issue is still open (\`gh issue view <n> -R <owner>/<repo> --json state,title,body\`) and search for a PR that already addresses it (\`gh search prs "repo:<owner>/<repo> <n>" --state all\`, \`gh pr list -R <owner>/<repo> --state open --search "<n> in:body,title"\`). Classify fresh / in-flight / already-fixed.
 
-Then rank the FRESH candidates only, per methodology.md's §Ranking: per distinct repo pull \`stargazerCount\` (\`gh repo view\`) and the last 5 merged-PR timestamps (\`gh pr list -R <owner>/<repo> --state merged -L 5 --json mergedAt,number\`) for review-cadence signals (tight spacing = active review; a stale gap since the last merge demotes a repo even if historical cadence looked fast). Score impact from the issue body itself — data-loss/security/safety bugs outrank plain functional breakage, which outranks cosmetic issues; a small low-star repo with a severe bug can outrank a huge repo with a cosmetic one. Sort fresh[] impact-first, review-likelihood as tiebreaker/demotion — index 0 is the top pick.
+Before ranking, score each fresh candidate's FARMABILITY prior — a cheap, no-clone guess at whether env=${env} can build it, so slots don't get spent on predictably unbuildable repos (per methodology.md §Farmability prior):
+- Prior verdicts (#1.5): \`node ${farmDbPath} query '{"type":"buildability"}'\` — for any fresh candidate whose repo has a record with verdict "unfarmable" AND env "${env}", set priorUnfarmable=true. That env already failed to build it.
+- Cheap metadata (#1, no clone): \`gh repo view <owner>/<repo> --json stargazerCount,primaryLanguage,diskUsage\` (language + size), plus one root listing \`gh api repos/<owner>/<repo>/contents --jq '.[].name'\` to spot build manifests. Classify farmabilityPrior:
+  - high — a mainstream containerable stack (JS/TS, Python, Go, Rust) WITH a lockfile or a Dockerfile/.devcontainer/CI workflow, and not a giant monorepo.
+  - low — a heavy native/platform toolchain (C/C++/Obj-C, Swift/Kotlin/Android+Gradle, C#/.sln, an Xcode project, premake) OR a very large monorepo whose install won't finish in a slim container.
+  - medium — anything else (recognized ecosystem but missing lockfile, or unclear).
+  Put the one-line justification (language, manifests, size, prior verdict) in farmabilitySignals. This is a soft PRIOR, never a filter — a low-prior repo still runs if there aren't enough farmable ones.
+
+Then rank the FRESH candidates, per methodology.md's §Ranking: per distinct repo use the \`stargazerCount\` from above and the last 5 merged-PR timestamps (\`gh pr list -R <owner>/<repo> --state merged -L 5 --json mergedAt,number\`) for review-cadence signals (tight spacing = active review; a stale gap since the last merge demotes a repo even if historical cadence looked fast). Score impact from the issue body itself — data-loss/security/safety bugs outrank plain functional breakage, which outranks cosmetic issues; a small low-star repo with a severe bug can outrank a huge repo with a cosmetic one. Sort fresh[] impact-first, review-likelihood as tiebreaker/demotion, farmability prior as a further demotion (a low-prior or priorUnfarmable repo should not outrank a comparable-impact farmable one) — index 0 is the top pick. The final farmability demotion is re-applied deterministically in JS after you return, so set farmabilityPrior/priorUnfarmable honestly.
 
 Return the ranked fresh[] array and the dropped[] (in-flight/already-fixed) array with competingPr URLs where applicable.`,
   { phase: 'Recon', schema: RECON_SCHEMA, label: 'recon' }
@@ -121,8 +132,17 @@ Return the ranked fresh[] array and the dropped[] (in-flight/already-fixed) arra
 
 const rankedFresh = (recon && recon.fresh) || []
 const dropped = (recon && recon.dropped) || []
-const capped = rankedFresh.slice(0, CANDIDATE_CAP)
-const droppedByCap = rankedFresh.slice(CANDIDATE_CAP)
+// Farmability demotion, enforced in JS before the cap (recon's rank is model-produced; the cap that
+// decides which repos actually run is not). A prior unfarmable verdict sinks hardest, then a low
+// farmability prior — each preserving recon's impact order within its tier. Soft, not a filter: a
+// demoted repo still runs if fewer than CANDIDATE_CAP farmable ones exist.
+const farmDemotion = c => (c && c.priorUnfarmable ? 2 : c && c.farmabilityPrior === 'low' ? 1 : 0)
+const orderedFresh = rankedFresh
+  .map((c, i) => ({ c, i }))
+  .sort((a, b) => farmDemotion(a.c) - farmDemotion(b.c) || a.i - b.i)
+  .map(x => x.c)
+const capped = orderedFresh.slice(0, CANDIDATE_CAP)
+const droppedByCap = orderedFresh.slice(CANDIDATE_CAP)
 
 log(
   `Recon: ${rankedFresh.length} fresh candidate(s), ${dropped.length} dropped (in-flight/already-fixed). ` +
@@ -201,7 +221,15 @@ const settled = await pipeline(
     // Env couldn't be built at this rung — crg-debug bailed rather than manufacture false bugs.
     // Clean hand-off, NOT an escalation: no tier climb closes an unbuildable environment.
     if (triage && triage.status === 'unfarmable') {
-      return { candidate, repoRoot: clone.repoRoot, outcome: 'unfarmable', reason: triage.reason || `environment not buildable (env=${env})` }
+      const unfarmReason = triage.reason || `environment not buildable (env=${env})`
+      // Record the verdict so future recons demote this repo before the cap (#1.5) instead of
+      // re-learning it the expensive way. Keyed by repo+env — a repo unbuildable in `container`
+      // may still be farmable in `none`.
+      await agent(
+        `Append one farm-DB "buildability" record via \`node ${farmDbPath} append\`: {"type":"buildability","farmRunId":"${farmRunId}","repo":"${candidate.repo}","env":"${env}","verdict":"unfarmable","keyOf":"${candidate.repo}::${env}","reason":${JSON.stringify(unfarmReason)}} on stdin. Return {"logged":true}.`,
+        { phase: 'Triage', schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: `log-unfarmable:${candidate.repo}` }
+      )
+      return { candidate, repoRoot: clone.repoRoot, outcome: 'unfarmable', reason: unfarmReason }
     }
     if (!triage || !(triage.confirmedBugs || []).length) {
       return { candidate, repoRoot: clone.repoRoot, outcome: 'no-bugs-confirmed' }

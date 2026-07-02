@@ -154,6 +154,32 @@ rank on each `candidate` farm-DB row (`rankSignals: {stars, recentMergeSpanDays,
 daysSinceLastMerge}`) so GATE-RECON can show *why* something ranked where it did, and so a later
 run can compare against a repo's prior signals instead of re-deriving them from scratch.
 
+### Farmability prior (demote predictably-unbuildable repos before the cap)
+
+Buildability is only *truly* known at TRIAGE (clone → provision env → baseline) — but that's the
+expensive step, and a wildcard cap that spends all its slots on repos it can't build ships nothing.
+Score a **cheap, no-clone farmability prior** per candidate so the cap over-selects farmable repos
+without ever hard-excluding one (a heavy-looking repo can still be buildable — a prior is not a
+filter). Two inputs:
+
+- **Prior verdicts (nearly free).** Query the farm DB for `buildability` records
+  (`node <farmDbPath> query '{"type":"buildability"}'`). A repo previously recorded `unfarmable` in
+  the *same* env mode → `priorUnfarmable=true`. A verdict is keyed by `repo::env` — unbuildable in
+  `container` says nothing about `none`. The auto-bypass harness writes one such record every time a
+  candidate hands off as unfarmable, so the farm *learns* rather than re-deriving each run.
+- **Cheap metadata (one `gh repo view` + one root `contents` listing, no clone).** `high` = a
+  mainstream containerable stack (JS/TS, Python, Go, Rust) with a lockfile or a
+  Dockerfile/`.devcontainer`/CI workflow, not a giant monorepo. `low` = a heavy native/platform
+  toolchain (C/C++/Obj-C, Swift/Kotlin/Android+Gradle, C#/`.sln`, Xcode, premake) or a monorepo
+  whose install won't finish in a slim container. `medium` = everything else.
+
+The prior is a **third-order sort key** (after impact and review-likelihood) so a farmable severe
+bug still outranks a farmable cosmetic one; it only sinks a predicted-unbuildable repo *below a
+comparable-impact farmable one*. Under `--auto-bypass` the final demotion is re-applied
+**deterministically in JS** right before the top-5 cap (`priorUnfarmable` sinks hardest, then a
+`low` prior, recon's impact order preserved within each tier) — the cap that decides which repos
+actually run is enforced in code, not left to the model's own ordering.
+
 GATE-RECON then shows the ranked list, not a raw dump. Because a ranked list commonly runs past
 the 4-option cap the Named-Gate Protocol allows, `select-subset` (SKILL.md §GATE-RECON) is a
 two-step pick: post the full ranked list as plain text (repo, issue, one-line impact/cadence
@@ -582,6 +608,7 @@ Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.
 | `attempt` | per fix pass | `tier`, `fixed:[keyOf]`, `unfixed:[{keyOf,reason}]`, `finalGateClean` |
 | `pr` | draft-create + submit | `repo`, `issueRef`, `url`, `state`, `keyOf` |
 | `advisory` | COMPILE-REPORT (draft) and GATE-ADVISORY-REVIEW (final decision) | `repo`, `keyOf`, `vulnClass`, `severity`, `pocVerdict`, `reportPath`, `decision` |
+| `buildability` | a candidate hands off as `unfarmable` (env not buildable at TRIAGE) | `repo`, `env`, `verdict` (`unfarmable`), `keyOf` (`repo::env`), `reason` |
 | `run-end` | loop finishes — TRACK, or any abort | `farmRunId`, `startedAt`, `endedAt`, `durationMs` (+ `backfilled:true` if reconstructed) |
 
 `keyOf` (`norm(file)::norm(rootCause)`, from `ledger-slice.mjs`) is the cross-run identity. The
