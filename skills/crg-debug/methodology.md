@@ -20,7 +20,7 @@ for the sequential `crg-debugger` agent, which orchestrates itself in one contex
 >
 > Then wait for an explicit "yes" before proceeding. If you cannot complete a mandated step (tool missing, environment blocked), do NOT silently work around it — STOP, report what's blocked, and ask how to proceed. Surfacing a deviation in the final report is NOT a substitute for getting approval BEFORE you take it.
 
-Reproduce a full graph-driven debugging session in one invocation: build the graph → map hotspots → find bugs in parallel → fix them in disjoint waves → verify → document. Fixes land in the working tree; **nothing is committed unless the user asks.**
+Reproduce a full graph-driven debugging session in one invocation: build the graph → map hotspots → find bugs in parallel → fix them in disjoint waves → verify → document. Each validated wave is committed on a `crg-debug/fix-<topic>` branch off the current HEAD (only the wave's own files, staged by explicit path), followed by `code-review-graph update` so later waves and gates query a graph that matches the tree. **Never push.** The user's original branch is never committed to; pre-existing uncommitted changes stay untouched in the tree.
 
 ## Execution mode (read first)
 
@@ -101,7 +101,7 @@ Per wave (barriered):
 
 Print the ledger inline AND persist a report: `crg-debug-report-$(date +%Y%m%d-%H%M%S).md` at the repo root. Idempotently add `crg-debug-report-*.md` to `.gitignore` (`grep -qxF "$entry" .gitignore || echo "$entry" >> .gitignore`).
 
-**STOP — do not commit.** End with: "Fixes are in the working tree and the report is written. Ask me to commit (I'll stage only the files I changed, by name) or run /cpdv."
+**STOP — do not push or merge.** The validated waves are already committed on the `crg-debug/fix-<topic>` branch (the report itself stays untracked). End with: "Fix waves are committed on `<branch>` and the report is written. Review the commits, then merge (or cherry-pick) yourself, or run /cpdv. Nothing was pushed."
 
 ---
 
@@ -164,8 +164,8 @@ When re-auditing — a second sweep over an already-processed repo, the adversar
 ### Git & safety policy (non-negotiable)
 - Scoped staging only: `git add <explicit paths you changed>`. **Never** `git add -A`, `git add .`, or `git add -u` — generated CRG/AI-tool config and the report must never be swept in.
 - Edit source files only — never stage or hand-edit a generated artifact (`dist/`, `build/`, bundled/minified output, a lockfile) as if it were a fix; its bug lives in the source that produces it.
-- Commit **only when the user explicitly asks.** Default deliverable = fixes in the working tree + the report.
-- If on the default branch (`git branch --show-current` is `main`/`master`), create and switch to `crg-debug/<short-topic>` before the first commit.
+- Default deliverable = validated waves committed on a `crg-debug/fix-<short-topic>` branch + the report. Commit each wave only after its gate is green, and stage only that wave's own files by name. After each wave commit, run `code-review-graph update` so the next wave's queries see the change. Never commit on the user's own branch.
+- Create and switch to `crg-debug/fix-<short-topic>` off the current HEAD before the first commit — whatever branch the repo is on. If already on a `crg-debug/fix-*` branch (a resumed or escalated run), stay on it.
 - No AI/Claude/Anthropic attribution in any commit — no co-author trailer, no tool credit, no session link, no emoji. Write commit messages the way the human fixing this bug themselves would: plain prose, ordinary cadence.
 - **Never `git push`.** Confirm before any destructive action (`git reset --hard`, `checkout -- <file>`, `clean`, `rm`, branch deletion, rebase).
 
@@ -188,5 +188,5 @@ Waves: <W>  ·  Audit agents: <A>  ·  False-positives rejected: <F>  ·  Scaffo
 ## Deferred (intentional)      (area · what · positive evidence it's deliberate · why by-design)
 ## Needs human                 (bug · why un-auto-fixable · suggested approach)
 ## Verification results        (build/typecheck/test per package; residual risks from detect_changes)
-## Next step                   (review the diff; ask to commit — named files only — or run /cpdv)
+## Next step                   (review the wave commits on crg-debug/fix-<topic>; merge/cherry-pick yourself or run /cpdv — never pushed)
 ```

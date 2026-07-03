@@ -348,13 +348,16 @@ construction since GATE-RECON already capped candidates at 5.
 ## Step 4 — GATE-DIFF (HARD) → PR-PREP → GATE-SUBMIT (HARD) → TRACK
 
 **GATE-DIFF** (HARD — ignores `--auto`; only `--auto-bypass` crosses it unattended): append a
-`gate-asked` record (`gate:'GATE-DIFF'`, `farmRunId`, `repo`), then show `git -C <repo> diff`, the
-touched files, and the final-gate status; options approve-for-PR *(Recommended if gate green)* /
-revert-files / commit-local-only / abort. Nothing is committed before this returns approval.
+`gate-asked` record (`gate:'GATE-DIFF'`, `farmRunId`, `repo`), then show the fix branch's wave
+commits (`git -C <repo> log --oneline <default>..HEAD` + `git -C <repo> diff <default>...HEAD`),
+the touched files, and the final-gate status; options approve-for-PR *(Recommended if gate green)*
+/ revert (delete the `crg-debug/fix-*` branch) / keep-local-only / abort. The wave commits exist
+only on the local fix branch — nothing leaves the machine before this returns approval.
 
 On approve-for-PR, run **PR-PREP** per `methodology.md` (fork if needed via `gh repo fork`, branch
-`crg-farm/<issue-or-slug>`, stage only the changed files by name, commit with the co-author
-trailer, push to the fork, `gh pr create --draft`, body from the ledger with `Fixes <issueRef>`).
+`crg-farm/<issue-or-slug>` off the fix-branch tip, squash the wave commits into one plain
+human-sounding commit — no AI/Claude attribution, no co-author trailer — push to the fork,
+`gh pr create --draft`, body from the ledger with `Fixes <issueRef>`).
 Append a `pr` record (`state:'draft'`).
 
 **GATE-SUBMIT** (HARD — never auto-passes under `--auto`, and never resolved to `submit-upstream`

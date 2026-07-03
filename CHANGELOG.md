@@ -4,6 +4,39 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] - 2026-07-03
+
+### Changed
+- **Per-wave branch commits are now the DEFAULT for `/crg-debug` fix runs — universally, in every
+  flow (Workflow, prose mode, `/crg-build` STABILIZE, `/crg-farm --auto-bypass`).** The old
+  never-commit contract left validated waves as one undifferentiated working-tree blob: no rollback
+  point when wave N regresses wave 1, no fix→bug attribution in the diff, dirty trees that block
+  chained runs — and, decisively, the TDD tests each wave writes stayed **untracked and therefore
+  invisible to the graph** (CRG indexes only git-tracked files), so `tests_for`/blast-radius gate
+  queries could never see them. Now the fix phase:
+  - creates (or reuses) a `crg-debug/fix-<slug>` branch off the current HEAD — the slug is a
+    deterministic hash of the bug set, so resumes and farm tier-retries land on the same branch;
+    the user's own branch is never committed to, and pre-existing uncommitted changes stay
+    untouched in the tree (waves stage only their own files by explicit path);
+  - commits each wave only after its per-bug close gates are green, restricted to the closed bugs'
+    own source + test files, and verifies in JS what actually landed (`commitFilesOk` allowlist
+    subset + `commitMessageOk` no-attribution gate — messages are built from file names only, so
+    bug prose citing e.g. CLAUDE.md can never trip or leak into them); a bad commit is un-committed
+    (`reset --mixed HEAD~1`) with the work left in the tree;
+  - **re-ingests the graph (`code-review-graph update`) after every wave commit**, so later waves,
+    per-bug gates, and the final blast-radius gate query a graph that matches the tree — this also
+    closes the gap where `fromLedger` runs never refreshed the graph at all (the branch-setup agent
+    now does status/build/update up front);
+  - never pushes, ever. `commit:false` opts back into the legacy working-tree-only mode; branch
+    setup failure degrades to it automatically rather than committing on the user's branch.
+- `/crg-build` wave commits now also re-ingest the graph after each commit, and its
+  GATE-STABILIZE-COMMIT reflects the new reality (review/merge the fix branch instead of committing
+  loose dirt).
+- `/crg-farm --auto-bypass`: tier-escalation reset now hard-resets the throwaway clone and deletes
+  `crg-debug/fix-*` branches (a dirty-file checkout alone no longer suffices); PR-prep squashes the
+  wave commits into the one clean human-sounding commit it always shipped (with a fallback for
+  `commit:false`/legacy trees).
+
 ## [0.15.0] - 2026-07-03
 
 ### Added

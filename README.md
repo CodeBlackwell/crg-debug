@@ -3,11 +3,13 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.11.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.16.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
-file-disjoint sets. It applies fixes to the working tree and **never commits**.
+file-disjoint sets. Each validated wave is committed on a `crg-debug/fix-*` branch off the current
+HEAD (only that wave's own files, allowlist-verified) and the graph re-ingested — **never pushed**,
+and never committed to your own branch.
 
 `/crg-farm` 🌾 wraps that engine in a bug-farming loop: it sources real open bugs — a named repo
 gets a scoped `/xplore` sweep, a topic runs a themed cross-repo GitHub search, and no direction at
@@ -85,8 +87,9 @@ discovery; depth (a few interacting bugs in one place) can favor prose's single-
 /crg-debug --prose               # force prose orchestration even if the Workflow is installed
 ```
 
-The run ends with a severity-ranked bug ledger 📋 and a timestamped report at the repo root. Nothing
-is committed — review the diff, then ask to commit (named files only) or run `/cpdv`.
+The run ends with a severity-ranked bug ledger 📋 and a timestamped report at the repo root. Fix
+waves land as commits on a `crg-debug/fix-*` branch (never pushed) — review them, then merge or run
+`/cpdv`. Pass `commit: false` (Workflow arg) for the legacy working-tree-only mode.
 
 ### 🌾 `/crg-farm` — the bug-farming loop
 

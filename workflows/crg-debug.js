@@ -1,15 +1,15 @@
 export const meta = {
   name: 'crg-debug',
   description:
-    'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Applies fixes to the working tree; never commits.',
+    'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?}. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Nothing is committed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?}. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
     { title: 'Discover', detail: 'concern-disjoint finders + residual pass; optional loop-until-dry (discoveryRounds>1)' },
     { title: 'Verify', detail: 'two independent reviewers refute/confirm each finding' },
-    { title: 'Fix', detail: 'TDD fix waves over file-disjoint bugs, gated by exit codes (fix=true)' },
+    { title: 'Fix', detail: 'TDD fix waves over file-disjoint bugs, gated by exit codes; commit per validated wave + graph re-ingest (fix=true)' },
   ],
 }
 
@@ -25,6 +25,34 @@ const bugFile = b => String(b.file || '').split(':')[0]
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
 const clampRounds = n => Math.max(1, Number(n) || 1)
 const capText = (s, n) => String(s == null ? '' : s).trim().slice(0, n)
+const normPath = f => String(f || '').replace(/^\.\//, '')
+// Absolute paths in ledgers (some finders report them) -> repoRoot-relative for git add.
+const relPath = (f, root) => {
+  const p = normPath(f)
+  const r = String(root || '').replace(/\/+$/, '') + '/'
+  return p.startsWith(r) ? p.slice(r.length) : p
+}
+// The no-attribution rule as an enforced gate, not a prompt hope.
+const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// Committed files must be a non-empty subset of the wave's closed-bug allowlist.
+const commitFilesOk = (committed, allowlist) => {
+  const allow = new Set((allowlist || []).map(normPath))
+  const files = (committed || []).map(normPath).filter(Boolean)
+  return files.length > 0 && files.every(f => allow.has(f))
+}
+// Deterministic branch suffix from the bug set (no Date/random in the sandbox;
+// same ledger -> same branch, so resumes and farm tier retries land together).
+const branchSlug = bugs => {
+  let h = 5381
+  for (const ch of (bugs || []).map(b => `${b.file}::${b.rootCause}`).sort().join('|')) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0
+  return h.toString(36)
+}
+// Plain, human-sounding message built ONLY from file names — bug prose (which may
+// legitimately mention CLAUDE.md etc.) never enters it, so commitMessageOk holds.
+const waveCommitMessage = bugs => {
+  const files = [...new Set((bugs || []).map(b => shortFile(b.file)).filter(Boolean))]
+  return capText(`Fix ${files.join(', ')}`, 72)
+}
 // <<< pure-helpers
 
 // ---- args ---------------------------------------------------------------------
@@ -36,6 +64,9 @@ const scope = (a && a.scope) || ''
 const model = resolveModel(a && a.model)
 // fix=true enables Phase 4 (TDD fix waves). Default off -> discovery only, no edits.
 const fix = !!(a && a.fix)
+// Per-wave commits on a crg-debug/fix-* branch are the DEFAULT; commit:false opts out
+// (legacy working-tree-only mode). Never pushes either way.
+const commitWaves = !(a && a.commit === false)
 // Discovery depth. 1 = single pass; >1 = loop-until-dry (re-run finders until a round adds nothing).
 const discoveryRounds = clampRounds(a && a.discoveryRounds)
 // Issue/ticket the user pointed us at. issueContext = the fetched issue body (UNTRUSTED — only
@@ -248,6 +279,26 @@ const GATE_SCHEMA = {
         },
       },
     },
+  },
+}
+
+// Branch + commit agents return raw git output; the SCRIPT verifies (allowlist,
+// message gate, exit codes) — commit authority lives in JS, never in a prompt.
+const BRANCH_SCHEMA = {
+  type: 'object',
+  required: ['branch', 'results'],
+  properties: {
+    branch: { type: 'string', description: 'the branch HEAD is on after the steps' },
+    results: GATE_SCHEMA.properties.results,
+  },
+}
+const COMMIT_SCHEMA = {
+  type: 'object',
+  required: ['commitHash', 'committedFiles', 'results'],
+  properties: {
+    commitHash: { type: 'string', description: 'git rev-parse HEAD after the commit, or "" if it failed' },
+    committedFiles: { type: 'array', items: { type: 'string' }, description: 'from git show --name-only --format= HEAD — what actually landed' },
+    results: GATE_SCHEMA.properties.results,
   },
 }
 
@@ -629,6 +680,38 @@ Return one results[] row: {command, exitCode, stdout, stderr}.`,
     { label: `gate:${shortFile(b.file)}`, phase: 'Fix', schema: GATE_SCHEMA, model },
   )
 
+// Fix-branch setup + graph freshness (covers fromLedger runs, which skip Phase 0).
+// Reuses an existing crg-debug/fix-* branch (farm tier retries land together);
+// pre-existing uncommitted changes stay untouched in the tree — waves commit only
+// their own closed-bug files by explicit path.
+const branchAgent = candidateBranch =>
+  agent(
+    `Prepare the git branch and graph for fix waves in the repo at ${repoRoot}. Do NOT edit any file. Steps, in order, reporting the REAL exit code of each as a results[] row:
+1. git -C ${repoRoot} rev-parse --abbrev-ref HEAD
+2. If that branch already matches crg-debug/fix-*, STAY on it. Otherwise run EXACTLY: git -C ${repoRoot} checkout -b ${candidateBranch}   (off the CURRENT HEAD — do not switch branches first, do not stash, reset, or clean anything; pre-existing uncommitted changes must stay untouched)
+3. Graph freshness: run \`code-review-graph status\` in ${repoRoot}; if missing/0 files run \`code-review-graph build\`, else \`code-review-graph update\`.
+Do NOT push. Return branch = the branch HEAD is on after step 2.`,
+    { label: 'fix-branch', phase: 'Fix', schema: BRANCH_SCHEMA, model },
+  )
+
+const commitAgent = (files, message) =>
+  agent(
+    `Commit ONE validated fix wave's work in the git repo at ${repoRoot}. Steps, in order, reporting the REAL exit code of each as a results[] row:
+1. git -C ${repoRoot} add -- ${files.map(f => JSON.stringify(f)).join(' ')}   (EXACTLY these paths, never -A/.)
+2. git -C ${repoRoot} commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it)
+3. git -C ${repoRoot} rev-parse HEAD  -> report as commitHash
+4. git -C ${repoRoot} show --name-only --format= HEAD  -> report the file list as committedFiles
+5. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
+Do NOT push. Do NOT touch any other file.`,
+    { label: 'commit:wave', phase: 'Fix', schema: COMMIT_SCHEMA, model },
+  )
+
+const uncommitAgent = () =>
+  agent(
+    `The last commit in the git repo at ${repoRoot} failed verification. Run EXACTLY: git -C ${repoRoot} reset --mixed HEAD~1 — nothing else (the work must stay in the tree). Report the exit code as a results[] row.`,
+    { label: 'uncommit', phase: 'Fix', schema: GATE_SCHEMA, model },
+  )
+
 let fixResult = null
 if (fix && confirmedBugs.some(b => !b.conflicted)) {
   // Test-harness bootstrap (once, before any wave — avoids parallel fix agents
@@ -643,6 +726,49 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
       log(`Fix bootstrap: scaffolded test runner -> ${boot.testCommand}`)
     } else {
       log('Fix bootstrap: repo reported untestable — fixes will be marked unverified (no harness)')
+    }
+  }
+
+  // Fix branch + commit machinery (default). If branch setup fails, degrade to the
+  // legacy working-tree-only mode rather than committing onto the user's branch.
+  let commitEnabled = commitWaves
+  let fixBranch = ''
+  const commits = []
+  if (commitEnabled) {
+    const candidate = `crg-debug/fix-${branchSlug(confirmedBugs)}`
+    const bs = await branchAgent(candidate)
+    const gitOk = !!(bs && (bs.results || []).length && bs.results.filter(r => /git /.test(r.command || '')).every(r => r.exitCode === 0))
+    // The branch value is script-guarded: accept the agent's report only if it is a
+    // crg-debug/fix-* name; otherwise fall back to the name WE instructed.
+    fixBranch = bs && /^crg-debug\/fix-/.test(bs.branch || '') ? bs.branch : candidate
+    if (!gitOk) {
+      commitEnabled = false
+      log('Fix: branch setup failed — degrading to working-tree-only mode (no commits)')
+    } else {
+      log(`Fix: waves commit on branch ${fixBranch} (graph refreshed) — never pushed`)
+    }
+  }
+  // Commit one validated wave: only the closed bugs' own files (source + test) by
+  // explicit path, then verify what landed against that allowlist and the
+  // no-attribution message gate — a bad commit is un-committed, the work stays in tree.
+  const commitWave = async (closedNow, fixById, tag) => {
+    if (!commitEnabled || !closedNow.length) return
+    const allow = [...new Set(closedNow.flatMap(b => {
+      const fx = fixById.get(b.bugId) || {}
+      return [bugFile(b), fx.testFile].filter(Boolean).map(f => relPath(f, repoRoot))
+    }))]
+    const message = waveCommitMessage(closedNow)
+    if (!allow.length || !commitMessageOk(message)) return
+    const c = await commitAgent(allow, message)
+    const landed = c && c.commitHash && commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)
+    if (landed) {
+      commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles })
+      log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${String(c.commitHash).slice(0, 9)} · graph re-ingested`)
+    } else if (c && c.commitHash) {
+      await uncommitAgent()
+      log(`Fix ${tag}: commit rejected (stray files vs allowlist) — un-committed, work stays in tree`)
+    } else {
+      log(`Fix ${tag}: commit failed — work stays in tree`)
     }
   }
 
@@ -725,6 +851,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
 
     waveLog.push({ wave: waveNum, files: groups.length, attempted: attempted.length, closed })
     log(`Fix wave ${waveNum}: ${groups.length} files, attempted ${attempted.length}, closed ${closed}`)
+    await commitWave(fixedBugs.filter(b => b.wave === waveNum), fixById, `wave ${waveNum}`)
 
     const nextRaw = [...deferredChunks, ...requeued]
     // Fixed-point guard: a wave that closes nothing means the open bugs resist per-bug
@@ -757,6 +884,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
       else unfixedBugs.push({ ...b, reason: 'per-bug waves + holistic prose attempt both failed — needs human', wave: waveNum })
     }
     log(`Fix: prose fallback ${green ? 'closed' : 'could not close'} ${stillOpen.length} coupled bug(s)`)
+    if (green) await commitWave(stillOpen, new Map(((pr && pr.fixes) || []).map(f => [f.bugId, f])), 'coupled')
   }
 
   // Final gate over the cumulative diff — the regression detector: with bugs closed
@@ -766,8 +894,8 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   const finalGate = await gateAgent([...touchedFiles])
   const finalResults = (finalGate && finalGate.results) || []
   const finalClean = finalResults.length > 0 && finalResults.every(r => r.exitCode === 0)
-  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, finalGate: { clean: finalClean, results: finalResults } }
-  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · final gate ${finalClean ? 'green' : 'RED'}`)
+  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, finalGate: { clean: finalClean, results: finalResults } }
+  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed) · final gate ${finalClean ? 'green' : 'RED'}`)
 }
 
 // ---- return -------------------------------------------------------------------

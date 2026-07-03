@@ -21,9 +21,9 @@ Drive root-cause analysis with the CRG MCP tools (load via ToolSearch: `mcp__cod
 - Don't "fix" documented/demo/in-memory simplifications; record them as Deferred (intentional) — but only with positive evidence they're deliberate ("plausibly intentional" is not intentional).
 - **Fail-safe defaults (Saltzer & Schroeder):** a security control (auth, authorization/ownership, CORS, TLS, token/CSRF verification, trust-boundary validation, rate-limiting) that GRANTS access or SKIPS its check when its config is missing/wrong/unset is **fail-open — a Critical/High bug, never a deferral**, even when the flag looks like an intentional toggle. Ask of each: what happens with no / forged / another-user credential, and with the config absent?
 - **Surface ≠ fix:** report design/quality defects (duplication/DRY, leaked encapsulation, dead/unused exports, sibling inconsistency) even without a reproducible failure — gate them on a named principle + evidence + maintenance cost, in a separate "Quality findings" section. Report-only; don't auto-fix unless asked.
-- Scoped `git add <paths>` only; commit only if asked; branch before committing on main/master; never push; no AI/Claude/Anthropic attribution in the commit (no co-author trailer, no tool credit) — plain human-sounding commit message.
+- Scoped `git add <paths>` only — stage each validated fix's own files by name, never `-A`/`.`. Commit each validated fix on a `crg-debug/fix-<short-topic>` branch created off the current HEAD (reuse it if already on one; never commit on the user's own branch), then run `code-review-graph update` so later queries see the change; never push; no AI/Claude/Anthropic attribution in the commit (no co-author trailer, no tool credit) — plain human-sounding commit message.
 - Write the report to `crg-debug-report-$(date +%Y%m%d-%H%M%S).md` at the repo root.
 
 ## Deliverable
 
-Fixes in the working tree (NOT committed unless asked) + the timestamped report. End your message with the ranked bug ledger and the Deferred (intentional) list.
+Validated fixes committed on the `crg-debug/fix-<short-topic>` branch (never pushed) + the timestamped report (untracked). End your message with the branch name, the ranked bug ledger, and the Deferred (intentional) list.

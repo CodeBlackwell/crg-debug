@@ -734,6 +734,7 @@ const commitAgent = (repoDir, repoName, files, message) =>
 2. git commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it)
 3. git rev-parse HEAD  -> report as commitHash
 4. git show --name-only --format= HEAD  -> report the file list as committedFiles
+5. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoDir}
 Do NOT push. Do NOT touch any other file or repo. repo="${repoName}".`,
     { label: `commit:${repoName}`, phase: 'Build', schema: COMMIT_SCHEMA, model },
   )

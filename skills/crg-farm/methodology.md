@@ -10,7 +10,7 @@ or ask the user. `/xplore` and `AskUserQuestion` are both main-loop-only. So rec
 complexity scoring, and escalation all run in this skill, around the Workflow.
 
 > ## ⛔ NON-NEGOTIABLE — the hard gates
-> **`GATE-DIFF` (working-tree → commit) and `GATE-SUBMIT` (fork → upstream) ALWAYS block for
+> **`GATE-DIFF` (local fix commits → PR branch) and `GATE-SUBMIT` (fork → upstream) ALWAYS block for
 > explicit human approval under normal operation. `--auto` does NOT bypass either. Ever.** They
 > guard the two irreversible boundaries of the normal PR pipeline: writing to version control, and
 > publishing to a repo you don't own. Auto-submitting a PR to a third-party maintainer is the one
@@ -282,7 +282,7 @@ from a deliberately conservative rule rather than skipping the judgment entirely
 | **GATE-SECURITY-ROUTE** | GATE-TRIAGE, only when ≥1 of that repo's bugs is flagged `securitySensitive` | flagged bugs, `vulnClass`, flag rationale | advisory-track / treat-as-normal-bug / drop / abort | Soft |
 | **GATE-DISPATCH-CHANNEL** | TRACE-EXPLOIT-PATH + CHECK-CONTRIB-POLICY (advisory track only) | fix-scope assessment (mechanical vs. design-needed), the marginal-risk verdict, reachability, the repo's own contribution/security policy | pr-with-motivation / advisory-report / both / abort | Soft — auto-passable under `--auto-bypass` (harness or prose), conservative default (§Auto-bypass mode) |
 | **GATE-ESCALATE** | each fix pass leaving `unfixed[]` or a RED final gate | fixed/unfixed + reasons, current→next tier, final-gate status | escalate-tier / stop-keep-fixed / hand-to-human / abort | Soft → **HARD** on regression or tier cap |
-| **GATE-DIFF** | fixes settle, before any PR prep | `git diff`, files touched, final-gate status | approve-for-PR / revert-files / commit-local-only / abort | **HARD** |
+| **GATE-DIFF** | fixes settle, before any PR prep | the `crg-debug/fix-*` branch's wave commits (`git log` + `git diff <default>...HEAD`), files touched, final-gate status | approve-for-PR / revert (delete fix branch) / keep-local-only / abort | **HARD** |
 | **GATE-SUBMIT** | draft PR created, before draft→ready / upstream | draft PR URL, branch, upstream target, PR body, diff summary | submit-upstream / keep-draft / keep-local / abort | **HARD** (never auto) |
 | **GATE-ADVISORY-REVIEW** | COMPILE-REPORT (advisory-report branch only) | compiled report (or path + summary) | save-only / revise / discard / abort | **HARD by default** — auto-passable to `save-only` under `--auto-bypass` (harness or prose) |
 

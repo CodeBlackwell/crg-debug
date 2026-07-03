@@ -70,12 +70,14 @@ Workflow({ scriptPath: '$HOME/.claude/workflows/crg-debug.js',
           methodologyPath: '$HOME/.claude/workflows/crg-debug.methodology.md' } })
 ```
 
-crg-debug never commits, so its fixes land as working-tree dirt that would poison BUILD's commit
-allowlists. Resolve it NOW at **GATE-STABILIZE-COMMIT**: per subrepo show `git status` + diffstat +
-the fix ledger; options commit-fixes *(Recommended when its final gate was green)* / revert /
-keep-dirty-and-abort. On commit-fixes: stage ONLY the fix ledger's touched files by name, message
-per the methodology's commit rules (the no-attribution check applies — verify before committing).
-A tree that stays dirty does NOT proceed to BUILD.
+crg-debug commits each validated wave on a `crg-debug/fix-*` branch in the subrepo (re-ingesting
+the graph as it goes), leaving the subrepo checked out on that branch. Resolve it NOW at
+**GATE-STABILIZE-COMMIT**: per subrepo show the fix-branch commits (`git log --oneline
+<original>..HEAD`) + diffstat + the fix ledger; options merge-fix-branch *(Recommended when its
+final gate was green: checkout the original branch, merge the fix branch, delete it)* /
+proceed-on-fix-branch (BUILD's own wave commits continue on it) / revert (checkout the original
+branch, delete the fix branch). Any working-tree dirt left over (a failed or opted-out commit)
+must still be committed or reverted here — a dirty tree does NOT proceed to BUILD.
 
 ## Stage 2 — BOOT (skill-owned)
 

@@ -1,6 +1,6 @@
 ---
 name: crg-debug
-description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Nothing is committed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
+description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
 argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--from-ledger <path>] [--prose] [--model <name>]"
 user_invocable: true
 ---
@@ -8,8 +8,9 @@ user_invocable: true
 # CRG Debug
 
 Graph-driven debugging in one invocation: build the graph → map hotspots → find bugs in parallel →
-fix them in disjoint waves → verify → document. Fixes land in the working tree; **nothing is
-committed unless the user asks.**
+fix them in disjoint waves → verify → document. Each validated wave is committed on a
+`crg-debug/fix-*` branch off the current HEAD (only that wave's own files) and the graph
+re-ingested. **Never push**; the user's own branch is never committed to.
 
 This skill has two orchestration modes over **one shared methodology** (`methodology.md`, in this
 skill's directory):
@@ -84,5 +85,6 @@ To upgrade prose → deterministic, run the bundled `crg-deterministic` command 
 ## After it returns
 
 Relay the ledger: confirmed bugs by severity, deferred (intentional), rejected false positives, the
-fix-wave outcome (fixed / unfixed / needs-human), and the final gate status. Nothing was committed —
-fixes are in the working tree. Offer to commit (named files only) or run `/cpdv`.
+fix-wave outcome (fixed / unfixed / needs-human), the fix branch + wave commits, and the final gate
+status. Nothing was pushed. Offer to merge the fix branch back (or run `/cpdv`), and note any
+leftover uncommitted work (a failed or opted-out commit) still sitting in the tree.
