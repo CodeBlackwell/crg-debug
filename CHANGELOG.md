@@ -4,6 +4,29 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **`/crg-agentsmd` condensed to measured yield — roughly half the agents and tokens of the
+  pilot runs, same invariants.** The pilot paid for the measurements; this spends to them:
+  - *Miners 12 → 5, modalities 5 → 3.* Code-invariants and docs miners produced zero rules that
+    survived scoring across twelve runs; they are context for verification and synthesis now, not
+    rule sources. Review-comments (7 of 9 kept rules), diff-evolution, and git-archaeology remain.
+  - *Verify's two judgment fleets merged into one.* Counterexample hunt and restatement detection
+    need the same rule text and repo neighborhood; one attacker per scope-batch (8 rules) now
+    answers both, halving the judgment agents and the duplicate context reads.
+  - *Holdout judges 10 → 3* (64-comment batches; the cost is per-comment reasoning, per-agent
+    setup was pure overhead), judges take explicit index lists, and `reason` text is only emitted
+    when credit is given. New `scoreSample` arg judges an unbiased stride sample for cheap
+    iteration runs. A deterministic drop-replies prefilter was evaluated and rejected: 6 of the
+    pilot's 21 covered comments were replies.
+  - *Ceremony agents collapsed.* rules-fragment persist + ledger assemble, ledger ingest + holdout
+    extraction, and score + stamp each run as one gate agent instead of two (score-path ceremony
+    5 agents → 3). Ingest validates the rule list per-line by index instead of trusting the
+    agent's self-reported count.
+  Estimated clean full run: ~1.4M tokens / ~45 agents → ~700–900k / ~20; score-only rerun 16
+  agents → 7.
+
 ## [0.16.0] - 2026-07-03
 
 ### Changed

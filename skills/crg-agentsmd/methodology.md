@@ -30,13 +30,11 @@ Modalities and what each hunts:
   a rubber-stamped PR teaches nothing.
 - **git-archaeology** — reverts, fixups, "address review" follow-ups mark rule
   violations that were repaired. Thin in young repos; drop it when empty.
-- **code-invariants** — what is uniform across the tree is a rule; what varies freely
-  is not. Only report an invariant when the uniformity is too consistent to be chance
-  AND is not enforced by a linter config already (if a linter enforces it, it is
-  mechanical — cite the config as evidence and mark it mechanical).
-- **docs** — what is already written down, so the file never duplicates it, plus the
-  voice/structure the synthesis phase must match. Docs miners mostly produce ZERO new
-  rules; their yield is anti-duplication context and genuinely undocumented gaps.
+- **code-invariants / docs — NOT mined.** In the pilot, twelve miner-runs across these
+  two modalities produced zero rules that survived scoring: tree uniformity restates
+  what one screen already shows (the restatement detector kills it), and docs yield
+  context, not rules. The working tree serves the counterexample hunt, and the
+  synthesis agent reads the existing docs directly for voice and anti-duplication.
 
 ## Miner discipline
 
