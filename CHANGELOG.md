@@ -44,8 +44,32 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   before any long paginated pull; raw `--slurp` pages land on disk before parsing so a parse
   failure never costs a re-download; `write-file` writes stdin to disk verbatim so persist agents
   heredoc large JSON instead of a model re-typing it as output.
+- **A/B effectiveness eval (`lib/agentsmd-ab.mjs`, behind `abEval:true`).** The retrodictive score
+  asks whether the rules would have prevented past corrections; the A/B asks whether the FILE
+  changes what an agent produces. Three blinded arms — no file, a length-matched generic placebo,
+  the mined AGENTS.md — implement K held-out merged PRs (default 3, richest review threads first)
+  from the base commit; lift = mined − placebo. Built to five constraints two production retros
+  paid for: arm workspaces are contamination-clean by construction (`git archive` of the base tree
+  into a fresh single-commit repo — the merged fix and the `.crg-agentsmd/` answer key are
+  structurally unreachable, and prep throws otherwise); fleet arithmetic is asserted before both
+  the smoke and the grid; every diff lives on disk with agents relaying only compact numbers;
+  a script-owned smoke gate (1 PR × mined arm, non-empty diff + finite similarity) must pass
+  before the full grid may launch; and arm/judge agents never run the cheap tier. Scoring is
+  CLI-owned Jaccard diff-similarity to the merged human diff plus a rubric judge anchored only to
+  that PR's real review comments; the seeded-sham property (placebo fed as "mined" ⇒ ~zero lift)
+  is unit-tested. `abOnly:true` evaluates the AGENTS.md already on disk without re-scoring.
+- **Fragment persistence + install stamp.** The mined ledger is assembled deterministically on
+  disk (`corpus.mjs assemble`: inventory + rules fragments → ledger.json) with a script-side count
+  invariant, and `bin/crg-deterministic` now installs `/crg-agentsmd` stamped with the plugin
+  commit — a stale `~/.claude/workflows/` install is visible in any run's first log line.
 
 ### Fixed
+- **Score-phase data transport: heavy JSON never transits an agent.** The first scored pilot was
+  invalidated silently — an ingest agent asked to "return the ledger exactly" truncated 43 rules
+  to 2 in its structured return, and every holdout judge credited against the 2-rule list. The
+  scorer CLI now owns the judged-rule index space (`rules`/`stamp` subcommands, summary-only
+  `score` stdout); agents relay compact summaries guarded by count invariants that throw on any
+  truncation, and the synthesis agent reads `scores.json` from disk.
 - **Environment gaps no longer disprove command claims.** The pilot cut three real rules because
   `nix-shell`/`pre-commit` don't exist on the host — the same code-vs-env failure class crg-debug's
   baseline already classifies. The executability gate now returns `failureKind: code|env` (with a

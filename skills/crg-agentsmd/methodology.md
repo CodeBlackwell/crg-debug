@@ -94,3 +94,27 @@ merged diff); never award points for "the rule seems good".
   entirely; an executable check is the durable form.
 - Never fabricate provenance: the file's header says it was machine-mined from review
   history and names the ledger.
+
+## A/B evaluation (three arms)
+
+The retrodictive score asks "would the rules have prevented past corrections?"; the A/B
+asks "does the FILE change what an agent actually produces?" Three blinded arms — no
+file, a length-matched generic placebo, the mined AGENTS.md — each implement the same
+held-out merged PR's task from the base commit. Lift = mined minus placebo; the no-file
+arm reads out how much any file helps at all.
+
+- **Arm discipline**: you know nothing about the experiment beyond your workspace. Never
+  use gh, git log/fetch, or the network — the merged solution exists in the world and
+  looking anything up voids your arm. If AGENTS.md is present, read it first and follow
+  it; that file is the experiment's only variable.
+- **Placebo discipline**: generic, plausible, length-matched advice with zero repo
+  specifics. A placebo that names real paths or subsystems is a leaked treatment, not a
+  control.
+- **Rubric judge**: anchor ONLY to the PR's real review comments — count an anchor
+  satisfied when the arm's diff already addresses what that comment asked, so the
+  reviewer would have had no need to write it. Mechanism match, same standard as the
+  scoring phase; when in doubt, not satisfied. Never form freestanding opinions about
+  which diff "looks better".
+- **Similarity is not correctness**: diff-similarity rewards overlap with the human
+  fix's shape, not behavior. That known gap is why the rubric judge exists; read both
+  numbers together and never present similarity alone as proof the arm "solved" the task.
