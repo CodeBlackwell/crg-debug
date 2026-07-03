@@ -1,7 +1,7 @@
 {
   "name": "crg-debug",
   "description": "Graph-driven parallel debugging and readiness campaigns for Claude Code. Builds a code-review-graph, fans out concern-disjoint discovery agents, adversarially verifies findings, and fixes confirmed bugs in TDD waves over file-disjoint sets (nothing committed) — or, via /crg-build, surveys an app's readiness gaps and builds the approved ones in dependency-ordered waves gated by exit codes and a headless browser, committing each validated wave locally.",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "author": { "name": "LeChristopher Blackwell" },
   "homepage": "https://github.com/CodeBlackwell/crg-debug",
   "repository": "https://github.com/CodeBlackwell/crg-debug",

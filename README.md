@@ -163,6 +163,31 @@ unattended, using the same conservative computed default — a mechanical PR sti
 a **draft**, same as any other bug. See `skills/crg-farm/methodology.md` §Security classification &
 the advisory track.
 
+### 📜 `/crg-agentsmd` — mine a measured AGENTS.md
+
+An instrument, not a generator: it mines a repo's review fossil record (PR review threads, diff
+evolution, git archaeology) for the tacit rules maintainers actually enforce, adversarially
+verifies every rule (counterexample hunt, restatement detection, executability), then **scores the
+survivors against a held-out slice of real review corrections** the miners never saw. Rules no
+held-out correction credits are cut; the draft is ordered by measured predictive value and written
+beside its evidence ledger — never committed, never posted.
+
+```
+/crg-agentsmd                      # current repo: mine -> verify -> score -> draft
+/crg-agentsmd path/to/repo         # explicit repo
+/crg-agentsmd --mine-only          # stop at the verified rules ledger
+/crg-agentsmd --score-only         # re-score an existing ledger (skip mining)
+/crg-agentsmd --score-sample 60    # judge a stride sample of the holdout (cheap iteration)
+/crg-agentsmd --ab                 # add the three-arm implementation A/B (expensive; asks first)
+```
+
+Honest calibration from the pilot (NixOS/nix-security-tracker, 749 PRs, 183 held-out comments):
+the mined draft would have preempted **24%** of held-out review corrections vs **12%** for a
+length-matched generic placebo — the difference is exactly the repo-specific rules nobody could
+guess from one file. A 3-PR implementation A/B showed **no lift over placebo**: this documents
+measured reviewer norms; it is not demonstrated to make agents build better code. Repos with fewer
+than ~30 reviewed PRs return `thin-corpus` instead of a padded guess.
+
 ## 🗂️ Layout
 
 ```
@@ -172,6 +197,12 @@ skills/crg-debug/SKILL.md         /crg-debug entry — routes prose vs determini
 skills/crg-debug/methodology.md   single source of truth (phases + judgment rules)
 skills/crg-farm/SKILL.md          /crg-farm entry — the bug-farming loop orchestrator
 skills/crg-farm/methodology.md    Named-Gate Protocol + escalation + PR-prep + farm-DB shapes
+skills/crg-agentsmd/SKILL.md      /crg-agentsmd entry — measured AGENTS.md mining
+skills/crg-agentsmd/methodology.md  miner discipline + verification attacks + holdout scoring
+lib/corpus.mjs                    review-corpus fetcher, holdout splitter, ledger assembler
+lib/agentsmd-score.mjs            retrodictive holdout scorer (deterministic)
+lib/agentsmd-ab.mjs               three-arm A/B harness CLIs (contamination-clean workspaces)
+workflows/crg-agentsmd.js         deterministic AGENTS.md Workflow (installed by the enabler)
 agents/crg-debugger.md            sequential single-context variant
 lib/ledger-slice.mjs              narrow a ledger to a bug subset (triage + escalation)
 lib/farm-db.mjs                   global append-only farm history (JSONL)

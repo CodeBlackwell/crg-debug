@@ -4,7 +4,21 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.17.0] - 2026-07-03
+
+### Added
+- **`/crg-agentsmd` packaged (M4): SKILL.md + README + enabler complete.** The skill routes the
+  two-stage run (mine → score+draft, chained; `--mine-only` / `--score-only` / `--score-sample` /
+  `--ab` flags) to the installed Workflow with a prose fallback, and carries the honest instrument
+  framing the pilot earned: measured on one repo, the mined draft covered 24% of held-out review
+  corrections vs 12% for a length-matched generic placebo, and a 3-PR implementation A/B showed no
+  lift over placebo — it documents measured reviewer norms; it is not demonstrated to make agents
+  build better code. The enabler now also installs the A/B harness lib. The draft is never
+  committed, never posted; upstream contribution stays a human act, scores quoted honestly.
+- **Validation rerun of the condensed pipeline** (same repo, same corpus): 19 agents total vs the
+  pilot's ~43, score leg 731k → 441k tokens, and holdout coverage improved to 24.1% (kept 10 rules,
+  39-line draft). Honest miss: mine-leg tokens barely moved (930k) — mining cost tracks corpus
+  volume, not miner count.
 
 ### Changed
 - **`/crg-agentsmd` condensed to measured yield — roughly half the agents and tokens of the
