@@ -4,7 +4,7 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.15.0] - 2026-07-03
 
 ### Added
 - **`/crg-agentsmd` — farm a demonstrably accurate AGENTS.md from a repo's review history
@@ -28,7 +28,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
     coverage. The deterministic scorer (`agentsmd-score.mjs`) owns all math; judges only emit
     structured credit rows.
   A thin fossil record returns `thin-corpus` instead of padding with guesses. The draft is written
-  beside the ledger and never committed or posted. Not yet packaged (no SKILL.md, enabler untouched);
+  beside the ledger and never committed or posted. No SKILL.md yet, but the `crg-deterministic`
+  enabler installs the workflow, methodology, and helper modules (stamped with the plugin commit);
   runs via `Workflow({scriptPath})` with explicit `methodologyPath`/`corpusToolPath`/`scoreToolPath`.
   The `fromLedger` seam re-runs Score+Compress from a persisted ledger without re-mining.
 - **Fan-out cost gates (`assertFleet`).** The first pilot ballooned to ~90 verify agents because
