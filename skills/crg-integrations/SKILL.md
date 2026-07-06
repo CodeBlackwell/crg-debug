@@ -89,9 +89,14 @@ the run here with the ledger as the deliverable.
 ```
 Workflow({ name: 'crg-integrations',
   args: { repoRoot, profile, model, maxAttempts,
-          fromLedger: '<ledgerPath>', approvedClusterIds: [...],
+          approvedClusters: [<the approved cluster objects from the TRIAGE return, verbatim>],
           methodologyPath: '$HOME/.claude/workflows/crg-integrations.methodology.md' } })
 ```
+
+Pass `approvedClusters` (the triage return's cluster objects, filtered to the approved ids) —
+args travel byte-exact, while a ledger file written and re-read through agents gets
+transcription-mangled (a persist agent has typo'd host names). `--from-ledger <path>
+--clusters <id,...>` remains the cross-session fallback when the triage return is gone.
 
 Await `{fixed, unfixed, needsHuman, branch, rebakeQueue}`. Fixes landed on a `crg-integrations/fix-*`
 run branch inside the Workflow, each behind a re-run verify (exit code AND ran-test count) and a

@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven integration-matrix repair harness: register/refresh the code-review-graph, ingest a project\'s red test-matrix cells, retry away flakes, cluster by normalized failure signature, classify each cluster (regression | drift | under-dev | flake) with a deterministic-first pipeline, and screen drift by asymmetric pixel stats into a human-gated re-bake queue — then STOP with a triage ledger. Repair mode (human-approved clusters) diagnoses each cluster against the graph, fixes it in a fenced worktree, verifies by re-running the exact cell (exit code AND ran-test count), and gates the run branch against regressions. Never pushes; drift is never auto-re-baked.',
   whenToUse:
-    "Requires args {repoRoot, profile, methodologyPath, profilePath?, validatorPath?, model?, maxAttempts?, noRegen?, fromMatrix?, fromLedger?, approvedClusterIds?}. Default (no fromLedger) = TRIAGE: phases 0-5 (Profile+Graph -> Ingest -> Flake-Retry -> Cluster -> Classify -> Drift-Screen), persisting <repoRoot>/.crg-integrations/ledger.json and returning {status:'triaged', clusters, rebakeQueue, flakes}. fromLedger (absolute path to that ledger) + approvedClusterIds = REPAIR: phases 6-10 (Diagnose -> Fix -> Verify -> Regression-Gate -> Synthesize) over ONLY the approved regression clusters. The Graph phase is unconditional — there is no CRG opt-out. Invoked by the /crg-integrations skill, which owns GATE-PROFILE, GATE-CLUSTERS, and GATE-REBAKE.",
+    "Requires args {repoRoot, profile, methodologyPath, ingestToolPath (triage), profilePath?, validatorPath?, model?, maxAttempts?, noRegen?, fromMatrix?, approvedClusters?, fromLedger?, approvedClusterIds?}. Default = TRIAGE: phases 0-5 (Profile+Graph -> Ingest -> Flake-Retry -> Cluster -> Classify -> Drift-Screen), persisting <repoRoot>/.crg-integrations/ledger.json and returning {status:'triaged', clusters, rebakeQueue, flakes}. REPAIR (phases 6-10, only human-approved regression clusters): PREFERRED entry is approvedClusters = the triage return's cluster objects passed back verbatim through args (byte-exact; no agent transcription); fallback is fromLedger (absolute ledger path) + approvedClusterIds. The Graph phase is unconditional — there is no CRG opt-out. Invoked by the /crg-integrations skill, which owns GATE-PROFILE, GATE-CLUSTERS, and GATE-REBAKE.",
   phases: [
     { title: 'Profile+Graph', detail: 'validate the profile; register/build/update the code-review-graph; report graph freshness' },
     { title: 'Ingest', detail: 'regen the matrix + engine fingerprint; collect red cells; halt if the oracle host is red' },
@@ -26,6 +26,7 @@ export const meta = {
 const fence = s =>
   `<<<UNTRUSTED\n${String(s == null ? '' : s).replace(/<<<UNTRUSTED|UNTRUSTED>>>/g, '[fence marker stripped]')}\nUNTRUSTED>>>`
 const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+const stripAnsi = s => String(s == null ? '' : s).replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
 const capText = (s, n) => String(s == null ? '' : s).trim().slice(0, n)
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
 const clampInt = (n, lo, hi, dflt) => { const v = Number(n); return Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : dflt }
@@ -159,10 +160,15 @@ const validatorPath = capText(a && a.validatorPath, 1000)
 const ingestToolPath = capText(a && a.ingestToolPath, 1000)
 const fromLedger = capText(a && a.fromLedger, 1000)
 const approvedClusterIds = Array.isArray(a && a.approvedClusterIds) ? a.approvedClusterIds : []
+// Preferred repair input: the triage return's cluster objects passed back
+// VERBATIM through args (args are delivered byte-exact; a ledger file written
+// and re-read by agents gets transcription-mangled — run 3's persist agent
+// typo'd host names).
+const approvedClusters = Array.isArray(a && a.approvedClusters) ? a.approvedClusters : []
 const maxAttempts = clampInt(a && a.maxAttempts, 1, 4, 2)
 const noRegen = !!(a && a.noRegen)
 const fromMatrix = capText(a && a.fromMatrix, 1000)
-const repair = !!fromLedger
+const repair = !!fromLedger || approvedClusters.length > 0
 
 const isSafeAbs = p => /^\/[^\0]*$/.test(p) && !/\.\.(\/|$)/.test(p)
 if (!repoRoot || typeof repoRoot !== 'string') {
@@ -175,7 +181,12 @@ if (!repair && (!ingestToolPath || !isSafeAbs(ingestToolPath))) {
   throw new Error('triage requires args.ingestToolPath — absolute path to the installed crg-integrations.ingest.mjs (agents must RUN it, never relay matrix rows themselves)')
 }
 if (fromLedger && !approvedClusterIds.length) throw new Error('fromLedger requires approvedClusterIds — repair runs only over human-approved clusters')
-if (!fromLedger && approvedClusterIds.length) throw new Error('approvedClusterIds is meaningless without fromLedger — pass the triage ledger to repair from')
+if (!fromLedger && approvedClusterIds.length) throw new Error('approvedClusterIds is meaningless without fromLedger — pass approvedClusters (cluster objects) instead, or the ledger path')
+for (const c of approvedClusters) {
+  if (!c || !c.clusterId || !Array.isArray(c.cells) || !c.cells.length) {
+    throw new Error('every approvedClusters entry needs {clusterId, cells[]} — pass the triage return\'s cluster objects verbatim')
+  }
+}
 
 const SKILL = methodologyPath
 const CWD = profile.cwd ? `${repoRoot}/${profile.cwd}` : repoRoot
@@ -317,8 +328,15 @@ Set matrixOk = (the ingest tool exited 0). Parse the tool's single-line JSON out
     }
     return { status: 'no-red-cells', repoRoot, fingerprint: capText(ingest.fingerprint, 400), hostCounts, reason: 'every matrix cell that ran is green' }
   }
+  // Partition under-dev hosts' groups out BEFORE flake retries and clustering:
+  // their red is expected, retrying it buys nothing, and clustering them with
+  // regression hosts (same widget, same signatures) would misclassify their
+  // share of a cross-host cluster.
+  const underDevSet = new Set(hosts.underDev || [])
+  const underDevGroups = redGroups.filter(g => underDevSet.has(g.host))
+  redGroups = redGroups.filter(g => !underDevSet.has(g.host))
   const redCellCount = redGroups.reduce((n, g) => n + (g.count || 1), 0)
-  log(`Ingest: ${redCellCount} red cell(s) in ${redGroups.length} group(s) · oracle ${profile.oracleHost} green · fingerprint ${capText(ingest.fingerprint, 60)}`)
+  log(`Ingest: ${redCellCount} red cell(s) in ${redGroups.length} group(s) (+${underDevGroups.length} under-dev group(s) set aside) · oracle ${profile.oracleHost} green · fingerprint ${capText(ingest.fingerprint, 60)}`)
 
   // ---- Phase 2: Flake-Retry -----------------------------------------------------
   const retries = clampInt(flakePolicy.isolatedRetries, 1, 5, 2)
@@ -330,8 +348,8 @@ Set matrixOk = (the ingest tool exited 0). Parse the tool's single-line JSON out
         type: 'array',
         items: {
           type: 'object',
-          required: ['host', 'test', 'runs'],
-          properties: { host: { type: 'string' }, test: { type: 'string' }, runs: GATE_ROWS },
+          required: ['idx', 'host', 'test', 'runs'],
+          properties: { idx: { type: 'integer', description: 'the #idx integer of this cell, echoed EXACTLY as listed' }, host: { type: 'string' }, test: { type: 'string' }, runs: GATE_ROWS },
         },
       },
     },
@@ -344,26 +362,33 @@ Set matrixOk = (the ingest tool exited 0). Parse the tool's single-line JSON out
     host: g.host,
     grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: (g.scenarios || [])[0] || '', test: g.testName || '' })),
   })
-  const groupKey = g => `${g.host}::${norm(g.testName)}`
-  const flakeRun = await agent(
-    `Flake-screen ${redGroups.length} representative red integration cells (one per failure-signature group, covering ${redCellCount} red cells) for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran. Report host and test EXACTLY as listed.
-${(flakePolicy.isolationEnv && Object.keys(flakePolicy.isolationEnv).length) ? `Prefix every run with this env: ${fence(JSON.stringify(flakePolicy.isolationEnv))}` : ''}
-Cells (host :: test :: exact command):
-${fence(redGroups.map(g => `${g.host} :: ${g.testName} :: ${groupCmd(g)}`).join('\n'))}
-${UNTRUSTED}`,
-    { label: 'flake-retry', phase: 'Flake-Retry', schema: FLAKE_SCHEMA, model },
-  )
+  // Cells are matched back by their listed index — agents transcribing host
+  // names have typo'd them (run 3 wrote "docosaurus"); an echoed integer is
+  // typo-resistant.
   const flakes = []
-  if (flakeRun && Array.isArray(flakeRun.cells)) {
-    const byCell = new Map(flakeRun.cells.map(r => [`${r.host}::${norm(r.test)}`, r.runs || []]))
-    redGroups = redGroups.filter(g => {
-      const runs = byCell.get(groupKey(g)) || []
-      const allPass = runs.length >= retries && runs.every(r => verifyVerdict(r))
-      if (allPass) { flakes.push({ host: g.host, test: g.testName, count: g.count, error: capText(g.error, 200) }); return false }
-      return true
-    })
+  if (redGroups.length) {
+    const flakeRun = await agent(
+      `Flake-screen ${redGroups.length} representative red integration cells (one per failure-signature group, covering ${redCellCount} red cells) for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran. Report each cell's idx EXACTLY as listed (the integer after #).
+${(flakePolicy.isolationEnv && Object.keys(flakePolicy.isolationEnv).length) ? `Prefix every run with this env: ${fence(JSON.stringify(flakePolicy.isolationEnv))}` : ''}
+Cells (#idx :: host :: test :: exact command):
+${fence(redGroups.map((g, i) => `#${i} :: ${g.host} :: ${g.testName} :: ${groupCmd(g)}`).join('\n'))}
+${UNTRUSTED}`,
+      { label: 'flake-retry', phase: 'Flake-Retry', schema: FLAKE_SCHEMA, model },
+    )
+    if (flakeRun && Array.isArray(flakeRun.cells)) {
+      const byIdx = new Map(flakeRun.cells.filter(r => Number.isInteger(r.idx)).map(r => [r.idx, r.runs || []]))
+      const byName = new Map(flakeRun.cells.map(r => [`${r.host}::${norm(r.test)}`, r.runs || []]))
+      redGroups = redGroups.filter((g, i) => {
+        const runs = byIdx.get(i) || byName.get(`${g.host}::${norm(g.testName)}`) || []
+        const allPass = runs.length >= retries && runs.every(r => verifyVerdict(r))
+        if (allPass) { flakes.push({ host: g.host, test: g.testName, count: g.count, error: capText(stripAnsi(g.error), 200) }); return false }
+        return true
+      })
+    }
+    if (!redGroups.length && !underDevGroups.length) {
+      return { status: 'all-flakes', repoRoot, flakes, reason: `all red cells passed on isolated retry — nothing but flakes` }
+    }
   }
-  if (!redGroups.length) return { status: 'all-flakes', repoRoot, flakes, reason: `all red cells passed on isolated retry — nothing but flakes` }
   log(`Flake-Retry: ${flakes.length} flake group(s) dropped · ${redGroups.length} genuine group(s) remain`)
 
   // ---- Phase 3: Cluster (deterministic; agent may only MERGE singletons) --------
@@ -430,8 +455,21 @@ Return {class, confidence, rationale}.`,
     )
     return { clusterId: cl.clusterId, ...(r || { class: 'regression', confidence: 0, rationale: 'classifier failed — defaulting to regression (conservative)' }) }
   }
-  const classified = (await parallel(clusters.map(cl => () => classifyOne(cl).then(v => ({ cl, v }))))).filter(Boolean)
-  for (const { cl, v } of classified) { cl.class = v.class; cl.confidence = v.confidence; cl.rationale = v.rationale; cl.driftCandidate = !!v.driftCandidate }
+  // parallel() marshals thunk results by VALUE across the sandbox boundary —
+  // mutating an object returned through it mutates a clone. Assign classes back
+  // onto the real cluster objects by clusterId, never through returned refs.
+  const classified = (await parallel(clusters.map(cl => () => classifyOne(cl)))).filter(Boolean)
+  const classById = new Map(classified.map(v => [v.clusterId, v]))
+  for (const cl of clusters) {
+    const v = classById.get(cl.clusterId) || { class: 'regression', confidence: 0, rationale: 'classifier result missing — defaulting to regression (conservative)' }
+    cl.class = v.class; cl.confidence = v.confidence; cl.rationale = v.rationale; cl.driftCandidate = !!v.driftCandidate
+  }
+  // Under-dev hosts' groups, set aside at ingest, join as their own clusters —
+  // classified by declaration, never by a model, never mixed with regressions.
+  for (const [i, cl] of clusterCells(underDevGroups).entries()) {
+    clusters.push({ ...cl, clusterId: `ud-${String(i + 1).padStart(3, '0')}`,
+      class: 'under-dev', confidence: 1, rationale: 'host is declared under-development in the profile' })
+  }
   log(`Classify: ${['regression', 'drift', 'under-dev', 'flake'].map(k => `${k} ${clusters.filter(c => c.class === k).length}`).join(' · ')}`)
 
   // ---- Phase 5: Drift-Screen (pixel VETO, then vision confirms; drift -> emitted
@@ -511,7 +549,10 @@ Return {verdict: drift|regression, reason}.`,
       cellCount: clusterCellCount(c),
       // One row per red group: scenario = a representative fixture; the group
       // covers `count` (scenario x test) cells sharing this failure.
-      cells: c.cells.map(g => ({ host: g.host, test: g.testName, scenario: (g.scenarios || [])[0] || '', testName: g.testName, error: capText(g.error, 800), count: g.count || 1, sampleScenarios: (g.scenarios || []).slice(0, 5) })),
+      // stripAnsi: raw ESC bytes survive JSON round-trips as literal control
+      // characters when a writer agent decodes \x1B bytes — the ledger must stay
+      // strictly parseable.
+      cells: c.cells.map(g => ({ host: g.host, test: g.testName, scenario: (g.scenarios || [])[0] || '', testName: g.testName, error: capText(stripAnsi(g.error), 800), count: g.count || 1, sampleScenarios: (g.scenarios || []).slice(0, 5) })),
     })),
     rebakeQueue,
     flakes,
@@ -546,20 +587,26 @@ Return {verdict: drift|regression, reason}.`,
 // The builders claim, the gates OBSERVE, the SCRIPT decides — fence checks on the
 // diagnosis brief, verifyVerdict on the re-run, a regression comparison on the gate.
 // =====================================================================================
-log(`crg-integrations REPAIR on ${repoRoot} · ${approvedClusterIds.length} approved cluster(s) · maxAttempts ${maxAttempts}`)
+log(`crg-integrations REPAIR on ${repoRoot} · ${approvedClusters.length || approvedClusterIds.length} approved cluster(s) · maxAttempts ${maxAttempts}`)
 
-const LEDGER_SCHEMA = {
-  type: 'object',
-  required: ['clusters'],
-  properties: { clusters: { type: 'array', items: { type: 'object' } }, oracleHost: { type: 'string' }, underDevHosts: { type: 'array', items: { type: 'string' } } },
+let loaded
+if (approvedClusters.length) {
+  // args-delivered clusters: byte-exact, no agent transcription on either side.
+  loaded = { clusters: approvedClusters, oracleHost: profile.oracleHost, underDevHosts: hosts.underDev || [], rebakeQueue: [], flakes: [] }
+} else {
+  const LEDGER_SCHEMA = {
+    type: 'object',
+    required: ['clusters'],
+    properties: { clusters: { type: 'array', items: { type: 'object' } }, oracleHost: { type: 'string' }, underDevHosts: { type: 'array', items: { type: 'string' } } },
+  }
+  loaded = await agent(
+    `Read the JSON file at ${fromLedger} (a crg-integrations triage ledger under ${repoRoot}) and return its parsed contents. Do NOT edit any file. Return clusters[], oracleHost, and underDevHosts EXACTLY as parsed, unmodified.`,
+    { label: 'ingest-ledger', phase: 'Diagnose', schema: LEDGER_SCHEMA, model },
+  )
+  if (!loaded) throw new Error(`repair mode: could not read/parse ledger at ${fromLedger}`)
 }
-const loaded = await agent(
-  `Read the JSON file at ${fromLedger} (a crg-integrations triage ledger under ${repoRoot}) and return its parsed contents. Do NOT edit any file. Return clusters[], oracleHost, and underDevHosts EXACTLY as parsed, unmodified.`,
-  { label: 'ingest-ledger', phase: 'Diagnose', schema: LEDGER_SCHEMA, model },
-)
-if (!loaded) throw new Error(`repair mode: could not read/parse ledger at ${fromLedger}`)
 const approvedSet = new Set(approvedClusterIds)
-const approved = (loaded.clusters || []).filter(c => c && approvedSet.has(c.clusterId))
+const approved = approvedClusters.length ? approvedClusters : (loaded.clusters || []).filter(c => c && approvedSet.has(c.clusterId))
 const nonRegression = approved.filter(c => c.class !== 'regression')
 if (nonRegression.length) log(`repair: ${nonRegression.length} approved cluster(s) are not class 'regression' — repairing anyway per explicit human approval`)
 if (!approved.length) {
@@ -734,7 +781,7 @@ const result = {
   status: 'ok',
   mode: 'repair',
   repoRoot,
-  ledgerPath: fromLedger,
+  ledgerPath: fromLedger || ledgerPath,
   fixed,
   unfixed,
   needsHuman,
@@ -746,7 +793,7 @@ const result = {
   stats: { approved: approved.length, fixed: fixed.length, unfixed: unfixed.length, needsHuman: needsHuman.length },
 }
 await agent(
-  `Update the crg-integrations ledger at ${fromLedger} (repo ${repoRoot}): read it, set a top-level "repair" field to EXACTLY the following JSON, and write the whole file back — do not otherwise reformat or drop fields. Output nothing else.\n\n${JSON.stringify({ fixed, unfixed, needsHuman, branch: result.branch }, null, 2)}`,
+  `Update the crg-integrations ledger at ${fromLedger || ledgerPath} (repo ${repoRoot}): read it, set a top-level "repair" field to EXACTLY the following JSON, and write the whole file back — do not otherwise reformat or drop fields. Output nothing else.\n\n${JSON.stringify({ fixed, unfixed, needsHuman, branch: result.branch }, null, 2)}`,
   { label: 'persist-repair', phase: 'Synthesize', model },
 )
 log(`Repair complete: ${fixed.length} fixed · ${unfixed.length} unfixed · ${needsHuman.length} needs-human · nothing pushed`)
