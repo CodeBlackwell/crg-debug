@@ -42,6 +42,7 @@ const normalizeSignature = s => String(s == null ? '' : s)
   .replace(/:\d+(?::\d+)?/g, ':LINE')                                      // residual :line[:col]
   .replace(/\b\d+(?:\.\d+)?\s?m?s\b/gi, 'DUR')                             // durations (12ms, 1.3s)
   .replace(/\b[0-9a-f]{7,40}\b/gi, 'HEX')                                  // hex ids / short hashes
+  .replace(/\b[\w.-]*\d[\w.-]*\b/g, 'N')                                   // digit-bearing tokens (fixture/scenario ids, counts, versions)
   .replace(/\s+/g, ' ')
   .trim()
   .toLowerCase()
@@ -155,6 +156,7 @@ const model = resolveModel(a && a.model)
 const methodologyPath = capText(a && a.methodologyPath, 1000)
 const profilePath = capText(a && a.profilePath, 1000)
 const validatorPath = capText(a && a.validatorPath, 1000)
+const ingestToolPath = capText(a && a.ingestToolPath, 1000)
 const fromLedger = capText(a && a.fromLedger, 1000)
 const approvedClusterIds = Array.isArray(a && a.approvedClusterIds) ? a.approvedClusterIds : []
 const maxAttempts = clampInt(a && a.maxAttempts, 1, 4, 2)
@@ -169,6 +171,9 @@ if (!repoRoot || typeof repoRoot !== 'string') {
 if (!isSafeAbs(repoRoot)) throw new Error(`Unsafe repoRoot ${JSON.stringify(repoRoot)} — must be an absolute path with no '..' segments`)
 if (!methodologyPath) throw new Error('crg-integrations workflow requires args.methodologyPath — absolute path to the installed methodology')
 if (fromLedger && !isSafeAbs(fromLedger)) throw new Error(`Unsafe fromLedger ${JSON.stringify(fromLedger)} — must be an absolute path with no '..' segments`)
+if (!repair && (!ingestToolPath || !isSafeAbs(ingestToolPath))) {
+  throw new Error('triage requires args.ingestToolPath — absolute path to the installed crg-integrations.ingest.mjs (agents must RUN it, never relay matrix rows themselves)')
+}
 if (fromLedger && !approvedClusterIds.length) throw new Error('fromLedger requires approvedClusterIds — repair runs only over human-approved clusters')
 if (!fromLedger && approvedClusterIds.length) throw new Error('approvedClusterIds is meaningless without fromLedger — pass the triage ledger to repair from')
 
@@ -242,66 +247,78 @@ Summarize files/nodes/edges as summary. ${UNTRUSTED}`,
   }
   log(`Graph: ${capText(graph.summary, 120)} · fresh=${graph.graphFresh}`)
 
-  // ---- Phase 1: Ingest ----------------------------------------------------------
-  const CELL = {
+  // ---- Phase 1: Ingest ------------------------------------------------------------
+  // The matrix is parsed by the DETERMINISTIC ingest tool (crg-integrations.
+  // ingest.mjs), never by the agent: run 2 of the dogfood proved an agent asked
+  // to relay ~1400 matrix rows silently truncates to a sample, which read as
+  // "everything green". The agent only RUNS commands and relays the tool's
+  // already-compact JSON ({fingerprint, hostCounts, redGroups}).
+  const RED_GROUP = {
     type: 'object',
-    required: ['host', 'test', 'status'],
+    required: ['host', 'testName', 'error', 'count', 'scenarios'],
     properties: {
       host: { type: 'string' },
-      test: { type: 'string', description: 'test name / id' },
-      scenario: { type: 'string', description: 'scenario key used by grepTemplate, if the matrix carries one' },
-      testName: { type: 'string', description: 'human test name used by grepTemplate' },
-      status: { type: 'string', description: 'pass | fail | notrun | flake — verbatim from the matrix' },
-      error: { type: 'string', description: 'the failure message / signature, complete and verbatim' },
-      diffPng: { type: 'string', description: 'path to this cell\'s *diff.png under the failure-artifacts dir, if any' },
+      testName: { type: 'string' },
+      error: { type: 'string' },
+      count: { type: 'integer' },
+      scenarios: { type: 'array', items: { type: 'string' } },
     },
   }
   const INGEST_SCHEMA = {
     type: 'object',
-    required: ['cells', 'fingerprint'],
+    required: ['fingerprint', 'hostCounts', 'redGroups'],
     properties: {
       results: GATE_ROWS,
-      fingerprint: { type: 'string', description: 'the engine fingerprint line, or "" if none was emitted' },
-      matrixOk: { type: 'boolean', description: 'true iff the matrix artifact parsed into the reference cell shape' },
-      cells: { type: 'array', items: CELL },
+      fingerprint: { type: 'string', description: 'the engine fingerprint line from the fingerprint command, or "" if none was emitted' },
+      matrixOk: { type: 'boolean', description: 'true iff the ingest tool exited 0 and printed JSON' },
+      hostCounts: { type: 'object', description: 'the ingest tool\'s hostCounts object, VERBATIM' },
+      redGroups: { type: 'array', items: RED_GROUP, description: 'the ingest tool\'s redGroups array, VERBATIM — every entry, unmodified' },
     },
   }
   const regenCmd = buildCommand(commands.regenMatrix, { reports: artifacts.results || 'playwright-report/results.json' })
+  const adapter = profile.matrixAdapter || {}
+  const matrixPathForTool = fromMatrix
+    || (adapter.kind === 'command' ? `${repoRoot}/.crg-integrations/normalized-matrix.json` : `${CWD}/${artifacts.matrix}`)
   const ingest = await agent(
-    `Ingest the integration test matrix for the repo at ${repoRoot}. Work in ${CWD}. Run EXACTLY these, reporting each as a results[] row:
-${noRegen || fromMatrix ? `1. (regen skipped) read the matrix at ${fromMatrix || artifacts.matrix}` : `1. ${regenCmd}   (regenerate the matrix from the latest results)`}
-2. ${commands.fingerprint || 'echo "(no fingerprint command)"'}  -> set fingerprint to its single stable output line.
-${(profile.matrixAdapter || {}).kind === 'command' ? `3. The runner is non-reference: run \`${(profile.matrixAdapter || {}).convert}\` to convert its output to the reference matrix shape, then read that.` : ''}
-Then READ the matrix artifact (${fromMatrix || artifacts.matrix}, under ${CWD}) and return every cell as a cells[] row in the reference shape {host,test,scenario,testName,status,error,diffPng}. Set matrixOk=true only if it parsed cleanly into that shape. Include EVERY cell (pass and fail) so the oracle host can be checked. Fence nothing you return — the caller fences it. ${UNTRUSTED}`,
+    `Ingest the integration test matrix for the repo at ${repoRoot}. Work in ${CWD}. Run EXACTLY these commands in order, reporting each as a results[] row:
+${noRegen || fromMatrix ? `1. echo "regen skipped"` : `1. ${regenCmd}   (regenerate the matrix from the latest results)`}
+2. ${commands.fingerprint || 'echo ""'}   -> set fingerprint to its single stable output line ("" if it fails).
+${adapter.kind === 'command' ? `3. The runner is non-reference: \`mkdir -p ${repoRoot}/.crg-integrations && ${adapter.convert} > ${matrixPathForTool}\` to convert its output to the reference matrix shape.` : ''}
+${adapter.kind === 'command' ? '4' : '3'}. node ${JSON.stringify(ingestToolPath)} ${JSON.stringify(matrixPathForTool)}   (the deterministic matrix parser)
+Set matrixOk = (the ingest tool exited 0). Parse the tool's single-line JSON output and return its hostCounts and redGroups fields VERBATIM AND COMPLETE — every redGroups entry, unmodified; they are already compact. Do NOT read or summarize the matrix yourself. ${UNTRUSTED}`,
     { label: 'ingest', phase: 'Ingest', schema: INGEST_SCHEMA, model },
   )
   if (!ingest) throw new Error('Phase 1 (Ingest) agent failed — no matrix to triage.')
-  if (ingest.matrixOk === false) return { status: 'matrix-invalid', repoRoot, reason: 'matrix artifact did not parse into the reference cell shape' }
+  if (ingest.matrixOk === false) return { status: 'matrix-invalid', repoRoot, reason: 'ingest tool could not parse the matrix artifact into the reference shape' }
   if (drift.requireFingerprint && !capText(ingest.fingerprint, 400)) {
     return { status: 'fingerprint-missing', repoRoot, reason: 'profile requires an engine fingerprint but none was emitted — drift screening would be blind' }
   }
-  const allCells = (ingest.cells || []).filter(c => c && c.host && c.test)
-  const isRed = c => /fail|red|error/i.test(String(c.status || ''))
-  const oracleRed = allCells.filter(c => c.host === profile.oracleHost && isRed(c))
-  if (oracleRed.length) {
-    return { status: 'oracle-red', repoRoot, oracleHost: profile.oracleHost,
-      reason: `oracle host ${profile.oracleHost} has ${oracleRed.length} red cell(s) — nothing downstream is trustworthy until it is green`,
-      cells: oracleRed.map(c => ({ host: c.host, test: c.test, error: capText(c.error, 300) })) }
+  const hostCounts = ingest.hostCounts || {}
+  const countTotals = Object.values(hostCounts).reduce(
+    (t, c) => ({ ran: t.ran + (c.pass || 0) + (c.fail || 0) + (c.partial || 0) + (c.skipped || 0), notrun: t.notrun + (c.notrun || 0) }),
+    { ran: 0, notrun: 0 },
+  )
+  const oracleCounts = hostCounts[profile.oracleHost] || {}
+  if ((oracleCounts.fail || 0) > 0) {
+    return { status: 'oracle-red', repoRoot, oracleHost: profile.oracleHost, hostCounts,
+      reason: `oracle host ${profile.oracleHost} has ${oracleCounts.fail} red scenario(s) — nothing downstream is trustworthy until it is green`,
+      cells: (ingest.redGroups || []).filter(g => g.host === profile.oracleHost)
+        .map(g => ({ host: g.host, test: g.testName, error: capText(g.error, 300) })) }
   }
-  let redCells = allCells.filter(isRed)
-  if (!redCells.length) {
+  let redGroups = (ingest.redGroups || []).filter(g => g && g.host && g.testName)
+  if (!redGroups.length) {
     // "No red cells" only means green if the cells actually RAN. A matrix
     // regenerated from a stale/partial report (e.g. one single-cell run
     // clobbered the runner's shared results file) is mostly notrun — calling
     // that green would silently hide the entire backlog.
-    const notrun = allCells.filter(c => /notrun|not.run|pending/i.test(String(c.status || ''))).length
-    if (notrun > allCells.length / 2) {
-      return { status: 'matrix-stale', repoRoot, fingerprint: capText(ingest.fingerprint, 400),
-        reason: `${notrun}/${allCells.length} cells are notrun — the matrix was regenerated from a stale or partial report; re-run the full matrix (or pass --from-matrix a trusted artifact) and re-triage` }
+    if (countTotals.notrun > countTotals.ran) {
+      return { status: 'matrix-stale', repoRoot, fingerprint: capText(ingest.fingerprint, 400), hostCounts,
+        reason: `${countTotals.notrun} notrun vs ${countTotals.ran} ran scenario cells — the matrix was regenerated from a stale or partial report; re-run the full matrix (or pass --from-matrix a trusted artifact) and re-triage` }
     }
-    return { status: 'no-red-cells', repoRoot, fingerprint: capText(ingest.fingerprint, 400), reason: 'every matrix cell that ran is green' }
+    return { status: 'no-red-cells', repoRoot, fingerprint: capText(ingest.fingerprint, 400), hostCounts, reason: 'every matrix cell that ran is green' }
   }
-  log(`Ingest: ${allCells.length} cells · ${redCells.length} red · oracle ${profile.oracleHost} green · fingerprint ${capText(ingest.fingerprint, 60)}`)
+  const redCellCount = redGroups.reduce((n, g) => n + (g.count || 1), 0)
+  log(`Ingest: ${redCellCount} red cell(s) in ${redGroups.length} group(s) · oracle ${profile.oracleHost} green · fingerprint ${capText(ingest.fingerprint, 60)}`)
 
   // ---- Phase 2: Flake-Retry -----------------------------------------------------
   const retries = clampInt(flakePolicy.isolatedRetries, 1, 5, 2)
@@ -319,52 +336,38 @@ Then READ the matrix artifact (${fromMatrix || artifacts.matrix}, under ${CWD}) 
       },
     },
   }
-  const cellCmd = c => buildCommand(commands.singleCell, {
-    host: c.host,
-    grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: c.scenario || '', test: c.testName || c.test || '' })),
+  // Each red group already IS the sampling unit (cells sharing host + test
+  // name + error prefix fail the same way): retry ONE representative per
+  // group and apply its verdict to the group. A totally-broken host reds
+  // hundreds of identical cells at once; real flakes are count==1 groups.
+  const groupCmd = g => buildCommand(commands.singleCell, {
+    host: g.host,
+    grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: (g.scenarios || [])[0] || '', test: g.testName || '' })),
   })
-  // Representative sampling: retrying every red cell is quadratic pain when a
-  // host is totally broken (a mount break reds ~250 scenario×test cells at
-  // once, and each isolated re-run boots hosts). Cells sharing (host,
-  // normalized signature, test name) fail the same way — retry ONE
-  // representative per group and apply its verdict to the group. Flakes are
-  // overwhelmingly single-cell groups anyway.
-  const flakeGroupKey = c => `${c.host}::${norm(c.testName || c.test || '')}::${normalizeSignature(c.error)}`
-  const flakeGroups = new Map()
-  for (const c of redCells) {
-    const k = flakeGroupKey(c)
-    if (!flakeGroups.has(k)) flakeGroups.set(k, [])
-    flakeGroups.get(k).push(c)
-  }
-  const representatives = [...flakeGroups.values()].map(g => g[0])
+  const groupKey = g => `${g.host}::${norm(g.testName)}`
   const flakeRun = await agent(
-    `Flake-screen ${representatives.length} representative red integration cells (sampled from ${redCells.length} red cells grouped by identical failure signature) for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran.
+    `Flake-screen ${redGroups.length} representative red integration cells (one per failure-signature group, covering ${redCellCount} red cells) for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran. Report host and test EXACTLY as listed.
 ${(flakePolicy.isolationEnv && Object.keys(flakePolicy.isolationEnv).length) ? `Prefix every run with this env: ${fence(JSON.stringify(flakePolicy.isolationEnv))}` : ''}
-Cells (host :: exact command):
-${fence(representatives.map(c => `${c.host} :: ${cellCmd(c)}`).join('\n'))}
+Cells (host :: test :: exact command):
+${fence(redGroups.map(g => `${g.host} :: ${g.testName} :: ${groupCmd(g)}`).join('\n'))}
 ${UNTRUSTED}`,
     { label: 'flake-retry', phase: 'Flake-Retry', schema: FLAKE_SCHEMA, model },
   )
   const flakes = []
   if (flakeRun && Array.isArray(flakeRun.cells)) {
-    const byCell = new Map(flakeRun.cells.map(r => [`${r.host}::${r.test}`, r.runs || []]))
-    const flakeKeys = new Set()
-    for (const rep of representatives) {
-      const runs = byCell.get(`${rep.host}::${rep.test}`) || []
+    const byCell = new Map(flakeRun.cells.map(r => [`${r.host}::${norm(r.test)}`, r.runs || []]))
+    redGroups = redGroups.filter(g => {
+      const runs = byCell.get(groupKey(g)) || []
       const allPass = runs.length >= retries && runs.every(r => verifyVerdict(r))
-      if (allPass) flakeKeys.add(flakeGroupKey(rep))
-    }
-    redCells = redCells.filter(c => {
-      if (!flakeKeys.has(flakeGroupKey(c))) return true
-      flakes.push({ host: c.host, test: c.test, error: capText(c.error, 200) })
-      return false
+      if (allPass) { flakes.push({ host: g.host, test: g.testName, count: g.count, error: capText(g.error, 200) }); return false }
+      return true
     })
   }
-  if (!redCells.length) return { status: 'all-flakes', repoRoot, flakes, reason: `all ${flakes.length} red cell(s) passed on isolated retry — nothing but flakes` }
-  log(`Flake-Retry: ${flakes.length} flake(s) dropped · ${redCells.length} genuine failure(s) remain`)
+  if (!redGroups.length) return { status: 'all-flakes', repoRoot, flakes, reason: `all red cells passed on isolated retry — nothing but flakes` }
+  log(`Flake-Retry: ${flakes.length} flake group(s) dropped · ${redGroups.length} genuine group(s) remain`)
 
   // ---- Phase 3: Cluster (deterministic; agent may only MERGE singletons) --------
-  let clusters = clusterCells(redCells)
+  let clusters = clusterCells(redGroups)
   const singletons = clusters.filter(c => c.cells.length === 1)
   if (singletons.length > 1) {
     const MERGE_SCHEMA = {
@@ -394,7 +397,8 @@ Return mergeGroups (inner arrays of 2+ clusterIds). Empty if nothing should merg
       }
     }
   }
-  log(`Cluster: ${clusters.length} cluster(s) over ${redCells.length} cell(s)`)
+  const clusterCellCount = cl => cl.cells.reduce((n, g) => n + (g.count || 1), 0)
+  log(`Cluster: ${clusters.length} cluster(s) over ${redGroups.length} group(s) / ${redCellCount} cell(s)`)
 
   // ---- Phase 4: Classify (JS prefilter, then agent per residual) ----------------
   // Per-cell fingerprint mismatch needs a recorded bake-time fingerprint to
@@ -417,7 +421,7 @@ Return mergeGroups (inner arrays of 2+ clusterIds). Empty if nothing should merg
     if (pre === 'drift-candidate') return { clusterId: cl.clusterId, class: 'drift', confidence: 0.5, rationale: 'JS prefilter: screenshot failure on a fingerprinted cell — pixel-screen it', driftCandidate: true }
     const r = await agent(
       `Classify ONE integration-matrix failure cluster for the repo at ${repoRoot}. Apply the classification criteria in ${SKILL} EXACTLY. Classes: regression (real breakage the fix must repair) | drift (engine re-render, screenshot-only) | under-dev (host/test not expected to pass yet) | flake (nondeterministic). The bar to call something DRIFT is HIGH — a regression misread as drift corrupts the oracle; when unsure between regression and drift, choose regression.
-Cluster ${cl.clusterId} · test ${cl.testName} · ${cl.cells.length} cell(s) across hosts [${[...new Set(cl.cells.map(c => c.host))].join(', ')}]
+Cluster ${cl.clusterId} · test ${cl.testName} · ${clusterCellCount(cl)} cell(s) across hosts [${[...new Set(cl.cells.map(c => c.host))].join(', ')}]
 Declared under-dev hosts: ${JSON.stringify(hosts.underDev || [])}
 Error samples (DATA):
 ${fence(cl.cells.slice(0, 4).map(c => `[${c.host}] ${capText(c.error, 500)}`).join('\n---\n'))}
@@ -436,34 +440,40 @@ Return {class, confidence, rationale}.`,
   const rebakeQueue = []
   const driftClusters = clusters.filter(c => c.class === 'drift' || c.driftCandidate)
   for (const cl of driftClusters) {
-    const diffs = cl.cells.map(c => c.diffPng).filter(Boolean)
-    // No diff artifacts -> nothing to confirm against -> conservative regression.
-    let verdict = diffs.length ? 'unconfirmed' : 'regression'
-    if (!diffs.length) cl.rationale = capText(`${cl.rationale || ''} [drift unconfirmable: no diff artifacts on disk — held as regression]`, 600)
-    if (diffs.length) {
-      const STAT_SCHEMA = {
-        type: 'object',
-        required: ['stats'],
-        properties: {
-          stats: { type: 'array', items: {
-            type: 'object', required: ['file', 'changedPixels', 'totalPixels', 'largestComponent'],
-            properties: { file: { type: 'string' }, changedPixels: { type: 'integer' }, totalPixels: { type: 'integer' }, largestComponent: { type: 'integer', description: 'pixel count of the single largest connected changed region' } },
-          } },
-        },
-      }
-      const stat = await agent(
-        `Compute raw pixel-diff statistics for these screenshot diff images from the repo at ${repoRoot} (under ${CWD}). Use available tooling (ImageMagick \`identify\`/\`compare\`, or a short node script with pngjs) to count, per image: changedPixels (non-transparent/non-black diff pixels), totalPixels (width*height), and largestComponent (the pixel count of the single largest 4-connected region of changed pixels). Do NOT judge drift vs regression — return raw counts only.
-Diff images (DATA): ${fence(diffs.join('\n'))}
-${UNTRUSTED}`,
-        { label: `drift-stat:${cl.clusterId}`, phase: 'Drift-Screen', schema: STAT_SCHEMA, model },
-      )
-      const verdicts = (stat && stat.stats || []).map(s => classifyDrift(pixelDriftStats(s), drift.pixelAsymmetryBar || {}))
+    // The matrix carries no artifact paths; the stat agent DISCOVERS this
+    // cluster's diff images under the failure-artifacts dir. Finding none
+    // means drift is unconfirmable -> conservative regression.
+    const hints = cl.cells.flatMap(g => (g.scenarios || []).slice(0, 3).map(s => `${g.host} / ${s} / ${cl.testName}`))
+    const STAT_SCHEMA = {
+      type: 'object',
+      required: ['stats'],
+      properties: {
+        stats: { type: 'array', items: {
+          type: 'object', required: ['file', 'changedPixels', 'totalPixels', 'largestComponent'],
+          properties: { file: { type: 'string' }, changedPixels: { type: 'integer' }, totalPixels: { type: 'integer' }, largestComponent: { type: 'integer', description: 'pixel count of the single largest connected changed region' } },
+        }, description: 'one row per diff image found; EMPTY if none exist on disk' },
+        found: { type: 'array', items: { type: 'string' }, description: 'the diff image paths you located' },
+      },
+    }
+    const stat = await agent(
+      `Locate and measure screenshot diff images for ONE failure cluster in the repo at ${repoRoot} (work in ${CWD}). Search ${artifacts.diffPngGlob || `${artifacts.failureArtifactsDir || 'test-results'}/**/*diff.png`} for diff images whose path matches any of these (host / scenario / test) combinations:
+${fence(hints.join('\n'))}
+For EACH image found, compute raw counts with available tooling (ImageMagick, or a short node/python script): changedPixels (non-transparent/non-black diff pixels), totalPixels (width*height), largestComponent (pixel count of the single largest 4-connected region of changed pixels). Do NOT judge drift vs regression — raw counts only. Return stats [] EMPTY if no diff images exist. ${UNTRUSTED}`,
+      { label: `drift-stat:${cl.clusterId}`, phase: 'Drift-Screen', schema: STAT_SCHEMA, model },
+    )
+    const rows = (stat && stat.stats) || []
+    let verdict
+    if (!rows.length) {
+      verdict = 'regression'
+      cl.rationale = capText(`${cl.rationale || ''} [drift unconfirmable: no diff artifacts on disk — held as regression]`, 600)
+    } else {
+      const verdicts = rows.map(s => classifyDrift(pixelDriftStats(s), drift.pixelAsymmetryBar || {}))
       verdict = verdicts.some(v => v === 'regression') ? 'regression' : 'unconfirmed'
     }
     if (verdict === 'unconfirmed' && drift.visionFallback) {
       const VIS_SCHEMA = { type: 'object', required: ['verdict', 'reason'], properties: { verdict: { type: 'string', enum: ['drift', 'regression'] }, reason: { type: 'string' } } }
       const vis = await agent(
-        `Look at these screenshot diff images for cluster ${cl.clusterId} (test ${cl.testName}) in the repo at ${repoRoot}. Judge, from the visual diff alone, whether this is ENGINE DRIFT (a uniform re-render: antialiasing, hinting, sub-pixel shift spread across the whole image) or a REGRESSION (a specific element moved, disappeared, or broke). The bar to call it drift is HIGH — if a discrete element clearly changed, it is a regression. Diff images: ${fence(cl.cells.map(c => c.diffPng).filter(Boolean).join('\n'))}
+        `Look at these screenshot diff images for cluster ${cl.clusterId} (test ${cl.testName}) in the repo at ${repoRoot}. Judge, from the visual diff alone, whether this is ENGINE DRIFT (a uniform re-render: antialiasing, hinting, sub-pixel shift spread across the whole image) or a REGRESSION (a specific element moved, disappeared, or broke). The bar to call it drift is HIGH — if a discrete element clearly changed, it is a regression. Diff images: ${fence(((stat && stat.found) || rows.map(r => r.file)).join('\n'))}
 Return {verdict: drift|regression, reason}.`,
         { label: `drift-vision:${cl.clusterId}`, phase: 'Drift-Screen', schema: VIS_SCHEMA, model: 'opus' },
       )
@@ -473,11 +483,11 @@ Return {verdict: drift|regression, reason}.`,
     }
     cl.class = verdict
     if (verdict === 'drift') {
-      for (const host of [...new Set(cl.cells.map(c => c.host))]) {
-        const cell = cl.cells.find(c => c.host === host) || {}
+      for (const host of [...new Set(cl.cells.map(g => g.host))]) {
+        const grp = cl.cells.find(g => g.host === host) || {}
         rebakeQueue.push({
           clusterId: cl.clusterId, host, test: cl.testName,
-          command: buildCommand(commands.rebake, { host, grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: cell.scenario || '', test: cl.testName })) }),
+          command: buildCommand(commands.rebake, { host, grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: (grp.scenarios || [])[0] || '', test: cl.testName })) }),
           note: 'EMITTED, not run — re-bake is a human decision at GATE-REBAKE',
         })
       }
@@ -497,8 +507,11 @@ Return {verdict: drift|regression, reason}.`,
     clusters: clusters.map(c => ({
       clusterId: c.clusterId, class: c.class, confidence: c.confidence, rationale: capText(c.rationale, 600),
       testName: c.testName, signature: capText(c.signature, 600),
-      hosts: [...new Set(c.cells.map(x => x.host))],
-      cells: c.cells.map(x => ({ host: x.host, test: x.test, scenario: x.scenario || '', testName: x.testName || x.test, error: capText(x.error, 800), diffPng: x.diffPng || '' })),
+      hosts: [...new Set(c.cells.map(g => g.host))],
+      cellCount: clusterCellCount(c),
+      // One row per red group: scenario = a representative fixture; the group
+      // covers `count` (scenario x test) cells sharing this failure.
+      cells: c.cells.map(g => ({ host: g.host, test: g.testName, scenario: (g.scenarios || [])[0] || '', testName: g.testName, error: capText(g.error, 800), count: g.count || 1, sampleScenarios: (g.scenarios || []).slice(0, 5) })),
     })),
     rebakeQueue,
     flakes,
@@ -519,7 +532,7 @@ Return {verdict: drift|regression, reason}.`,
     rebakeQueue,
     flakes,
     stats: {
-      red: redCells.length,
+      red: redCellCount,
       clusters: clusters.length,
       byClass: ['regression', 'drift', 'under-dev', 'flake'].reduce((o, k) => ({ ...o, [k]: clusters.filter(c => c.class === k).length }), {}),
       rebakeQueued: rebakeQueue.length,

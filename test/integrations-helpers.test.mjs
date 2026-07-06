@@ -206,3 +206,39 @@ test('validateProfile requires the two veto knobs', () => {
   const p = goodProfile(); p.drift.pixelAsymmetryBar = { maxDiffPct: 10 } // uniformityMin missing
   assert.equal(validateProfile(p).ok, false)
 })
+
+// ---- deterministic matrix ingest (lib) ------------------------------------------
+
+const { ingestMatrix } = await import('../lib/integrations-ingest.mjs')
+
+test('ingestMatrix groups failing cells by (host, test, error prefix) and counts hosts', () => {
+  const matrix = {
+    fingerprint: 'pw@1 chromium@2 darwin',
+    hosts: [
+      { id: 'oracle', scenarios: [
+        { id: 's1', status: 'pass', tests: [{ name: 'mount', status: 'pass' }] },
+        { id: 's2', status: 'partial', tests: [] },
+      ] },
+      { id: 'broken', scenarios: [
+        { id: 's1', status: 'fail', tests: [{ name: 'mount', status: 'fail', error: 'toBeAttached failed' }, { name: 'hover', status: 'fail', error: 'timeout' }] },
+        { id: 's2', status: 'fail', tests: [{ name: 'mount', status: 'fail', error: 'toBeAttached failed' }] },
+      ] },
+    ],
+  }
+  const out = ingestMatrix(matrix)
+  assert.equal(out.fingerprint, 'pw@1 chromium@2 darwin')
+  assert.deepEqual(out.hostCounts.oracle, { pass: 1, fail: 0, partial: 1, skipped: 0, notrun: 0, other: 0 })
+  assert.equal(out.hostCounts.broken.fail, 2)
+  const mount = out.redGroups.find(g => g.testName === 'mount')
+  assert.equal(mount.count, 2)                    // one group covering both scenarios
+  assert.deepEqual(mount.scenarios, ['s1', 's2'])
+  assert.equal(out.redGroups.length, 2)           // mount group + hover group
+})
+
+test('ingestMatrix splits groups on differing error prefixes', () => {
+  const matrix = { hosts: [{ id: 'h', scenarios: [
+    { id: 's1', status: 'fail', tests: [{ name: 't', status: 'fail', error: 'error kind A' }] },
+    { id: 's2', status: 'fail', tests: [{ name: 't', status: 'fail', error: 'error kind B' }] },
+  ] }] }
+  assert.equal(ingestMatrix(matrix).redGroups.length, 2)
+})

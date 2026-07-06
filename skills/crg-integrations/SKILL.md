@@ -60,6 +60,7 @@ Workflow({ name: 'crg-integrations',
   args: { repoRoot, profile, model, noRegen, fromMatrix,
           profilePath: '<the validated profile path>',
           validatorPath: '$HOME/.claude/workflows/crg-integrations.profile.mjs',
+          ingestToolPath: '$HOME/.claude/workflows/crg-integrations.ingest.mjs',
           methodologyPath: '$HOME/.claude/workflows/crg-integrations.methodology.md' } })
 ```
 

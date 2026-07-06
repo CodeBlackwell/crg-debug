@@ -24,6 +24,7 @@ cp "$plugin_root/lib/build-profile.mjs" "$dest/crg-build.profile.mjs"
 cp "$plugin_root/workflows/crg-integrations.js" "$dest/crg-integrations.js"
 cp "$plugin_root/skills/crg-integrations/methodology.md" "$dest/crg-integrations.methodology.md"
 cp "$plugin_root/lib/integrations-profile.mjs" "$dest/crg-integrations.profile.mjs"
+cp "$plugin_root/lib/integrations-ingest.mjs" "$dest/crg-integrations.ingest.mjs"
 
 # crg-agentsmd (AGENTS.md farming). The workflow is stamped with the plugin commit at install
 # time and logs it on launch, so a stale install is visible in the first log line of any run.
@@ -49,6 +50,7 @@ echo "  $dest/crg-build.profile.mjs           (/crg-build)"
 echo "  $dest/crg-integrations.js             (/crg-integrations)"
 echo "  $dest/crg-integrations.methodology.md (/crg-integrations)"
 echo "  $dest/crg-integrations.profile.mjs    (/crg-integrations)"
+echo "  $dest/crg-integrations.ingest.mjs     (/crg-integrations)"
 echo "  $dest/crg-agentsmd.js                 (/crg-agentsmd, build ${stamp})"
 echo "  $dest/crg-agentsmd.methodology.md     (/crg-agentsmd)"
 echo "  $dest/crg-agentsmd.corpus.mjs         (/crg-agentsmd)"
