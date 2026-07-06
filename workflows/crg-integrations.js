@@ -289,7 +289,18 @@ Then READ the matrix artifact (${fromMatrix || artifacts.matrix}, under ${CWD}) 
       cells: oracleRed.map(c => ({ host: c.host, test: c.test, error: capText(c.error, 300) })) }
   }
   let redCells = allCells.filter(isRed)
-  if (!redCells.length) return { status: 'no-red-cells', repoRoot, fingerprint: capText(ingest.fingerprint, 400), reason: 'every matrix cell is green' }
+  if (!redCells.length) {
+    // "No red cells" only means green if the cells actually RAN. A matrix
+    // regenerated from a stale/partial report (e.g. one single-cell run
+    // clobbered the runner's shared results file) is mostly notrun — calling
+    // that green would silently hide the entire backlog.
+    const notrun = allCells.filter(c => /notrun|not.run|pending/i.test(String(c.status || ''))).length
+    if (notrun > allCells.length / 2) {
+      return { status: 'matrix-stale', repoRoot, fingerprint: capText(ingest.fingerprint, 400),
+        reason: `${notrun}/${allCells.length} cells are notrun — the matrix was regenerated from a stale or partial report; re-run the full matrix (or pass --from-matrix a trusted artifact) and re-triage` }
+    }
+    return { status: 'no-red-cells', repoRoot, fingerprint: capText(ingest.fingerprint, 400), reason: 'every matrix cell that ran is green' }
+  }
   log(`Ingest: ${allCells.length} cells · ${redCells.length} red · oracle ${profile.oracleHost} green · fingerprint ${capText(ingest.fingerprint, 60)}`)
 
   // ---- Phase 2: Flake-Retry -----------------------------------------------------
