@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "project": "maisight-integration-hosts",
+  "cwd": "tests/integration-hosts",
+  "commands": {
+    "fullRun": "INTEGRATION_SHARD=nightly npm run test -- --workers={workers}",
+    "singleCell": "INTEGRATION_SHARD=prerelease npx playwright test --project={host} --grep {grep}",
+    "bootHost": "bash {host}/serve.sh",
+    "regenMatrix": "npx tsx scripts/render-matrix.ts {reports}",
+    "rebake": "npm run test -- --update-snapshots --project={host} --grep {grep}",
+    "fingerprint": "npx tsx scripts/print-engine-fingerprint.ts"
+  },
+  "grepTemplate": "{scenario}.*{test}",
+  "artifacts": {
+    "matrix": "matrix.json",
+    "results": "playwright-report/results.json",
+    "goldensDir": "tests/matrix.spec.ts-snapshots",
+    "failureArtifactsDir": "test-results",
+    "diffPngGlob": "test-results/**/*diff.png"
+  },
+  "matrixAdapter": { "kind": "reference" },
+  "oracleHost": "plain-html",
+  "hosts": {
+    "underDev": ["redocly-shape"],
+    "expectedDegradations": {},
+    "envPerHost": {}
+  },
+  "fences": {
+    "allow": ["tests/integration-hosts/{host}/**"],
+    "forbid": ["frontend/src/**", "backend/**"],
+    "sharedNeedsGate": ["tests/integration-hosts/_shared/**"]
+  },
+  "concurrency": { "workers": 3, "serializeVerify": true, "maxParallelFixes": 3 },
+  "flakePolicy": { "isolatedRetries": 2, "verdict": "all-pass-is-flake", "isolationEnv": {} },
+  "drift": { "requireFingerprint": true, "pixelAsymmetryBar": { "minDiffPct": 0.3, "maxDiffPct": 8, "uniformityMin": 0.85 }, "visionFallback": true }
+}

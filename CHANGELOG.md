@@ -4,6 +4,38 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] - 2026-07-06
+
+### Added
+- **`/crg-integrations` — a graph-driven triage & repair harness for a project's host × scenario
+  integration matrix** (the grid a docs widget / SDK / embed runs against many host frameworks). Two
+  gated machines over one methodology, mirroring `/crg-build`'s two-entry shape:
+  - *TRIAGE (read-only, default).* Phases 0–5: register/refresh the code-review-graph (unconditional —
+    no CRG opt-out; a build/update failure bails `graph-failed`), ingest the red cells, retry away
+    flakes (0 tests ran is never a pass), cluster by normalized failure signature, classify each
+    cluster **regression | drift | under-dev | flake** with a JS prefilter ahead of the model, and
+    screen screenshot failures through an **asymmetric pixel-stat drift bar** (small + diffuse +
+    engine-fingerprint-moved = drift; large or concentrated = regression) with a rare vision fallback.
+    Halts on an `oracle-red` matrix — nothing downstream is trustworthy while the golden oracle is red.
+    Stops with a `.crg-integrations/ledger.json` and `status:'triaged'`. **Drift is never
+    auto-re-baked** — the `--update-snapshots` command is emitted into a human-gated queue.
+  - *REPAIR (gated).* Phases 6–10 over human-approved regression clusters: CRG-driven diagnosis into a
+    fence-checked brief, a fix in an isolated worktree inside a per-host fence (shared-file fixes are
+    `needs-human`, never auto-edited), a re-run verify judged by **exit code AND parsed ran-test
+    count**, and a full-matrix regression gate on a `crg-integrations/fix-*` run branch. **Never
+    pushes.**
+  - *Genericity seam.* All hot-path logic runs over one normalized reference matrix shape
+    (`schemaVersion: 1`); a project with a different runner supplies a one-line `matrixAdapter` convert
+    command. `lib/integrations-profile.mjs` validates the profile (placeholder presence per command,
+    non-empty fences, the drift bar) — `node integrations-profile.mjs validate <path>` exits 0/1.
+  - *Contract risks enforced in code, not prose:* grep is built and shell-quoted by the Workflow from
+    a `grepTemplate` (regex-escaped values — injection/vacuous-pass defense); the verify judge rejects
+    0-tests-ran; the fence check re-verifies `git diff --name-only` after every fix; the drift bar is
+    a unit-tested pure helper. New `test/integrations-helpers.test.mjs` (25 tests) covers the pure
+    helpers and the validator.
+  - The `crg-deterministic` enabler now also installs `crg-integrations.js`,
+    `crg-integrations.methodology.md`, and `crg-integrations.profile.mjs`.
+
 ## [0.17.0] - 2026-07-03
 
 ### Added

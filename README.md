@@ -188,6 +188,33 @@ guess from one file. A 3-PR implementation A/B showed **no lift over placebo**: 
 measured reviewer norms; it is not demonstrated to make agents build better code. Repos with fewer
 than ~30 reviewed PRs return `thin-corpus` instead of a padded guess.
 
+### 🧩 `/crg-integrations` — triage & repair an integration matrix
+
+Points the crg core at a project's **host × scenario integration matrix** — the grid a docs widget,
+SDK, or embed runs against many host frameworks. Two gated machines over one methodology:
+
+```
+/crg-integrations                                   # current repo: triage, stop at GATE-CLUSTERS
+/crg-integrations path/to/repo --triage-only        # read-only triage ledger, nothing else
+/crg-integrations --from-ledger <path> --clusters cl-001,cl-004   # repair approved clusters
+/crg-integrations --from-matrix results.json --no-regen           # triage an existing matrix
+```
+
+**TRIAGE** (read-only) refreshes the graph, ingests the red cells, retries away flakes, clusters by
+normalized failure signature, and classifies each cluster **regression | drift | under-dev | flake** —
+deterministic-first, with a JS prefilter ahead of the model. Screenshot failures go through an
+asymmetric **pixel-stat drift screen** (small + diffuse + engine-fingerprint-moved = drift; large or
+concentrated = regression) with a rare vision fallback; the bar to declare drift is deliberately high,
+because a regression misread as drift silently corrupts the golden oracle. Drift is **never
+auto-re-baked** — the `--update-snapshots` command is emitted into a human-gated queue. **REPAIR**
+(only human-approved regression clusters) diagnoses each against the graph, fixes it in an isolated
+worktree inside a per-host **fence** (shared-file fixes are `needs-human`, never auto-edited),
+verifies by re-running the exact cell (exit code AND a test that actually ran — 0 tests is a fail),
+and gates the run branch against regressions. Commits locally on a `crg-integrations/fix-*` branch;
+**never pushes.** The genericity seam is the profile: all hot-path logic runs over one normalized
+reference matrix shape, so a project with a different runner supplies a one-line `matrixAdapter`
+convert command and everything downstream is identical.
+
 ## 🗂️ Layout
 
 ```
@@ -199,6 +226,10 @@ skills/crg-farm/SKILL.md          /crg-farm entry — the bug-farming loop orche
 skills/crg-farm/methodology.md    Named-Gate Protocol + escalation + PR-prep + farm-DB shapes
 skills/crg-agentsmd/SKILL.md      /crg-agentsmd entry — measured AGENTS.md mining
 skills/crg-agentsmd/methodology.md  miner discipline + verification attacks + holdout scoring
+skills/crg-integrations/SKILL.md  /crg-integrations entry — matrix triage/repair router + 3 gates
+skills/crg-integrations/methodology.md  class definitions + drift asymmetry + fence discipline
+lib/integrations-profile.mjs      matrix-profile validator (reference schema, placeholder + fence checks)
+workflows/crg-integrations.js     deterministic matrix triage/repair Workflow (installed by the enabler)
 lib/corpus.mjs                    review-corpus fetcher, holdout splitter, ledger assembler
 lib/agentsmd-score.mjs            retrodictive holdout scorer (deterministic)
 lib/agentsmd-ab.mjs               three-arm A/B harness CLIs (contamination-clean workspaces)
