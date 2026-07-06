@@ -187,6 +187,13 @@ for (const c of approvedClusters) {
     throw new Error('every approvedClusters entry needs {clusterId, cells[]} — pass the triage return\'s cluster objects verbatim')
   }
 }
+// Workflow scripts cannot read files, so profilePath alone CANNOT hydrate the
+// profile — a missing inline profile would silently run with no under-dev
+// partition, no fences, and default commands (dogfood run 4 classified an
+// entire under-dev host as regressions this way).
+if (!(a && a.profile) || !Object.keys(profile).length) {
+  throw new Error('crg-integrations workflow requires args.profile — the INLINE profile object. profilePath is only interpolated into the validator command; it does not load the profile.')
+}
 
 const SKILL = methodologyPath
 const CWD = profile.cwd ? `${repoRoot}/${profile.cwd}` : repoRoot
@@ -293,7 +300,7 @@ Summarize files/nodes/edges as summary. ${UNTRUSTED}`,
   const ingest = await agent(
     `Ingest the integration test matrix for the repo at ${repoRoot}. Work in ${CWD}. Run EXACTLY these commands in order, reporting each as a results[] row:
 ${noRegen || fromMatrix ? `1. echo "regen skipped"` : `1. ${regenCmd}   (regenerate the matrix from the latest results)`}
-2. ${commands.fingerprint || 'echo ""'}   -> set fingerprint to its single stable output line ("" if it fails).
+2. ${commands.fingerprint ? `cd ${JSON.stringify(CWD)} && ${commands.fingerprint}` : 'echo ""'}   -> set fingerprint to its single stable output line. Bash cwd resets between tool calls, so keep the cd in the SAME command. If it fails or prints nothing, fall back to the ingest tool's own "fingerprint" field from the step below; set "" only when both are empty.
 ${adapter.kind === 'command' ? `3. The runner is non-reference: \`mkdir -p ${repoRoot}/.crg-integrations && ${adapter.convert} > ${matrixPathForTool}\` to convert its output to the reference matrix shape.` : ''}
 ${adapter.kind === 'command' ? '4' : '3'}. node ${JSON.stringify(ingestToolPath)} ${JSON.stringify(matrixPathForTool)}   (the deterministic matrix parser)
 Set matrixOk = (the ingest tool exited 0). Parse the tool's single-line JSON output and return its hostCounts and redGroups fields VERBATIM AND COMPLETE — every redGroups entry, unmodified; they are already compact. Do NOT read or summarize the matrix yourself. ${UNTRUSTED}`,

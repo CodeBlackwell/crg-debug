@@ -4,6 +4,20 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.18.1] - 2026-07-06
+
+### Fixed
+- **crg-integrations: missing inline profile now hard-fails instead of silently degrading.** The
+  workflow reads `args.profile` (scripts cannot read files, so `profilePath` never hydrates it);
+  invoking with only `profilePath` used to run with an empty profile — no under-dev partition, no
+  fences — and a dogfood run classified an entire declared under-dev host as four regression
+  clusters. Now it throws with instructions to pass the profile object inline.
+- **crg-integrations: ingest fingerprint step survives Bash cwd resets.** The ingest agent's
+  fingerprint command now carries an explicit `cd <cwd> &&` prefix (subagent Bash calls don't share
+  cwd), and the prompt tells the agent to fall back to the ingest tool's own `fingerprint` field
+  before declaring it empty — a cwd-reset used to bail the whole triage with `fingerprint-missing`
+  even though the matrix carried a valid fingerprint.
+
 ## [0.18.0] - 2026-07-06
 
 ### Added
