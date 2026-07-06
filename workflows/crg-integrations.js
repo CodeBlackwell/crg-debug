@@ -312,22 +312,41 @@ Then READ the matrix artifact (${fromMatrix || artifacts.matrix}, under ${CWD}) 
     host: c.host,
     grep: shellQuote(buildGrep(profile.grepTemplate, { scenario: c.scenario || '', test: c.testName || c.test || '' })),
   })
+  // Representative sampling: retrying every red cell is quadratic pain when a
+  // host is totally broken (a mount break reds ~250 scenario×test cells at
+  // once, and each isolated re-run boots hosts). Cells sharing (host,
+  // normalized signature, test name) fail the same way — retry ONE
+  // representative per group and apply its verdict to the group. Flakes are
+  // overwhelmingly single-cell groups anyway.
+  const flakeGroupKey = c => `${c.host}::${norm(c.testName || c.test || '')}::${normalizeSignature(c.error)}`
+  const flakeGroups = new Map()
+  for (const c of redCells) {
+    const k = flakeGroupKey(c)
+    if (!flakeGroups.has(k)) flakeGroups.set(k, [])
+    flakeGroups.get(k).push(c)
+  }
+  const representatives = [...flakeGroups.values()].map(g => g[0])
   const flakeRun = await agent(
-    `Flake-screen ${redCells.length} red integration cells for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran.
+    `Flake-screen ${representatives.length} representative red integration cells (sampled from ${redCells.length} red cells grouped by identical failure signature) for the repo at ${repoRoot}. Work in ${CWD}. Run SERIALLY (never in parallel — the hosts share fixed ports). For EACH cell below, run its exact command ${retries} time(s) in isolation and record each run as a runs[] row {command, exitCode, stdout, stderr} — INCLUDE the summary line ("N passed", "N failed") in stdout so the caller can count tests that actually ran.
 ${(flakePolicy.isolationEnv && Object.keys(flakePolicy.isolationEnv).length) ? `Prefix every run with this env: ${fence(JSON.stringify(flakePolicy.isolationEnv))}` : ''}
 Cells (host :: exact command):
-${fence(redCells.map(c => `${c.host} :: ${cellCmd(c)}`).join('\n'))}
+${fence(representatives.map(c => `${c.host} :: ${cellCmd(c)}`).join('\n'))}
 ${UNTRUSTED}`,
     { label: 'flake-retry', phase: 'Flake-Retry', schema: FLAKE_SCHEMA, model },
   )
   const flakes = []
   if (flakeRun && Array.isArray(flakeRun.cells)) {
     const byCell = new Map(flakeRun.cells.map(r => [`${r.host}::${r.test}`, r.runs || []]))
-    redCells = redCells.filter(c => {
-      const runs = byCell.get(`${c.host}::${c.test}`) || []
+    const flakeKeys = new Set()
+    for (const rep of representatives) {
+      const runs = byCell.get(`${rep.host}::${rep.test}`) || []
       const allPass = runs.length >= retries && runs.every(r => verifyVerdict(r))
-      if (allPass) { flakes.push({ host: c.host, test: c.test, error: capText(c.error, 200) }); return false }
-      return true
+      if (allPass) flakeKeys.add(flakeGroupKey(rep))
+    }
+    redCells = redCells.filter(c => {
+      if (!flakeKeys.has(flakeGroupKey(c))) return true
+      flakes.push({ host: c.host, test: c.test, error: capText(c.error, 200) })
+      return false
     })
   }
   if (!redCells.length) return { status: 'all-flakes', repoRoot, flakes, reason: `all ${flakes.length} red cell(s) passed on isolated retry — nothing but flakes` }

@@ -68,7 +68,10 @@ Every cluster is exactly one class:
    cells ALL come back green, flag it for promotion at synthesis — never promote automatically.
 4. **flake** — nondeterministic: it fails then passes on isolated retry. Dropped before clustering by
    the flake-retry phase; a cell that passes all `flakePolicy.isolatedRetries` isolated re-runs is a
-   flake. **A run where 0 tests actually ran is NOT a pass** — a grep that matched nothing is a
+   flake. Retries sample ONE representative per (host, failure signature, test name) group and apply
+   its verdict to the group — a totally-broken host reds hundreds of identical cells at once, and
+   re-running each would take hours for no information; real flakes are single-cell groups.
+   **A run where 0 tests actually ran is NOT a pass** — a grep that matched nothing is a
    failure, never a flake.
 
 ### Why the drift bar is asymmetric (the core correctness rule)
