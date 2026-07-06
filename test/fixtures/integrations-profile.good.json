@@ -32,5 +32,5 @@
   },
   "concurrency": { "workers": 3, "serializeVerify": true, "maxParallelFixes": 3 },
   "flakePolicy": { "isolatedRetries": 2, "verdict": "all-pass-is-flake", "isolationEnv": {} },
-  "drift": { "requireFingerprint": true, "pixelAsymmetryBar": { "minDiffPct": 0.3, "maxDiffPct": 8, "uniformityMin": 0.85 }, "visionFallback": true }
+  "drift": { "requireFingerprint": true, "pixelAsymmetryBar": { "maxDiffPct": 10, "uniformityMin": 0.7 }, "visionFallback": true }
 }

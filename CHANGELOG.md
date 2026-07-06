@@ -14,8 +14,9 @@ All notable changes to the crg-debug plugin are documented here. The format foll
     no CRG opt-out; a build/update failure bails `graph-failed`), ingest the red cells, retry away
     flakes (0 tests ran is never a pass), cluster by normalized failure signature, classify each
     cluster **regression | drift | under-dev | flake** with a JS prefilter ahead of the model, and
-    screen screenshot failures through an **asymmetric pixel-stat drift bar** (small + diffuse +
-    engine-fingerprint-moved = drift; large or concentrated = regression) with a rare vision fallback.
+    screen screenshot failures through an **asymmetric pixel-stat veto** (large or concentrated
+    change = regression; everything else is unconfirmed until a vision agent confirms drift — the
+    numbers only rule drift out, never declare it).
     Halts on an `oracle-red` matrix — nothing downstream is trustworthy while the golden oracle is red.
     Stops with a `.crg-integrations/ledger.json` and `status:'triaged'`. **Drift is never
     auto-re-baked** — the `--update-snapshots` command is emitted into a human-gated queue.

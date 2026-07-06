@@ -203,9 +203,10 @@ SDK, or embed runs against many host frameworks. Two gated machines over one met
 **TRIAGE** (read-only) refreshes the graph, ingests the red cells, retries away flakes, clusters by
 normalized failure signature, and classifies each cluster **regression | drift | under-dev | flake** —
 deterministic-first, with a JS prefilter ahead of the model. Screenshot failures go through an
-asymmetric **pixel-stat drift screen** (small + diffuse + engine-fingerprint-moved = drift; large or
-concentrated = regression) with a rare vision fallback; the bar to declare drift is deliberately high,
-because a regression misread as drift silently corrupts the golden oracle. Drift is **never
+**pixel-stat drift veto** (large or concentrated change = regression; everything else is
+*unconfirmed* and must be confirmed by a vision agent — calibration on 71 real drift golden pairs
+showed drift and small-element regressions are numerically inseparable, so the numbers only ever
+rule drift *out*), because a regression misread as drift silently corrupts the golden oracle. Drift is **never
 auto-re-baked** — the `--update-snapshots` command is emitted into a human-gated queue. **REPAIR**
 (only human-approved regression clusters) diagnoses each against the graph, fixes it in an isolated
 worktree inside a per-host **fence** (shared-file fixes are `needs-human`, never auto-edited),

@@ -146,16 +146,21 @@ test('pixelDriftStats computes diffPct and spread-out uniformity', () => {
   assert.equal(s.uniformity, 0.95) // 1 - 50/1000
 })
 
-test('classifyDrift is asymmetric: large or concentrated -> regression', () => {
-  const bar = { minDiffPct: 0.3, maxDiffPct: 8, uniformityMin: 0.85 }
-  // small + diffuse + above floor -> drift
-  assert.equal(H.classifyDrift({ diffPct: 1, uniformity: 0.95 }, bar), 'drift')
-  // large change -> regression regardless of spread
-  assert.equal(H.classifyDrift({ diffPct: 20, uniformity: 0.99 }, bar), 'regression')
-  // concentrated blob (a moved element) -> regression even if small
+test('classifyDrift is a veto only: never declares drift, only rules it out', () => {
+  // Bar values from the 2026-07-06 calibration: 71 real drift pairs spanned
+  // diffPct 0.8-8.6 / uniformity 0.73-0.96; injected global shifts hit 11-18%.
+  const bar = { maxDiffPct: 10, uniformityMin: 0.7 }
+  // large change (a global shift measured 11-18%) -> vetoed to regression
+  assert.equal(H.classifyDrift({ diffPct: 12, uniformity: 0.99 }, bar), 'regression')
+  // concentrated blob (a solid element broke) -> vetoed to regression
   assert.equal(H.classifyDrift({ diffPct: 2, uniformity: 0.4 }, bar), 'regression')
-  // diffuse but below the signal floor -> ambiguous (vision fallback)
-  assert.equal(H.classifyDrift({ diffPct: 0.1, uniformity: 0.99 }, bar), 'ambiguous')
+  // everything plausible — including real drift — is unconfirmed: vision decides
+  assert.equal(H.classifyDrift({ diffPct: 1, uniformity: 0.95 }, bar), 'unconfirmed')
+  assert.equal(H.classifyDrift({ diffPct: 8.6, uniformity: 0.73 }, bar), 'unconfirmed')  // worst real drift observed
+  assert.equal(H.classifyDrift({ diffPct: 0.1, uniformity: 0.99 }, bar), 'unconfirmed')
+  // a small-element shift (1.07% diffuse — numerically identical to drift) must
+  // NOT be vetoed either way; it reaches vision, which sees the moved element
+  assert.equal(H.classifyDrift({ diffPct: 1.07, uniformity: 0.98 }, bar), 'unconfirmed')
 })
 
 // ---- profile validator (lib) --------------------------------------------------
@@ -197,7 +202,7 @@ test('validateProfile requires convert when matrixAdapter.kind is command', () =
   assert.equal(ok, false); assert.ok(errors.some(e => e.includes('matrixAdapter.convert')))
 })
 
-test('validateProfile enforces minDiffPct < maxDiffPct', () => {
-  const p = goodProfile(); p.drift.pixelAsymmetryBar = { minDiffPct: 9, maxDiffPct: 8, uniformityMin: 0.85 }
+test('validateProfile requires the two veto knobs', () => {
+  const p = goodProfile(); p.drift.pixelAsymmetryBar = { maxDiffPct: 10 } // uniformityMin missing
   assert.equal(validateProfile(p).ok, false)
 })

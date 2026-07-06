@@ -75,19 +75,25 @@ Every cluster is exactly one class:
 
 Misclassifying a **regression as drift** silently corrupts the oracle: the fix is skipped, the stale
 golden is re-baked over the correct reference, and the broken state becomes the new "truth." The
-inverse error (drift misread as regression) merely wastes a diagnosis. So the bar to *declare drift*
-is deliberately high, in code:
+inverse error (drift misread as regression) merely wastes a diagnosis. So the numeric layer is a
+**veto, never a confirmation** — calibration against 71 real engine-drift golden pairs plus injected
+layout bugs (maisight, 2026-07-06) showed drift and small-element regressions are numerically
+inseparable: re-hinting rewrites whole glyphs, and a shifted text element fragments exactly like
+anti-aliasing, so change size, magnitude, and connected-component spread all overlap. In code:
 
-- Large change (`diffPct > maxDiffPct`) → **regression**, regardless of how spread out.
-- Concentrated change (`uniformity < uniformityMin` — one big connected blob: an element moved,
-  disappeared, or broke) → **regression**, even when small.
-- Only a change that is BOTH small (`≤ maxDiffPct`) AND diffuse (`uniformity ≥ uniformityMin`) AND
-  above the signal floor (`≥ minDiffPct`) → **drift**.
-- Small, diffuse, but below the floor → **ambiguous** → vision fallback (only if `drift.visionFallback`);
-  with no vision fallback, ambiguous resolves to **regression** (conservative).
+- Large change (`diffPct > maxDiffPct`) → vetoed to **regression** (real drift topped out at 8.6%;
+  injected global shifts measured 11–18%).
+- Concentrated change (`uniformity < uniformityMin` — one big connected blob: a solid element moved,
+  disappeared, or broke) → vetoed to **regression**, even when small (real drift never dropped
+  below uniformity 0.73).
+- Everything else — including all genuine drift — is **unconfirmed**: the vision fallback must
+  confirm it (only if `drift.visionFallback`); with no vision fallback, drift can never be
+  confirmed and unconfirmed resolves to **regression** (conservative). A drift-classified cluster
+  with no diff artifacts on disk is likewise unconfirmable → **regression**.
 
 The engine **fingerprint** (Playwright + Chromium build, stamped into the matrix) is layer 1: a cell
-can only be drift if the engine actually moved. The pixel bar is layer 2. Vision is layer 3, rare.
+can only be drift if the engine actually moved. The pixel veto is layer 2. Vision confirmation is
+layer 3 — and it is the only layer that ever *declares* drift.
 
 ## Triage phases
 

@@ -121,15 +121,20 @@ const validateEdits = (files, host, fences = {}) => {
   return { ok: withinAllow && !hitsForbid && !hitsShared, withinAllow, hitsForbid, hitsShared, files: list }
 }
 
-// Pixel-stat drift math (asymmetric, deliberately hard to call drift — a regression
-// misread as drift silently corrupts the golden oracle):
+// Pixel-stat drift math — a VETO, never a confirmation. Calibration against 71
+// real engine-drift golden pairs + injected layout bugs (maisight, 2026-07-06)
+// showed drift and small-element regressions are numerically INSEPARABLE: text
+// re-hinting changes whole glyphs (mean delta ~120-170) and a shifted element
+// fragments exactly like anti-aliasing, so diffPct, magnitude, and connected-
+// component spread all overlap across the classes. What the numbers CAN do is
+// rule drift out: a change too large to be a re-render (global shifts measured
+// 11-18%; real drift topped out at 8.6%) or a single concentrated blob (solid
+// element broke; real drift never dropped below uniformity 0.73). Everything
+// else is 'unconfirmed' and MUST be confirmed by the vision fallback — the
+// numeric layer never declares drift, because a regression misread as drift
+// silently corrupts the golden oracle.
 //   diffPct    = changed / total, as a percent
-//   uniformity = 1 - largestComponent/changed  (how SPREAD OUT the change is; a
-//                diffuse engine re-render -> high; one moved element -> low)
-// A change is drift only when it is BOTH small (<= maxDiffPct) AND diffuse
-// (uniformity >= uniformityMin) AND above the signal floor (>= minDiffPct).
-// Anything large or concentrated is a regression; the tiny-but-diffuse sliver below
-// the floor is ambiguous -> vision fallback.
+//   uniformity = 1 - largestComponent/changed (high = fragmented/diffuse)
 const pixelDriftStats = ({ changedPixels = 0, totalPixels = 0, largestComponent = 0 } = {}) => ({
   diffPct: totalPixels > 0 ? (changedPixels / totalPixels) * 100 : 0,
   uniformity: changedPixels > 0 ? 1 - largestComponent / changedPixels : 1,
@@ -137,9 +142,8 @@ const pixelDriftStats = ({ changedPixels = 0, totalPixels = 0, largestComponent 
 const classifyDrift = (stats, bar = {}) => {
   const { diffPct = 0, uniformity = 0 } = stats || {}
   if (diffPct > bar.maxDiffPct) return 'regression'                        // too much changed to be a re-render
-  if (uniformity < bar.uniformityMin) return 'regression'                  // concentrated blob = an element broke
-  if (diffPct >= bar.minDiffPct) return 'drift'                            // small + diffuse + real signal
-  return 'ambiguous'                                                       // diffuse but below the floor
+  if (uniformity < bar.uniformityMin) return 'regression'                  // one concentrated blob = an element broke
+  return 'unconfirmed'                                                     // plausible drift — vision must confirm
 }
 // <<< pure-helpers
 
@@ -396,12 +400,16 @@ Return {class, confidence, rationale}.`,
   for (const { cl, v } of classified) { cl.class = v.class; cl.confidence = v.confidence; cl.rationale = v.rationale; cl.driftCandidate = !!v.driftCandidate }
   log(`Classify: ${['regression', 'drift', 'under-dev', 'flake'].map(k => `${k} ${clusters.filter(c => c.class === k).length}`).join(' · ')}`)
 
-  // ---- Phase 5: Drift-Screen (pixel stats; drift -> emitted re-bake queue) -------
+  // ---- Phase 5: Drift-Screen (pixel VETO, then vision confirms; drift -> emitted
+  // re-bake queue). The numeric layer never declares drift on its own — see the
+  // calibration note on classifyDrift.
   const rebakeQueue = []
   const driftClusters = clusters.filter(c => c.class === 'drift' || c.driftCandidate)
   for (const cl of driftClusters) {
     const diffs = cl.cells.map(c => c.diffPng).filter(Boolean)
-    let verdict = 'drift'
+    // No diff artifacts -> nothing to confirm against -> conservative regression.
+    let verdict = diffs.length ? 'unconfirmed' : 'regression'
+    if (!diffs.length) cl.rationale = capText(`${cl.rationale || ''} [drift unconfirmable: no diff artifacts on disk — held as regression]`, 600)
     if (diffs.length) {
       const STAT_SCHEMA = {
         type: 'object',
@@ -420,11 +428,9 @@ ${UNTRUSTED}`,
         { label: `drift-stat:${cl.clusterId}`, phase: 'Drift-Screen', schema: STAT_SCHEMA, model },
       )
       const verdicts = (stat && stat.stats || []).map(s => classifyDrift(pixelDriftStats(s), drift.pixelAsymmetryBar || {}))
-      if (verdicts.some(v => v === 'regression')) verdict = 'regression'
-      else if (verdicts.some(v => v === 'ambiguous')) verdict = 'ambiguous'
-      else verdict = 'drift'
+      verdict = verdicts.some(v => v === 'regression') ? 'regression' : 'unconfirmed'
     }
-    if (verdict === 'ambiguous' && drift.visionFallback) {
+    if (verdict === 'unconfirmed' && drift.visionFallback) {
       const VIS_SCHEMA = { type: 'object', required: ['verdict', 'reason'], properties: { verdict: { type: 'string', enum: ['drift', 'regression'] }, reason: { type: 'string' } } }
       const vis = await agent(
         `Look at these screenshot diff images for cluster ${cl.clusterId} (test ${cl.testName}) in the repo at ${repoRoot}. Judge, from the visual diff alone, whether this is ENGINE DRIFT (a uniform re-render: antialiasing, hinting, sub-pixel shift spread across the whole image) or a REGRESSION (a specific element moved, disappeared, or broke). The bar to call it drift is HIGH — if a discrete element clearly changed, it is a regression. Diff images: ${fence(cl.cells.map(c => c.diffPng).filter(Boolean).join('\n'))}
@@ -432,8 +438,8 @@ Return {verdict: drift|regression, reason}.`,
         { label: `drift-vision:${cl.clusterId}`, phase: 'Drift-Screen', schema: VIS_SCHEMA, model: 'opus' },
       )
       verdict = (vis && vis.verdict) || 'regression'
-    } else if (verdict === 'ambiguous') {
-      verdict = 'regression' // no vision fallback -> conservative
+    } else if (verdict === 'unconfirmed') {
+      verdict = 'regression' // no vision fallback -> drift can never be confirmed -> conservative
     }
     cl.class = verdict
     if (verdict === 'drift') {
