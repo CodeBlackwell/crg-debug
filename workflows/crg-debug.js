@@ -772,7 +772,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     }
   }
 
-  const keyOf = b => `${bugFile(b)}::${norm(b.rootCause)}`
+  const waveKey = b => `${bugFile(b)}::${norm(b.rootCause)}`
   const seenKeys = new Set()
   const fixedBugs = []
   const unfixedBugs = []
@@ -859,8 +859,8 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     if (closed === 0) { stalled = nextRaw; break }
     // Thrash guard: ONLY a bug attempted-and-failed (requeued) that returns again is
     // thrash. Deferred chunks were never attempted, so they never trip this.
-    const thrash = requeued.find(b => seenKeys.has(keyOf(b)))
-    requeued.forEach(b => seenKeys.add(keyOf(b)))
+    const thrash = requeued.find(b => seenKeys.has(waveKey(b)))
+    requeued.forEach(b => seenKeys.add(waveKey(b)))
     if (thrash) { stalled = nextRaw; break }
     queue = nextRaw
   }
