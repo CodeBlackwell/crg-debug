@@ -4,6 +4,41 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] - 2026-07-08
+
+### Added
+- **`/crg-ui` — a graph-driven Figma convergence harness** (v0.1: geometry + token +
+  typography layers, React, converge mode). The Figma file is the oracle, the live app is
+  the subject, and a deterministic measure tool is the judge:
+  - *MEASURE (read-only, default).* Validate the persisted profile, build/update the
+    code-review-graph, capture each screen × breakpoint cell (Figma frame geometry +
+    variables via the figma MCP; live DOM rects + `:root` tokens via Playwright at the
+    frame's exact viewport), and run `lib/ui-measure.mjs` per cell — the tool computes
+    every delta; agents relay its JSON verbatim and never eyeball a bounding box. Stops
+    with a keyed, severity-ranked ledger (`layout | token | typography | missing-element`)
+    at `<repoRoot>/.crg-ui/ledger.json`. Pairing is deterministic name-matching (Figma
+    node name vs `data-component`), and it never guesses: ambiguous names land in
+    `unmatchedFigma`/`unmatchedDom` as mapping debt.
+  - *REPAIR (human-approved discrepancies only).* Sequential per-component fix units (the
+    dev server serves one working tree) with a class-routed model ladder — token/typography
+    start `haiku`, layout/missing start `sonnet`, one shot per strictly-higher tier, capped
+    by `--max-tier`. Each unit verifies by re-capture + re-measure in real code: green =
+    the unit's keys vanished AND no key outside the baseline appeared (a fix that breaks a
+    neighbor is red). Green units commit on a `crg-ui/fix-*` branch from a fence-checked
+    file allowlist; red units revert. **Never pushes.**
+  - *Gates + persistence.* GATE-PROFILE (one pre-filled conversation; `<Screen> /
+    <Breakpoint>` frame pairing via `lib/ui-map.mjs`, three-door rule for every missing
+    input, bootstrap gate when no Figma file exists — the oracle is never invented
+    silently), GATE-LEDGER (approve / subset / mark-intentional — blessed deviations
+    persist to the profile + allowlist and never re-flag), GATE-DONE. Prose mode runs the
+    same methodology in the main loop; `crg-deterministic` installs the Workflow + tools.
+  - Planning docs (user stories, perfect-user checklist, implementation plan) under
+    `docs/crg-ui/`.
+
+### Changed
+- `.mcp.json` now pins the MCP dependency to `code-review-graph-codeblackwell>=2.4.0`
+  (previously unpinned — a stale uvx cache could silently serve an old build).
+
 ## [0.18.1] - 2026-07-06
 
 ### Fixed
