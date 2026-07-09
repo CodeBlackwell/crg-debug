@@ -2,7 +2,7 @@
   "mcpServers": {
     "code-review-graph": {
       "command": "uvx",
-      "args": ["--from", "code-review-graph-codeblackwell", "code-review-graph", "serve"]
+      "args": ["--from", "code-review-graph-codeblackwell>=2.4.0", "code-review-graph", "serve"]
     }
   }
 }
