@@ -3,7 +3,7 @@
 **Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.16.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.19.0-informational)](CHANGELOG.md)
 
 `/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
 adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
@@ -25,7 +25,7 @@ See **Usage** below.
 - **Claude Code** — provides the skill/agent/MCP runtime.
 - **[`code-review-graph-codeblackwell`](https://pypi.org/project/code-review-graph-codeblackwell/)** —
   the graph engine, exposed to Claude as an MCP server. This plugin declares it in `.mcp.json` as
-  `uvx --from code-review-graph-codeblackwell code-review-graph serve`, so you need
+  `uvx --from 'code-review-graph-codeblackwell>=2.4.0' code-review-graph serve`, so you need
   [`uv`](https://docs.astral.sh/uv/) on your `PATH`. It is a community fork of
   [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) (Tirth Kanani, MIT),
   maintained so fixes ship without waiting on upstream review. The CLI command and MCP tools are still
@@ -216,6 +216,36 @@ and gates the run branch against regressions. Commits locally on a `crg-integrat
 reference matrix shape, so a project with a different runner supplies a one-line `matrixAdapter`
 convert command and everything downstream is identical.
 
+### 🎨 `/crg-ui` — converge the UI to its Figma design
+
+Points the crg core at **design convergence**: the Figma file is the oracle, the live app
+is the subject, and a deterministic measure tool is the judge. Capture Figma frame
+geometry + variables and the live DOM at matched viewports, measure per-element
+geometry/token/typography deltas (the tool computes every delta — never an agent
+eyeballing a screenshot), gate the ranked discrepancy ledger, then fix approved items in
+sequential verified units:
+
+```
+/crg-ui https://figma.com/design/<key>/...        # measure + gated repair on the current repo
+/crg-ui <figma-url> path/to/repo --measure-only   # read-only: ranked discrepancy ledger, no edits
+/crg-ui --from-ledger .crg-ui/ledger.json --ids d-001,d-004   # cross-session repair entry
+/crg-ui <figma-url> --max-tier sonnet             # cap the fix-model escalation ladder
+```
+
+**PROFILE** (first run, GATE-PROFILE) resolves stack, dev command, breakpoint frames
+(paired by the `<Screen> / <Breakpoint>` naming convention, human-confirmed), fences, and
+tolerance — every answer persists, so re-runs never re-ask. **MEASURE** (read-only)
+captures each screen × breakpoint cell and stops with a keyed, ranked ledger:
+`layout | token | typography | missing-element`, severity-graded, with unmatched
+elements reported as mapping debt. **GATE-LEDGER** approves fixes, or blesses items as
+intentional deviations (persisted, filtered on every later run — never re-litigated).
+**REPAIR** fixes each unit with a class-routed model ladder (token/typography start
+haiku; layout starts sonnet; one shot per tier, strictly upward), verifies by
+re-capture + re-measure in real code (unit keys resolved AND no new keys — breaking a
+neighbor is a red), and commits each green unit on a `crg-ui/fix-*` branch. **Never
+pushes; the oracle is never invented silently** — no Figma file means a bootstrap gate
+(supply a URL, or approve reverse-generated frames *in Figma first*), never a guess.
+
 ## 🗂️ Layout
 
 ```
@@ -229,6 +259,11 @@ skills/crg-agentsmd/SKILL.md      /crg-agentsmd entry — measured AGENTS.md min
 skills/crg-agentsmd/methodology.md  miner discipline + verification attacks + holdout scoring
 skills/crg-integrations/SKILL.md  /crg-integrations entry — matrix triage/repair router + 3 gates
 skills/crg-integrations/methodology.md  class definitions + drift asymmetry + fence discipline
+skills/crg-ui/SKILL.md            /crg-ui entry — profile/boot/gates + measure/repair router
+skills/crg-ui/methodology.md      layered oracle + classes + render determinism + fix discipline
+lib/ui-measure.mjs                the numeric oracle: geometry/token/typography deltas (deterministic CLI)
+lib/ui-map.mjs                    ui profile validator + Figma frame-name pairing
+workflows/crg-ui.js               deterministic measure/repair Workflow (installed by the enabler)
 lib/integrations-profile.mjs      matrix-profile validator (reference schema, placeholder + fence checks)
 workflows/crg-integrations.js     deterministic matrix triage/repair Workflow (installed by the enabler)
 lib/corpus.mjs                    review-corpus fetcher, holdout splitter, ledger assembler
