@@ -4,6 +4,70 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.21.0] - 2026-07-09
+
+### Changed
+- **`/crg-ui` determinism parity with `/crg-debug`** — both legs (deterministic
+  Workflow and prose fallback) now run the same protocol to a T, and every number
+  comes from a tool:
+  - *Tool core grew the whole capture-to-ledger path.* `lib/ui-measure.mjs` gains
+    `normalize-vars` / `normalize-figma` / `normalize-dom` (agents transcribe raw MCP
+    dumps VERBATIM; the tool does all math — depth≤2 walk, named-node filter,
+    absolute→frame-relative coords, canonical shapes), `assemble` (the tool writes the
+    ledger; ids become cell-qualified `<slug>.d-nnn`), `slice` (repair entry from a
+    prior ledger — never agent transcription), `measure --breakpoint/--out`, and
+    `sealOf` — an FNV-1a seal over the sorted discrepancy keys printed with every
+    measure/assemble/slice output. `lib/ui-map.mjs` gains `waitup` (dev-server
+    readiness by exit code) and `bless` (ONE command appends an intentional deviation
+    to the profile and rewrites `allowlist.json` from it). New `lib/ui-collect.js`:
+    the static DOM collector evaluated verbatim in the browser — never re-derived per
+    run. The `crg-deterministic` enabler installs it as `crg-ui.collect.js`.
+  - *Discrepancy keys now include the breakpoint* (`screen::breakpoint::class::subject`)
+    — the no-regression baseline is collision-free across breakpoints.
+  - *`crg-ui.js` hardened at every edge.* DOM captures run strictly SEQUENTIALLY (the
+    shared Playwright browser made the old per-cell pipeline a capture race); figma
+    transcriptions still fan out. Every tool relay is seal-checked in JS (mismatch =
+    mangled relay → one retry, then the cell fails); the hand-written persist agent is
+    replaced by a tool `assemble` whose seal must match the seal of the script's own
+    relayed keys; the `fromLedger` ingest agent is replaced by a seal-checked `slice`
+    relay (`approvedKeys` joins `approvedIds`). Repair records a porcelain tree
+    baseline at branch setup, post-verifies every commit against the fence allowlist
+    via `git diff-tree` (violation → `reset --hard HEAD~1`, unit unfixed), and stops
+    the run `tree-dirty` when the tree cannot be restored to baseline — no later
+    verify is trustworthy on a polluted tree.
+  - *`methodology.md` rewritten as the executable playbook* (crg-debug form): an
+    Execution-mode dispatch (deterministic / prose / `crg-ui-converger`), the tool-core
+    table, the key/id contract, and a phase-by-phase playbook with exact commands —
+    prose mode now runs the tools directly via Bash instead of improvising from a
+    one-paragraph summary.
+- **`crg-ui-converger` agent** — the `crg-debugger` analog for crg-ui: sequential,
+  isolated, methodology-driven, for orchestrators that cannot nest subagents. Refuses
+  to improvise without the methodology + measure tool; fixes only explicitly-approved
+  discrepancies; never pushes.
+
+## [0.20.0] - 2026-07-09
+
+### Added
+- **`/crg-ui-prep` — the perfect-user walkthrough.** Turns any user into
+  `docs/crg-ui/perfect-user.md`'s Story 9 user (zero-question GATE-PROFILE, two gates
+  total). AUDIT computes every checklist item before asking anything (env scan, repo
+  agent, Figma scan through the pairer); GATE-PLAN scopes the work (all / `--top5` ★
+  items / subset); the GAP LOOP closes gaps in dependency-sorted leverage order —
+  Figma-side items generated via the figma MCP (frame renames to
+  `<Screen> / <Breakpoint>`, variable creation + binding, code-token name mirroring,
+  componentization, Code Connect, export marks), repo-side items as approved diffs
+  (`data-component` codemod off the CRG component list, deterministic render seams,
+  routes manifest, auth seam), environment items as verified guide steps. Every item
+  gets crg-ui's three-door gate (supply / apply / descope-explicitly), every outcome
+  persists in `.crg-ui/prep.json` (resumable; re-runs never re-ask), and no Figma
+  mutation ever happens without the complete change table approved first (view-only
+  files degrade to a generated designer brief). EXIT assembles a draft
+  `.crg-ui/profile.json` validated by `ui-map.mjs`, mirrors descopes into
+  `allowlist.json`, and states the exit test plainly: which GATE-PROFILE questions
+  remain, if any. `--audit-only` stops at the scorecard. Skill-only (main loop, no
+  Workflow — the flow is a gate per item by design): `skills/crg-ui-prep/SKILL.md` +
+  `checklist.md` (per-item contract: audit check, fix path, mode, effort, loop order).
+
 ## [0.19.0] - 2026-07-08
 
 ### Added
