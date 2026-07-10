@@ -4,7 +4,63 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [0.22.0] - 2026-07-10
+## [0.23.0] - 2026-07-09
+
+Lessons from the first live `/crg-ui` repair run (SPICE public dashboard), where fix
+units consistently escalated and two constructive builds were reverted as false
+"regressions". Verified by replaying the run's recorded verify key sets through the
+new judge: both class-flip reverts become progress signals, the KPI-strip unit goes
+green at sonnet (saving two opus shots), and the one genuinely destructive fix is
+still caught.
+
+### Added
+- **Escalation carries evidence, everywhere there is a ladder.** In `crg-ui`'s repair
+  ladder the escalated tier's brief now includes the failed attempt's verdict
+  (unresolved / transitioned / regressed keys, the failed agent's own note) and the
+  dirty-tree disclosure — the tree still contains the failed attempt's uncommitted
+  edits; inspect, then amend or discard. In the farm bypass, both climb paths pass a
+  `priorFailure` evidence blob (non-zero final-gate rows + unfixed reasons) into the
+  next `crg-debug` invocation, and `crg-debug` fences it into every fix brief
+  (`args.priorFailure`, optional). Pattern source: `crg-integrations`' `priorSig`.
+- **Containment unit grouping (`crg-ui`).** Repair units are now union-find over name
+  edges PLUS containment edges: a missing-element container's expected box absorbs
+  contained discrepancies of any class (creating a container reflows everything inside
+  it — one root cause, one fix, one verify). Tolerance-slack epsilon,
+  smallest-enclosing-container, deterministic tiebreaks, and a unit-size cap that
+  skips (never truncates) oversized merges. The SPICE KPI strip — 1 container + 7
+  children as 8 separate units — becomes one unit.
+- **Fix briefs point at the on-disk source of truth.** `crg-ui` fix briefs name
+  `capture/<slug>.figma.json` (the complete expected geometry), explain
+  frame-relative ≡ viewport coordinates and pair-and-be-judged-at-tolerance tagging,
+  and warn that earlier units' commits may have changed the live state. `crg-debug`
+  briefs name `.crg-debug/ledger.json`, `crg-build` the gap ledger, and
+  `crg-integrations` its ledger + normalized matrix.
+- Repair args accept `allowlistedKeys` (the measure return now exposes them; `slice`
+  prints them with their own `allowlistSeal`) — blessed deviations fold into the
+  no-regression baseline so a fix that incidentally materializes an allowlisted node
+  is not damage.
+
+### Fixed
+- **The class-flip regression trap.** The verify judge (`compareMeasures`) now matches
+  regressions by NODE, not class-qualified key. A unit node re-classified by the fix
+  (`missing-element` → `layout`: the element now exists but is off) is a *transition*
+  — red with feedback to the next tier, never a revert-triggering regression. The
+  same flip on a NON-unit baseline node is a tolerated *warning* recorded on the
+  unit. A node flipping TO `missing-element` (an existing element destroyed) and any
+  brand-new failing node remain regressions. Token/unknown keys keep exact-key
+  semantics; keys parse by cell prefix, immune to `::` in token or screen names.
+- **A dead subagent no longer kills a run.** The live run died on an unhandled
+  `agent({schema}) completed without calling StructuredOutput` throw; every
+  sequential repair/measure agent call is now wrapped — a terminal agent error spends
+  that tier's shot or fails that cell, and the run continues.
+- The end-of-ladder revert now checks out the UNION of every tier's touched files
+  (tiers inherit the previous attempt's edits; reverting only the last tier's files
+  left earlier edits dirty and tripped the tree-dirty stop).
+- One-strike relays hardened: the `assemble` cross-seal gets one retry with a
+  sharpened warning (previously immediate `assemble-mismatch`), and the measure /
+  prep-scorecard retries now tell the agent it is a retry and why.
+
+## [0.22.0] - 2026-07-09
 
 ### Added
 - **`/crg-ui-prep` harnessed** — the prep walkthrough gets the same deterministic leg

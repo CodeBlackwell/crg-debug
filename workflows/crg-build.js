@@ -680,6 +680,7 @@ const builderAgent = g =>
     `Build ONE approved readiness gap in the app at ${appRoot}. You EXCLUSIVELY own these files for this wave — edit ONLY them: ${JSON.stringify(g.files || [])}
 
 ${fence(`gapId: ${g.gapId}\ngap: ${g.gap}\ndimension: ${g.dimension}\nsurface: ${g.surface}\nroute: ${g.route || ''}\nevidence: ${g.evidence}\ncriteria: ${JSON.stringify(g.acceptanceCriteria)}`)}
+The full gap record (survey evidence, acceptance criteria, sibling gaps) is on disk at ${fromLedger} — the on-disk source of truth when the row above is not enough.
 
 Toolchain:
 ${tcLine()}

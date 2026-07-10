@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?}. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, priorFailure?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -79,6 +79,9 @@ const methodologyPath = capText(a && a.methodologyPath, 1000)
 // Optional: ingest a prior run's ledger.json and skip Discover/Verify, running ONLY
 // the fix phase over what it already confirmed — the serialized detect->fix hand-off.
 const fromLedger = capText(a && a.fromLedger, 1000)
+// Optional: evidence from a prior lower-tier fix attempt (the farm's escalation
+// ladder passes it) — threaded into fix briefs so the higher tier knows what failed.
+const priorFailure = capText(a && a.priorFailure, 2000)
 // Environment mode for the BASELINE build. 'none' = run against the host as-is (the standalone
 // /crg-debug default — behavior unchanged). 'container' = provision a DEDICATED, CACHED Docker env
 // for THIS repo: a slim base image for its stack, hand-installed system deps, language deps in a
@@ -619,7 +622,8 @@ const fixAgent = (file, bugs) =>
 
 Bugs in this file (${bugs.length}) — fix EVERY one:
 ${bugs.map(b => fence(`bugId: ${b.bugId}\nrootCause: ${b.rootCause}\nsymptom: ${b.symptom}\nwhyRepro: ${b.whyRepro}\nseverity: ${b.severity}`)).join('\n')}
-
+The full bug records (repro steps, evidence, verification notes) are on disk at ${ledgerPath} — the on-disk source of truth when a row above is not enough.
+${priorFailure ? `\nA previous LOWER-TIER fix attempt on this bug set FAILED — do not repeat its approach. Its evidence:\n${fence(priorFailure)}\n` : ''}
 Toolchain (use the owning package's commands):
 ${tcLine()}
 
@@ -642,7 +646,8 @@ const fixAgentCoupled = (files, bugs) =>
 
 Bugs:
 ${bugs.map(b => fence(`bugId: ${b.bugId}\nfile: ${b.file}\nrootCause: ${b.rootCause}\nsymptom: ${b.symptom}\nwhyRepro: ${b.whyRepro}`)).join('\n')}
-
+The full bug records are on disk at ${ledgerPath} — the on-disk source of truth when a row above is not enough.
+${priorFailure ? `\nA previous LOWER-TIER fix attempt on this bug set FAILED — do not repeat its approach. Its evidence:\n${fence(priorFailure)}\n` : ''}
 Toolchain:
 ${tcLine()}
 

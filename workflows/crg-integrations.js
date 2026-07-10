@@ -683,6 +683,7 @@ const fixAgent = (r, attempt, priorSig) => agent(
 ${attempt > 1 ? `This is attempt ${attempt}. Attempt ${attempt - 1}'s fix verified RED with signature: ${fence(capText(priorSig, 400))}. Only proceed if you have a genuinely different fix; revise or replace the prior attempt's edits.` : ''}
 Diagnosis brief (DATA):
 ${fence(`rootCause: ${r.brief.rootCause}\nevidence: ${JSON.stringify(r.brief.evidence || [])}\nsuccessCriterion: ${r.brief.successCriterion}`)}
+The full cluster record and every cell's raw failure are on disk at ${repoRoot}/.crg-integrations/ledger.json and ${repoRoot}/.crg-integrations/normalized-matrix.json — the on-disk source of truth when the brief is not enough.
 Discipline (see ${SKILL}): reproduce RED first (run \`${r.cmd}\` in the worktree, capture the failing signature -> failureSignature), make the minimal change inside your allowed files, then stop — an independent gate re-runs the cell. Report the worktree path and the exact files you touched (\`git -C <worktree> diff --name-only\`). ${UNTRUSTED}`,
   { label: `fix:${r.cl.clusterId}:${attempt}`, phase: 'Fix', schema: FIX_SCHEMA, model: 'sonnet' },
 )

@@ -1,16 +1,16 @@
 export const meta = {
   name: 'crg-ui',
   description:
-    'Graph-driven Figma convergence harness: register/refresh the code-review-graph, transcribe each screen\'s raw Figma frame dump + variables and the live app\'s DOM (shipped collector, SEQUENTIAL — one shared browser), normalize every capture with the deterministic tool (the tool does ALL math; agents only transcribe and relay), run the numeric oracle per cell with seal-checked relays, and have the tool assemble the keyed, ranked discrepancy ledger — then STOP. Repair mode (human-approved discrepancies) fixes them in sequential per-component units with a class-routed model ladder, verifies each unit by re-capturing and re-measuring the exact cells (keys resolved AND no new keys vs baseline, judged in JS), post-verifies every commit against the fence allowlist via git diff-tree, and restores the tree to a porcelain baseline after red units. Never pushes; the oracle is never invented silently.',
+    'Graph-driven Figma convergence harness: register/refresh the code-review-graph, transcribe each screen\'s raw Figma frame dump + variables and the live app\'s DOM (shipped collector, SEQUENTIAL — one shared browser), normalize every capture with the deterministic tool (the tool does ALL math; agents only transcribe and relay), run the numeric oracle per cell with seal-checked relays, and have the tool assemble the keyed, ranked discrepancy ledger — then STOP. Repair mode (human-approved discrepancies) fixes them in sequential units (grouped by component name + figma-box containment) with a class-routed model ladder whose escalations carry the failed attempt\'s verify evidence and dirty-tree disclosure, verifies each unit by re-capturing and re-measuring the exact cells (keys resolved AND no new damage vs baseline — regressions matched by NODE, not class-qualified key, judged in JS), post-verifies every commit against the fence allowlist via git diff-tree, and restores the tree to a porcelain baseline after red units. Never pushes; the oracle is never invented silently.',
   whenToUse:
-    "Requires args {repoRoot, profile (inline), runtime {devUrl}, methodologyPath, measureToolPath, collectToolPath, validatorPath?, profilePath?, allowlistPath?, model?, maxTier?, approvedDiscrepancies?, fromLedger?, approvedIds?, approvedKeys?, allKeys? (repair)}. Default = MEASURE: validate profile, build/update the graph, normalize-vars once, then per screen x breakpoint cell: raw figma transcription -> normalize-figma (parallel), collector DOM dump -> normalize-dom + measure --out (sequential), tool-assembled ledger with a seal the script cross-checks against its own relayed keys; returns {status:'measured', discrepancies, allKeys, stats}. REPAIR: PREFERRED entry is approvedDiscrepancies = the measure return's discrepancy objects passed back verbatim through args plus allKeys (the no-regression baseline); fallback is fromLedger (absolute path) + approvedKeys/approvedIds, resolved by the slice tool, never by agent transcription. Fix units run SEQUENTIALLY (the dev server serves one working tree). Invoked by the /crg-ui skill, which owns GATE-PROFILE, BOOT, GATE-LEDGER, and GATE-DONE.",
+    "Requires args {repoRoot, profile (inline), runtime {devUrl}, methodologyPath, measureToolPath, collectToolPath, validatorPath?, profilePath?, allowlistPath?, model?, maxTier?, approvedDiscrepancies?, fromLedger?, approvedIds?, approvedKeys?, allKeys?, allowlistedKeys? (repair)}. Default = MEASURE: validate profile, build/update the graph, normalize-vars once, then per screen x breakpoint cell: raw figma transcription -> normalize-figma (parallel), collector DOM dump -> normalize-dom + measure --out (sequential), tool-assembled ledger with a seal the script cross-checks against its own relayed keys; returns {status:'measured', discrepancies, allKeys, stats}. REPAIR: PREFERRED entry is approvedDiscrepancies = the measure return's discrepancy objects passed back verbatim through args plus allKeys (the no-regression baseline) and allowlistedKeys (blessed deviations, folded into the baseline); fallback is fromLedger (absolute path) + approvedKeys/approvedIds, resolved by the slice tool, never by agent transcription. Fix units run SEQUENTIALLY (the dev server serves one working tree). Invoked by the /crg-ui skill, which owns GATE-PROFILE, BOOT, GATE-LEDGER, and GATE-DONE.",
   phases: [
     { title: 'Profile+Graph', detail: 'validate the profile; register/build/update the code-review-graph' },
     { title: 'Variables', detail: 'raw get_variable_defs dump -> normalize-vars -> .crg-ui/variables.json' },
     { title: 'Capture', detail: 'per cell: raw figma subtree -> normalize-figma (parallel); collector DOM dump -> normalize-dom (sequential, shared browser)' },
     { title: 'Measure', detail: 'measure tool per cell with seal-checked relay; tool-assembled ledger cross-sealed by the script' },
-    { title: 'Fix (repair)', detail: 'sequential per-component units; tier routed by class (token/typography -> haiku, layout/missing -> sonnet), escalating one strictly-higher shot per tier' },
-    { title: 'Verify (repair)', detail: 're-capture + re-measure the unit\'s cells with seal-checked key relays; green = unit keys resolved AND no new keys vs baseline (judged in JS)' },
+    { title: 'Fix (repair)', detail: 'sequential units (name + containment grouping); tier routed by class (token/typography -> haiku, layout/missing -> sonnet), one strictly-higher shot per tier, each escalation briefed with the failed attempt\'s evidence' },
+    { title: 'Verify (repair)', detail: 're-capture + re-measure the unit\'s cells with seal-checked key relays; green = unit keys resolved AND no new damage vs baseline (regressions matched by node, judged in JS)' },
     { title: 'Commit (repair)', detail: 'fence-checked files committed on a crg-ui/fix-* branch, post-verified via git diff-tree vs the allowlist; red units revert to the porcelain baseline; never pushed' },
   ],
 }
@@ -67,27 +67,131 @@ const tiersFrom = (start, maxTier) => {
   return TIERS.slice(lo, hi + 1)
 }
 
-// Repair units: approved discrepancies grouped by (screen, component-or-token) —
-// one root cause, one fix, one verify. Deterministic grouping, no agent.
-const groupUnits = approved => {
-  const map = new Map()
-  for (const d of approved || []) {
-    const key = `${d.screen}::${d.component || d.token || d.key}`
-    if (!map.has(key)) map.set(key, { unitId: `u-${String(map.size + 1).padStart(3, '0')}`, screen: d.screen, subject: d.component || d.token || '', discrepancies: [] })
-    map.get(key).discrepancies.push(d)
+// Repair units: union-find over two edge sets — (screen, component-or-token) name
+// edges, plus per-cell containment edges: a missing-element container's expected box
+// absorbs any discrepancy whose expected box fits inside it, because creating the
+// container reflows everything within it — one root cause, one fix, one verify.
+// Deterministic, no agent. Each boxed discrepancy joins its SMALLEST enclosing
+// missing-element container (ties broken by node id). Merges that would push a unit
+// past `cap` are skipped and counted on the returned array's `.spilled` — the units
+// stay separate, nothing is dropped.
+const boxArea = b => (b && b.width > 0 && b.height > 0 ? b.width * b.height : 0)
+const boxContains = (outer, inner, eps) =>
+  boxArea(outer) > 0 && boxArea(inner) > 0
+  && inner.x >= outer.x - eps && inner.y >= outer.y - eps
+  && inner.x + inner.width <= outer.x + outer.width + eps
+  && inner.y + inner.height <= outer.y + outer.height + eps
+const groupUnits = (approved, { eps = 1, cap = 12 } = {}) => {
+  const list = approved || []
+  const parent = list.map((_, i) => i)
+  const size = list.map(() => 1)
+  const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  const union = (a, b) => {
+    const ra = find(a); const rb = find(b)
+    if (ra !== rb) { parent[rb] = ra; size[ra] += size[rb] }
   }
-  return [...map.values()]
+  const byName = new Map()
+  list.forEach((d, i) => {
+    const key = `${d.screen}::${d.component || d.token || d.key}`
+    if (byName.has(key)) union(byName.get(key), i)
+    else byName.set(key, i)
+  })
+  const containers = list
+    .map((d, i) => ({ d, i, area: boxArea(d.expected) }))
+    .filter(c => c.d.class === 'missing-element' && c.area > 0)
+  let spilled = 0
+  list.forEach((d, i) => {
+    if (boxArea(d.expected) <= 0) return
+    const enclosing = containers
+      .filter(c => c.i !== i && c.d.screen === d.screen && c.d.breakpoint === d.breakpoint
+        && boxContains(c.d.expected, d.expected, eps))
+      .sort((x, y) => x.area - y.area || String(x.d.figmaNodeId || '').localeCompare(String(y.d.figmaNodeId || '')))
+    if (!enclosing.length || find(enclosing[0].i) === find(i)) return
+    if (size[find(enclosing[0].i)] + size[find(i)] > cap) { spilled++; return }
+    union(enclosing[0].i, i)
+  })
+  const byRoot = new Map()
+  list.forEach((d, i) => {
+    const r = find(i)
+    if (!byRoot.has(r)) byRoot.set(r, [])
+    byRoot.get(r).push(d)
+  })
+  const units = [...byRoot.values()].map((ds, n) => {
+    const container = ds
+      .filter(d => d.class === 'missing-element' && boxArea(d.expected) > 0)
+      .sort((x, y) => boxArea(y.expected) - boxArea(x.expected))[0]
+    const lead = ds.length > 1 && container ? container : ds[0]
+    return { unitId: `u-${String(n + 1).padStart(3, '0')}`, screen: ds[0].screen, subject: lead.component || lead.token || '', discrepancies: ds }
+  })
+  units.spilled = spilled
+  return units
 }
 
-// Verify judge, in code: a unit is green iff every one of its keys vanished from the
-// re-measure AND the re-measure introduced no key outside the original baseline
-// (a fix that "resolves" its box by breaking a neighbor fails here, not in review).
-const compareMeasures = (unitKeys, baselineKeys, remeasuredKeys) => {
+// Verify judge, in code. Green iff every unit key vanished, no unit node still fails
+// under a NEW class (a transition — progress, judged red WITH feedback), and nothing
+// broke that was fine before. Regressions are matched by NODE, not class-qualified
+// key: a baseline-broken node re-classified by a fix (missing-element -> layout when
+// the element now exists but is off) is not new damage — EXCEPT a flip TO
+// missing-element, which means an existing element was destroyed. Token and unknown
+// keys keep exact-key semantics (token names share the key's node slot and could
+// collide with node ids; tokens cannot "transition"). Keys carry no magnitude, so a
+// same-class delta that got worse is invisible here — a known limitation.
+const NODE_CLASSES = new Set(['layout', 'typography', 'missing-element'])
+const KEY_CLASSES = new Set(['layout', 'typography', 'missing-element', 'token'])
+const parseKey = (key, prefixes) => {
+  const prefix = (prefixes || []).find(p => String(key).startsWith(p))
+  if (!prefix) return null
+  const rest = String(key).slice(prefix.length)
+  const at = rest.indexOf('::')
+  if (at < 0 || !KEY_CLASSES.has(rest.slice(0, at))) return null
+  return { prefix, cls: rest.slice(0, at), node: rest.slice(at + 2) }
+}
+const compareMeasures = (unitKeys, baselineKeys, remeasuredKeys, prefixes) => {
   const after = new Set(remeasuredKeys || [])
   const baseline = new Set(baselineKeys || [])
+  const nodeKeyOf = k => {
+    const p = parseKey(k, prefixes)
+    return p && NODE_CLASSES.has(p.cls) ? { nk: p.prefix + p.node, cls: p.cls } : null
+  }
+  const baselineClasses = new Map()
+  for (const k of baseline) {
+    const p = nodeKeyOf(k)
+    if (!p) continue
+    if (!baselineClasses.has(p.nk)) baselineClasses.set(p.nk, new Set())
+    baselineClasses.get(p.nk).add(p.cls)
+  }
+  const unitNodes = new Set((unitKeys || []).map(k => { const p = nodeKeyOf(k); return p && p.nk }).filter(Boolean))
   const unresolved = (unitKeys || []).filter(k => after.has(k))
-  const regressions = [...after].filter(k => !baseline.has(k))
-  return { green: unresolved.length === 0 && regressions.length === 0, unresolved, regressions }
+  const regressions = []
+  const transitions = []
+  const warnings = []
+  for (const k of after) {
+    if (baseline.has(k)) continue // a pre-existing key is never a transition or a regression
+    const p = nodeKeyOf(k)
+    const from = p && baselineClasses.get(p.nk)
+    if (!p || !from) { regressions.push(k); continue } // token/unknown key, or a node that was fine before
+    if (p.cls === 'missing-element' && !from.has('missing-element')) { regressions.push(k); continue } // element destroyed
+    const move = { nodeKey: p.nk, from: [...from].sort(), to: p.cls, key: k }
+    if (unitNodes.has(p.nk)) transitions.push(move)
+    else warnings.push(move)
+  }
+  return { green: !unresolved.length && !transitions.length && !regressions.length, unresolved, regressions, transitions, warnings }
+}
+
+// Escalation carries evidence: a strictly-higher tier only beats the failed tier's
+// ceiling if it knows what failed — and that the failed edits are still in the tree.
+const priorAttemptText = prior => {
+  if (!prior) return ''
+  const v = prior.verdict || {}
+  const lines = [`\nA ${prior.tier}-tier attempt at this unit already FAILED its verify.`]
+  if (!prior.verdict) lines.push('Its verify could not complete (capture/tool/relay failure) — treat its edits as unproven.')
+  if ((v.unresolved || []).length) lines.push(`Keys it left unresolved: ${JSON.stringify(v.unresolved)}.`)
+  if ((v.transitions || []).length) lines.push(`Partial progress: ${v.transitions.map(t => `${t.nodeKey} moved ${t.from.join('+')} -> ${t.to} (the element now pairs but is outside tolerance)`).join('; ')}.`)
+  if ((v.regressions || []).length) lines.push(`NEW damage it introduced: ${JSON.stringify(v.regressions)}.`)
+  if (prior.note) lines.push(`Its note: ${fence(capText(prior.note, 400))}`)
+  if ((prior.filesTouched || []).length) lines.push(`THE WORKING TREE STILL CONTAINS that attempt's uncommitted edits to ${JSON.stringify(prior.filesTouched)} — inspect them first, then amend or discard them; do not assume they are correct.`)
+  else lines.push('It reported no edits — the tree is unchanged from before its attempt.')
+  return lines.join('\n')
 }
 
 // Git gates report command rows; these read them in code. porcelainOf canonicalizes a
@@ -126,6 +230,7 @@ const approvedIds = Array.isArray(a && a.approvedIds) ? a.approvedIds : []
 const approvedKeys = Array.isArray(a && a.approvedKeys) ? a.approvedKeys : []
 const approvedDiscrepancies = Array.isArray(a && a.approvedDiscrepancies) ? a.approvedDiscrepancies : []
 const allKeys = Array.isArray(a && a.allKeys) ? a.allKeys : []
+const allowlistedKeysArg = Array.isArray(a && a.allowlistedKeys) ? a.allowlistedKeys : []
 const repair = !!fromLedger || approvedDiscrepancies.length > 0
 
 const isSafeAbs = p => /^\/[^\0]*$/.test(p) && !/\.\.(\/|$)/.test(p)
@@ -142,6 +247,11 @@ if (repair && !allKeys.length && !fromLedger) throw new Error('repair requires a
 if (!(a && a.profile) || !Object.keys(profile).length) throw new Error('crg-ui workflow requires args.profile — the INLINE profile object')
 if (!repair && !(runtime && runtime.devUrl)) throw new Error('measure requires args.runtime.devUrl — the LIVE app URL the skill booted (the workflow never starts a daemon)')
 if (!repair && (!profilePath || !isSafeAbs(profilePath))) throw new Error('measure requires args.profilePath — the assemble tool reads the profile from disk to write the ledger')
+
+// A dead subagent (schema violation, terminal API error) spends its shot or fails its
+// cell/unit — it never kills the whole run.
+const safeAgent = (label, promise) =>
+  promise.catch(e => { log(`${label}: agent error — ${capText((e && e.message) || e, 200)}`); return null })
 
 const SKILL = methodologyPath
 const uiDir = `${repoRoot}/.crg-ui`
@@ -278,12 +388,12 @@ Relay its printed JSON as wrote + count. If the page failed to load or the tool 
     { label: `dom:${cell.slug}`, phase: 'Capture', schema: CAPTURE_SCHEMA, model },
   )
 
-  const measureCell = cell => agent(
+  const measureCell = (cell, attempt) => safeAgent(`measure:${cell.slug}`, agent(
     `Run the deterministic crg-ui measure tool for ONE cell and relay its output VERBATIM. Run:
 node ${JSON.stringify(measureToolPath)} measure ${JSON.stringify(`${uiDir}/capture/${cell.slug}.figma.json`)} ${JSON.stringify(`${uiDir}/capture/${cell.slug}.dom.json`)} --tolerance ${tolerance} --screen ${JSON.stringify(cell.screen)} --breakpoint ${JSON.stringify(cell.breakpoint)}${allowlistPath ? ` --allowlist ${JSON.stringify(allowlistPath)}` : ''} --out ${JSON.stringify(`${uiDir}/capture/${cell.slug}.measure.json`)}
-Report the command + REAL exit code as a results[] row. Parse its single-line stdout JSON and return it as measure, COMPLETE AND UNMODIFIED — every discrepancy, every field, including seal and keyCount. Do NOT compute, filter, or summarize anything yourself: the seal is recomputed from your relay, and a mangled relay fails the cell. ${UNTRUSTED}`,
-    { label: `measure:${cell.slug}`, phase: 'Measure', schema: MEASURE_SCHEMA, model },
-  )
+Report the command + REAL exit code as a results[] row. Parse its single-line stdout JSON and return it as measure, COMPLETE AND UNMODIFIED — every discrepancy, every field, including seal and keyCount. Do NOT compute, filter, or summarize anything yourself: the seal is recomputed from your relay, and a mangled relay fails the cell.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
+    { label: `measure:${cell.slug}${attempt > 1 ? ':retry' : ''}`, phase: 'Measure', schema: MEASURE_SCHEMA, model },
+  ))
 
   // Figma transcriptions are independent and can fan out. DOM captures CANNOT: every
   // capture resizes and navigates the ONE shared browser, so from here each cell runs
@@ -298,12 +408,12 @@ Report the command + REAL exit code as a results[] row. Parse its single-line st
     const cell = cells[i]
     const fig = figs[i]
     if (!fig || !fig.wrote || fig.count < 0) { measured.push({ cell, failed: true }); continue }
-    const dom = await captureDom(cell)
+    const dom = await safeAgent(`dom:${cell.slug}`, captureDom(cell))
     if (!dom || !dom.wrote || dom.count < 0) { measured.push({ cell, failed: true }); continue }
-    let m = await measureCell(cell)
+    let m = await measureCell(cell, 1)
     if (!goodMeasure(m, cell)) {
       log(`measure:${cell.slug} failed a gate (exit code, seal, or key prefix) — one retry`)
-      m = await measureCell(cell)
+      m = await measureCell(cell, 2)
     }
     measured.push(goodMeasure(m, cell) ? { cell, measure: m.measure } : { cell, failed: true })
   }
@@ -328,12 +438,17 @@ Report the command + REAL exit code as a results[] row. Parse its single-line st
       seal: { type: 'string' },
     },
   }
-  const assembled = await agent(
+  const runAssemble = attempt => safeAgent(`assemble${attempt > 1 ? ':retry' : ''}`, agent(
     `Assemble the crg-ui ledger with the deterministic tool and relay its output VERBATIM. Run:
 node ${JSON.stringify(measureToolPath)} assemble ${JSON.stringify(`${uiDir}/capture`)} --profile ${JSON.stringify(profilePath)} --repo-root ${JSON.stringify(repoRoot)} --out ${JSON.stringify(ledgerPath)}${failedCells.length ? ` --failed ${JSON.stringify(failedCells.join(','))}` : ''}
-Report the command + REAL exit code as a results[] row and return the tool's printed wrote, cells, discrepancies, and seal fields UNMODIFIED. Do not write or edit any file yourself — the tool writes the ledger. ${UNTRUSTED}`,
-    { label: 'assemble', phase: 'Measure', schema: ASSEMBLE_SCHEMA, model },
-  )
+Report the command + REAL exit code as a results[] row and return the tool's printed wrote, cells, discrepancies, and seal fields UNMODIFIED. Do not write or edit any file yourself — the tool writes the ledger.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
+    { label: `assemble${attempt > 1 ? ':retry' : ''}`, phase: 'Measure', schema: ASSEMBLE_SCHEMA, model },
+  ))
+  let assembled = await runAssemble(1)
+  if (assembled && (assembled.results || []).every(r => r.exitCode === 0) && assembled.seal !== sealOf(allKeysMem)) {
+    log('assemble relay failed its seal cross-check — one retry')
+    assembled = await runAssemble(2)
+  }
   if (!assembled || (assembled.results || []).some(r => r.exitCode !== 0)) {
     return { status: 'assemble-failed', repoRoot, failedCells, reason: 'the assemble tool returned non-zero — the ledger was not written' }
   }
@@ -349,7 +464,9 @@ Report the command + REAL exit code as a results[] row and return the tool's pri
 
   return {
     status: 'measured', repoRoot, ledgerPath, seal: assembled.seal,
-    discrepancies, allKeys: allKeysMem, failedCells,
+    discrepancies, allKeys: allKeysMem,
+    allowlistedKeys: good.flatMap(({ measure }) => measure.allowlisted || []),
+    failedCells,
     unmatched: good.map(({ cell, measure }) => ({ cell: cell.slug, figma: measure.unmatchedFigma || [], dom: measure.unmatchedDom || [] })),
     stats: { cells: good.length, cellsFailed: failedCells.length, discrepancies: discrepancies.length, byClass,
       allowlisted: good.reduce((n, { measure }) => n + (measure.allowlisted || []).length, 0) },
@@ -365,7 +482,9 @@ log(`crg-ui REPAIR on ${repoRoot} · ${approvedDiscrepancies.length || approvedK
 if (!(runtime && runtime.devUrl)) throw new Error('repair requires args.runtime.devUrl — verification re-captures the live app')
 
 let approved = approvedDiscrepancies
-let baseline = allKeys
+// The judging baseline is allKeys PLUS the allowlisted keys: a human-blessed
+// deviation that a fix incidentally materializes must not read as a regression.
+let baseline = [...allKeys, ...allowlistedKeysArg]
 if (!approved.length) {
   // The slice TOOL selects from the ledger; the agent only runs it and relays. Both
   // seals are recomputed here — a mangled relay throws instead of repairing the wrong set.
@@ -376,22 +495,25 @@ if (!approved.length) {
       results: GATE_ROWS,
       discrepancies: { type: 'array', items: { type: 'object' } },
       allKeys: { type: 'array', items: { type: 'string' } },
+      allowlistedKeys: { type: 'array', items: { type: 'string' } },
       seal: { type: 'string' },
       selectedSeal: { type: 'string' },
+      allowlistSeal: { type: 'string' },
     },
   }
   const sliceFlags = [
     approvedKeys.length ? `--keys ${JSON.stringify(approvedKeys.join(','))}` : '',
     approvedIds.length ? `--ids ${JSON.stringify(approvedIds.join(','))}` : '',
   ].filter(Boolean).join(' ')
-  const runSlice = attempt => agent(
+  const runSlice = attempt => safeAgent(`slice-ledger${attempt > 1 ? ':retry' : ''}`, agent(
     `Slice a crg-ui ledger with the deterministic tool and relay its output VERBATIM. Do NOT edit any file, do NOT read the ledger yourself. Run:
 node ${JSON.stringify(measureToolPath)} slice ${JSON.stringify(fromLedger)} ${sliceFlags}
-Report the command + REAL exit code as a results[] row and return the tool's printed discrepancies, allKeys, seal, and selectedSeal COMPLETE AND UNMODIFIED — every object, every field, especially each discrepancy's "key" exactly as printed (never substitute its "id"). The seals are recomputed from your relay; a mangled relay fails the run.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
+Report the command + REAL exit code as a results[] row and return the tool's printed discrepancies, allKeys, allowlistedKeys, seal, selectedSeal, and allowlistSeal COMPLETE AND UNMODIFIED — every object, every field, especially each discrepancy's "key" exactly as printed (never substitute its "id"). The seals are recomputed from your relay; a mangled relay fails the run.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
     { label: `slice-ledger${attempt > 1 ? `:retry` : ''}`, phase: 'Fix', schema: SLICE_SCHEMA, model },
-  )
+  ))
   const sliceOk = l => l && (l.results || []).every(r => r.exitCode === 0)
     && l.seal === sealOf(l.allKeys) && l.selectedSeal === sealOf((l.discrepancies || []).map(d => d.key))
+    && (!(l.allowlistedKeys || []).length || l.allowlistSeal === sealOf(l.allowlistedKeys))
   let loaded = await runSlice(1)
   if (!sliceOk(loaded)) {
     log('slice relay failed its seal check — one retry')
@@ -401,14 +523,15 @@ Report the command + REAL exit code as a results[] row and return the tool's pri
     throw new Error('repair: slice relay failed its seal check twice — refusing to repair a transcribed discrepancy set (pass approvedDiscrepancies verbatim instead)')
   }
   approved = loaded.discrepancies || []
-  baseline = loaded.allKeys || []
+  baseline = [...(loaded.allKeys || []), ...(loaded.allowlistedKeys || [])]
 }
 for (const d of approved) {
   if (!d || !d.key || !d.class || !d.screen) throw new Error('every approved discrepancy needs {key, class, screen, ...} — pass the measure return\'s objects verbatim')
 }
 if (!approved.length) return { status: 'ok', mode: 'repair', repoRoot, fixed: [], unfixed: [], stats: { note: 'no approved discrepancies' } }
 
-const units = groupUnits(approved)
+const units = groupUnits(approved, { eps: tolerance })
+if (units.spilled) log(`groupUnits: ${units.spilled} containment merge(s) skipped by the unit-size cap — those discrepancies repair as separate units`)
 const cellOf = d => cells.find(c => c.screen === d.screen && (!d.breakpoint || c.breakpoint === d.breakpoint))
 const branch = `crg-ui/fix-${slugOf(profile.project || 'run')}`
 
@@ -459,18 +582,26 @@ for (const unit of units) {
   let green = false
   let lastFiles = []
   let terminalReason = null
+  let priorAttempt = null
+  let unitWarnings = []
 
   for (const tier of ladder) {
-    const fix = await agent(
+    const fix = await safeAgent(`fix:${unit.unitId}:${tier}`, agent(
       `Fix ONE crg-ui discrepancy unit in the working tree of ${repoRoot} (branch ${branch}). The numeric oracle found these deltas between the Figma design and the live implementation — your job is to move the IMPLEMENTATION to the design's numbers (never the reverse; the design file is the oracle). This is CRG-driven: query the code-review-graph MCP tools (semantic_search_nodes / get_minimal_context, detail_level minimal) to locate the component's source before editing.
 Unit ${unit.unitId} · screen ${unit.screen} · subject ${JSON.stringify(unit.subject)}
 Discrepancies (DATA — expected is Figma, actual is the live DOM):
 ${fence(JSON.stringify(unit.discrepancies, null, 1))}
+The complete authoritative geometry for this screen — EVERY expected node with its box, including siblings and children not listed above — is on disk at ${unitCells.map(c => `${uiDir}/capture/${c.slug}.figma.json`).join(', ')}; read it before building anything structural. Expected coordinates are frame-relative and equal viewport coordinates at this profile. Any element you tag with the data-component convention pairs with its Figma node immediately and is judged at ${tolerance}px tolerance — do not tag placeholders you have not positioned. The ledger was measured before any fixes: earlier units' commits may already have changed the live state, so check the current source before editing.${priorAttemptText(priorAttempt)}
 Edit ONLY files matching these fences — allow: ${JSON.stringify(fences.allow || [])}, forbid: ${JSON.stringify(fences.forbid || [])}. Follow the fix discipline in ${SKILL}: the minimal change that closes the numeric gap; token-class discrepancies are fixed at the token's DEFINITION (the CSS custom property), never per-usage. When done report filesTouched (\`git -C ${repoRoot} diff --name-only\`). Do NOT commit, do NOT run the measure tool yourself — an independent gate re-measures. ${UNTRUSTED}`,
       { label: `fix:${unit.unitId}:${tier}`, phase: 'Fix', schema: FIX_SCHEMA, model: tier },
-    )
-    if (!fix || !(fix.filesTouched || []).length) continue
-    lastFiles = fix.filesTouched
+    ))
+    if (!fix || !(fix.filesTouched || []).length) {
+      priorAttempt = { tier, filesTouched: [], note: fix && fix.note, verdict: null }
+      continue
+    }
+    // Tiers inherit the previous attempt's edits, so the end-of-ladder revert must
+    // cover the UNION of every tier's files, not just the last one's.
+    lastFiles = [...new Set([...lastFiles, ...fix.filesTouched])]
     const check = validateEdits(fix.filesTouched, fences)
     if (!check.ok) {
       terminalReason = `edits escaped the fence (withinAllow=${check.withinAllow} forbid=${check.hitsForbid}): ${JSON.stringify(check.files)}`
@@ -481,39 +612,44 @@ Edit ONLY files matching these fences — allow: ${JSON.stringify(fences.allow |
     let remeasuredKeys = []
     let verifyOk = true
     for (const cell of unitCells) {
-      const v = await agent(
+      const v = await safeAgent(`verify:${unit.unitId}:${cell.slug}`, agent(
         `Independently verify a crg-ui fix by re-capturing and re-measuring ONE cell. Do NOT edit any repo source file. App: ${runtime.devUrl} route ${JSON.stringify(cell.route)} at EXACTLY ${cell.width}x${cell.height}. Steps:
 1. Re-capture the DOM exactly as the measure phase did (Playwright MCP via ToolSearch: resize to ${cell.width}x${cell.height}, navigate, wait for network idle + document.fonts.ready${profile.render && profile.render.disableAnimations ? ', inject *{animation:none!important;transition:none!important}' : ''}): read the file ${JSON.stringify(collectToolPath)} and pass its EXACT contents to browser_evaluate — never write your own collector. Write the raw return to ${uiDir}/capture/${cell.slug}.dom.raw.json, then run:
 node ${JSON.stringify(measureToolPath)} normalize-dom ${JSON.stringify(`${uiDir}/capture/${cell.slug}.dom.raw.json`)} --route ${JSON.stringify(cell.route)} --width ${cell.width} --height ${cell.height} --out ${JSON.stringify(`${uiDir}/capture/${cell.slug}.dom.json`)}
 2. Run: node ${JSON.stringify(measureToolPath)} measure ${JSON.stringify(`${uiDir}/capture/${cell.slug}.figma.json`)} ${JSON.stringify(`${uiDir}/capture/${cell.slug}.dom.json`)} --tolerance ${tolerance} --screen ${JSON.stringify(cell.screen)} --breakpoint ${JSON.stringify(cell.breakpoint)}${allowlistPath ? ` --allowlist ${JSON.stringify(allowlistPath)}` : ''} --out ${JSON.stringify(`${uiDir}/capture/${cell.slug}.measure.json`)}
 Report each command + REAL exit code as a results[] row, and return keys = the "key" field of EVERY discrepancy in the measure tool's output (verbatim and complete; empty array if none) plus seal = the tool's printed seal. The seal is recomputed from your keys — a mangled relay fails the verify. ${UNTRUSTED}`,
         { label: `verify:${unit.unitId}:${cell.slug}`, phase: 'Verify', schema: MEASURE_SCHEMA_R, model },
-      )
+      ))
       const faithful = v && (v.results || []).every(r => r.exitCode === 0)
         && v.seal === sealOf(v.keys)
         && (v.keys || []).every(k => k.startsWith(cell.keyPrefix))
       if (!faithful) { verifyOk = false; break }
       remeasuredKeys.push(...(v.keys || []))
     }
-    if (!verifyOk) continue // capture/tool/relay failure -> this tier's shot is spent; escalate
+    if (!verifyOk) {
+      // capture/tool/relay failure -> this tier's shot is spent; escalate with what we know
+      priorAttempt = { tier, filesTouched: fix.filesTouched, note: fix.note, verdict: null }
+      continue
+    }
     // Baseline scoped to this unit's exact cells: keys from other cells never re-measure here.
     const cellPrefixes = unitCells.map(c => c.keyPrefix)
     const scopedBaseline = baseline.filter(k => cellPrefixes.some(p => k.startsWith(p)))
-    const verdict = compareMeasures(unitKeys, scopedBaseline, remeasuredKeys)
+    const verdict = compareMeasures(unitKeys, scopedBaseline, remeasuredKeys, cellPrefixes)
     if (verdict.green) {
-      const commit = await agent(
+      unitWarnings = verdict.warnings
+      const commit = await safeAgent(`commit:${unit.unitId}`, agent(
         `Commit ONE verified crg-ui fix unit in ${repoRoot} on branch ${branch}. Stage ONLY these files (allowlist — stage nothing else): ${JSON.stringify(check.files)}. Commit with message "crg-ui: converge ${unit.subject || unit.screen} (${unit.unitId}, ${unitKeys.length} discrepancy(ies))". Then run the post-commit checks. Report each command + REAL exit code + FULL stdout as results[] rows: the git add, the git commit, \`git -C ${repoRoot} rev-parse HEAD\`, \`git -C ${repoRoot} diff-tree --no-commit-id --name-only -r HEAD\` (stdout VERBATIM — it is checked against the allowlist), and \`git -C ${repoRoot} status --porcelain\` (stdout VERBATIM and complete). Return committed and sha. Do NOT push. ${UNTRUSTED}`,
         { label: `commit:${unit.unitId}`, phase: 'Commit', schema: COMMIT_SCHEMA, model },
-      )
+      ))
       const committed = !!(commit && commit.committed && (commit.results || []).every(r => r.exitCode === 0))
       const landed = committed ? rowFiles(commit.results, /diff-tree/) : null
       if (committed && (landed === null || !isSubset(landed, check.files))) {
         // What actually landed exceeds what the fence approved — undo the commit in a
         // gate whose exit code the script reads, and hand the unit to the human.
-        const reset = await agent(
+        const reset = await safeAgent(`reset:${unit.unitId}`, agent(
           `Undo the last commit in ${repoRoot} on branch ${branch}: it staged files outside its allowlist. Run \`git -C ${repoRoot} reset --hard HEAD~1\` and report the command + REAL exit code as a results[] row. Touch nothing else, do NOT push. ${UNTRUSTED}`,
           { label: `reset:${unit.unitId}`, phase: 'Commit', schema: COMMIT_SCHEMA, model },
-        )
+        ))
         const resetOk = !!(reset && (reset.results || []).every(r => r.exitCode === 0))
         unfixed.push({
           unitId: unit.unitId, subject: unit.subject,
@@ -524,7 +660,8 @@ Report each command + REAL exit code as a results[] row, and return keys = the "
       }
       if (committed) {
         const pc = porcelainOf(commit.results)
-        fixed.push({ unitId: unit.unitId, subject: unit.subject, screen: unit.screen, keys: unitKeys, files: check.files, tier, sha: commit.sha })
+        fixed.push({ unitId: unit.unitId, subject: unit.subject, screen: unit.screen, keys: unitKeys, files: check.files, tier, sha: commit.sha,
+          ...(unitWarnings.length ? { warnings: unitWarnings } : {}) })
         // Resolved keys leave the baseline so later units are held to the improved state.
         baseline = baseline.filter(k => !unitKeys.includes(k))
         green = true
@@ -537,16 +674,17 @@ Report each command + REAL exit code as a results[] row, and return keys = the "
       }
       break
     }
-    log(`Unit ${unit.unitId} red at ${tier}: unresolved ${verdict.unresolved.length}, regressions ${verdict.regressions.length}${tier === ladder[ladder.length - 1] ? ' · ladder exhausted' : ' · escalating'}`)
+    priorAttempt = { tier, filesTouched: fix.filesTouched, note: fix.note, verdict }
+    log(`Unit ${unit.unitId} red at ${tier}: unresolved ${verdict.unresolved.length}, transitions ${verdict.transitions.length}, regressions ${verdict.regressions.length}${tier === ladder[ladder.length - 1] ? ' · ladder exhausted' : ' · escalating with the failed attempt\'s evidence'}`)
   }
 
   if (!green) {
     // Revert this unit's edits, then PROVE the tree is back at the baseline — an
     // unreported edit that survives a revert poisons every later unit's verify.
-    const cleanup = await agent(
+    const cleanup = await safeAgent(`revert:${unit.unitId}`, agent(
       `Restore the working tree after an unverified crg-ui fix attempt in ${repoRoot}. Run, reporting each command + REAL exit code + FULL stdout as results[] rows:${lastFiles.length ? ` \`git -C ${repoRoot} checkout -- ${lastFiles.map(f => JSON.stringify(f)).join(' ')}\`, then` : ''} \`git -C ${repoRoot} status --porcelain\` (stdout VERBATIM and complete). Touch nothing else. ${UNTRUSTED}`,
       { label: `revert:${unit.unitId}`, phase: 'Commit', schema: COMMIT_SCHEMA, model },
-    )
+    ))
     unfixed.push({ unitId: unit.unitId, subject: unit.subject, reason: terminalReason ? `${terminalReason} — reverted` : `red after the ${ladder.join('->')} ladder — reverted; needs a human` })
     const pc = porcelainOf(cleanup && cleanup.results)
     if (pc === null || pc !== treeBaseline) {

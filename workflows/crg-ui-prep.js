@@ -324,17 +324,17 @@ const SCORECARD_SCHEMA = {
   },
 }
 const scorecardCmd = `node ${JSON.stringify(prepToolPath)} scorecard ${JSON.stringify(`${auditDir}/repo.json`)}${figmaRes ? ` --figma ${JSON.stringify(`${auditDir}/figma.json`)}` : ''} --env ${JSON.stringify(`${auditDir}/env.json`)} --prep ${JSON.stringify(prepPath)}`
-const runScorecard = () => agent(
+const runScorecard = attempt => agent(
   `Assemble the crg-ui-prep scorecard with the deterministic tool and relay its output VERBATIM. Run, reporting the command + REAL exit code as a results[] row:
 ${scorecardCmd}
-Parse its single-line stdout JSON and return items, gaps, unknowns, and seal COMPLETE AND UNMODIFIED — every item, every field. Do NOT compute, filter, or summarize anything: the seal is recomputed from your relayed items, and a mangled relay fails the audit. ${UNTRUSTED}`,
-  { label: 'scorecard', phase: 'Scorecard', schema: SCORECARD_SCHEMA, model },
+Parse its single-line stdout JSON and return items, gaps, unknowns, and seal COMPLETE AND UNMODIFIED — every item, every field. Do NOT compute, filter, or summarize anything: the seal is recomputed from your relayed items, and a mangled relay fails the audit.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
+  { label: `scorecard${attempt > 1 ? ':retry' : ''}`, phase: 'Scorecard', schema: SCORECARD_SCHEMA, model },
 )
 const goodCard = c => rowsOk(c) && c.items && c.seal === itemsSeal(c.items)
-let card = await runScorecard()
+let card = await runScorecard(1)
 if (!goodCard(card)) {
   log('scorecard relay failed its seal check — one retry')
-  card = await runScorecard()
+  card = await runScorecard(2)
 }
 if (!goodCard(card)) return { status: 'audit-mismatch', repoRoot, reason: 'the scorecard relay failed its seal check twice — do not trust this audit; re-run' }
 

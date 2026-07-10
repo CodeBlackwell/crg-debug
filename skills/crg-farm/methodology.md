@@ -576,6 +576,11 @@ fail RED and gets mislabeled `"RED not observed"`.
 
 Read the Workflow return: `ret.fix = { waves, fixed, unfixed, finalGate:{clean, results} }`.
 
+**Escalation carries evidence.** An escalated invocation must pass `priorFailure` (the
+failed pass's non-zero gate rows + `unfixed[]` reasons, capped) so crg-debug fences it
+into every fix brief — a higher tier only beats the failed tier's ceiling if it knows
+what already failed and does not repeat that approach.
+
 1. Fix pass at `<tier>`. If `unfixed` is empty AND `finalGate.clean` → **done**.
 2. Else branch on the **failure channel** (they are distinct):
    - **`unfixed[]` present** — reasons `"RED not observed — not reproduced; source left

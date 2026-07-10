@@ -126,7 +126,7 @@ fixing in CSS.
 | Capture transcription, tool relays, commit gates | run default (haiku) | Mechanical; errors surface as exit codes and seal mismatches |
 | Fix: token / typography units | haiku, ladder up | One-line changes with a free verifier |
 | Fix: layout / missing-element units | sonnet, ladder up | Flex/grid reasoning |
-| Escalation | next strictly higher tier, ONE shot each, capped by `--max-tier` | A tier that just failed has shown its ceiling; a max-tier failure goes to the human, never brute-forced |
+| Escalation | next strictly higher tier, ONE shot each, capped by `--max-tier`, **briefed with the failed attempt's verify evidence and a dirty-tree disclosure** | A tier that just failed has shown its ceiling — but the next tier only beats that ceiling if it knows what failed (unresolved/transitioned/regressed keys, the failed agent's note) and that the tree still contains the failed edits; a max-tier failure goes to the human, never brute-forced |
 
 ## Phase playbook
 
@@ -187,20 +187,36 @@ re-reading of the ledger.
 
 Setup: record the current branch, `git checkout -B crg-ui/fix-<project-slug>`.
 
-Units = approved discrepancies grouped by (screen, component-or-token) — one root
-cause, one fix, one verify. Per unit, strictly in sequence:
+Units = approved discrepancies grouped by union-find over two edge sets: (screen,
+component-or-token) name edges, plus containment edges — a missing-element
+container's expected box absorbs any discrepancy whose box fits inside it (creating
+the container reflows everything within it: one root cause, one fix, one verify).
+Containment uses the profile tolerance as slack, joins each child to its smallest
+enclosing container, and skips (never truncates) merges past the unit-size cap.
+Per unit, strictly in sequence:
 
 1. **Fix** (ladder tier by worst class): locate the component via the CRG graph tools
    (`semantic_search_nodes` / `get_minimal_context`, minimal detail), apply the
    minimal change that closes the numeric gap, honoring the Fix discipline below.
-   Record `git diff --name-only`.
+   The complete expected geometry is `capture/<slug>.figma.json` — the on-disk source
+   of truth beyond the unit's own discrepancy rows. Record `git diff --name-only`.
+   An escalated shot is additionally briefed with the failed attempt's verdict and
+   told the tree still contains its edits (amend or discard, never trust).
 2. **Fence check (in code / by hand, not by trust)**: every touched file matches
    `fences.allow`, none matches `fences.forbid`. An escaped edit voids the unit —
    revert, done.
 3. **Verify**: re-capture the unit's cells (Phase 2 DOM steps, verbatim collector),
-   re-run the measure tool per cell. **Green** = every one of the unit's keys vanished
-   AND no key appeared that is outside the baseline scoped to those cells (breaking a
-   neighbor is red, even with your own key resolved). A capture/tool failure spends
+   re-run the measure tool per cell. The judge matches by NODE, not class-qualified
+   key. **Green** = every unit key vanished, no unit node still fails under a new
+   class, and no new damage vs the baseline (allKeys + allowlisted keys) scoped to
+   those cells. A unit node re-classified by the fix (missing-element → layout: the
+   element now exists but is off) is a **transition** — red, fed to the next tier as
+   evidence, never treated as damage. A NON-unit baseline node re-classified the same
+   way is a **warning** — tolerated (its own unit finishes the job), recorded on the
+   fixed unit. A node flipping TO missing-element is always a regression (an existing
+   element was destroyed), as is any brand-new failing node. Token keys keep
+   exact-key semantics. Keys carry no magnitude, so a same-class delta that worsens
+   is invisible to the judge — known limitation. A capture/tool failure spends
    the tier's shot; escalate.
 4. **Commit (green only)**: stage ONLY the fence-checked files, commit
    `crg-ui: converge <subject> (<unitId>, <n> discrepancy(ies))`. Then verify what

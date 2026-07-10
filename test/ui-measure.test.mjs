@@ -258,5 +258,6 @@ test('sliceUiLedger selects by key or qualified id and double-seals', () => {
   assert.deepEqual(byId.discrepancies.map(d => d.key), ['Home::Desktop::token::color/primary'])
   assert.equal(byId.seal, sealOf(ledger.allKeys), 'seal covers the full baseline')
   assert.equal(byId.selectedSeal, sealOf(byId.discrepancies.map(d => d.key)), 'selectedSeal covers the slice')
+  assert.equal(byId.allowlistSeal, sealOf(byId.allowlistedKeys), 'allowlistSeal covers the allowlisted keys')
   assert.deepEqual(sliceUiLedger(ledger, { keys: ['nope'] }).discrepancies, [])
 })

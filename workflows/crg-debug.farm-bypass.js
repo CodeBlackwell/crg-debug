@@ -389,13 +389,24 @@ const stageFix = async (triaged, candidate) => {
     let fixRet = null
     let outcome = null
     let reason = null
+    // Escalation carries evidence: the failed pass's gate output + unfixed reasons ride
+    // into the next tier's invocation — a higher tier only beats the failed tier's
+    // ceiling if it knows what failed.
+    let priorFailure = ''
+    const failureEvidence = fx => {
+      const gateRows = ((fx.finalGate && fx.finalGate.results) || [])
+        .filter(r => r.exitCode !== 0)
+        .map(r => `${r.command} -> exit ${r.exitCode}: ${capText(r.stdout || r.stderr, 300)}`)
+      const unfixedRows = (fx.unfixed || []).map(u => `${u.bugId || u.file || '?'}: ${capText(u.reason, 200)}`)
+      return capText([...gateRows, ...unfixedRows].join('\n'), 2000)
+    }
     await mark(candidate.repo, 'fixing', `start tier ${tier}, ${(triaged.confirmedBugs || []).length} bug(s)`, null, 'Fix')
 
     // Hard backstop against a pathological infinite loop; every real exit path
     // above (clean+fixed, regression cap, tier cap) fires well before this.
     for (let attempt = 0; attempt < 6 && !outcome; attempt++) {
       note(candidate.repo, `fix pass ${attempt + 1} at tier ${tier}: TDD waves (RED→GREEN), gated by exit codes`)
-      fixRet = await workflow({ scriptPath: crgDebugPath }, { repoRoot: triaged.repoRoot, fromLedger: ledgerPath, fix: true, model: tier, methodologyPath })
+      fixRet = await workflow({ scriptPath: crgDebugPath }, { repoRoot: triaged.repoRoot, fromLedger: ledgerPath, fix: true, model: tier, methodologyPath, ...(priorFailure ? { priorFailure } : {}) })
       const fx = (fixRet && fixRet.fix) || { fixed: [], unfixed: [], finalGate: { clean: false } }
       const clean = !!(fx.finalGate && fx.finalGate.clean)
       const unfixed = fx.unfixed || []
@@ -414,6 +425,7 @@ const stageFix = async (triaged, candidate) => {
           `A crg-debug fix pass on ${triaged.repoRoot} regressed the final gate. Reset the clone so the next tier starts from a clean RED, not a broken fix. crg-debug commits its waves on a crg-debug/fix-* branch, so a checkout of dirty files alone is not enough. This repo is a throwaway farm clone — run, in order: (1) determine the default branch (\`git -C ${triaged.repoRoot} symbolic-ref refs/remotes/origin/HEAD\`), (2) \`git -C ${triaged.repoRoot} checkout -f <default-branch>\`, (3) \`git -C ${triaged.repoRoot} reset --hard origin/<default-branch>\`, (4) delete every local crg-debug/fix-* branch (\`git -C ${triaged.repoRoot} branch -D <each>\`). Report the reverted branch names/files. Do not touch anything outside this clone.`,
           { phase: 'Fix', schema: { type: 'object', required: ['reverted'], properties: { reverted: { type: 'array', items: { type: 'string' } } } }, label: `revert:${candidate.repo}` }
         )
+        priorFailure = `A ${tier}-tier fix pass regressed the final gate (the clone has been reset to clean). Evidence:\n${failureEvidence(fx)}`
         tier = nt // always a strictly higher tier — never a retry of the one that just regressed
         continue
       }
@@ -442,6 +454,7 @@ const stageFix = async (triaged, candidate) => {
         break
       }
       ledgerPath = sliced.ledgerPath
+      priorFailure = `A ${tier}-tier fix pass left these bugs unfixed (its committed green waves are kept on the fix branch). Evidence:\n${failureEvidence(fx)}`
       tier = nextTier(tier, maxTier)
     }
 

@@ -105,7 +105,7 @@ Await the return. Early-bail statuses are handed back for YOU to resolve — nev
 proceed past them: `profile-invalid` (re-open GATE-PROFILE) · `graph-failed` (fix the
 graph, re-invoke) · `app-down` (Stage 1 restart rule) · `figma-unreachable` (check
 `whoami` / file access) · `no-cells` / `capture-failed` (report and stop). On
-`status:'measured'` you get `{ledgerPath, discrepancies, allKeys, unmatched, stats}`.
+`status:'measured'` you get `{ledgerPath, discrepancies, allKeys, allowlistedKeys, unmatched, stats}`.
 
 ## Stage 3 — GATE-LEDGER (HARD)
 
@@ -126,16 +126,21 @@ Workflow({ scriptPath: '$HOME/.claude/workflows/crg-ui.js',
   args: { repoRoot, profile, runtime, model, maxTier,
           approvedDiscrepancies: [<the measure return's objects, verbatim>],
           allKeys: [<the measure return's allKeys, verbatim>],
+          allowlistedKeys: [<the measure return's allowlistedKeys, verbatim>],
           allowlistPath, measureToolPath, collectToolPath, methodologyPath } })
 ```
 
-Pass the discrepancy objects and `allKeys` byte-exact through args — a ledger re-read
-through agents gets transcription-mangled. `--from-ledger <path> --keys <k,...>` (or
-`--ids`) is the cross-session fallback, forwarded as `fromLedger` + `approvedKeys` /
-`approvedIds`: the workflow resolves it with the slice tool under a seal check. Await
-`{fixed, unfixed, branch}`. Units were verified by re-measure (keys resolved AND no
-regressions, seal-checked relays), committed per green unit on the `crg-ui/fix-*`
-branch, and each commit post-verified against the fence allowlist via `git diff-tree`.
+Pass the discrepancy objects, `allKeys`, and `allowlistedKeys` byte-exact through args
+— a ledger re-read through agents gets transcription-mangled. `--from-ledger <path>
+--keys <k,...>` (or `--ids`) is the cross-session fallback, forwarded as `fromLedger` +
+`approvedKeys` / `approvedIds`: the workflow resolves it (including the allowlisted
+keys) with the slice tool under a seal check. Await `{fixed, unfixed, branch}`. Units
+were verified by re-measure (unit keys resolved AND no new damage vs baseline —
+regressions matched by node, seal-checked relays), committed per green unit on the
+`crg-ui/fix-*` branch, and each commit post-verified against the fence allowlist via
+`git diff-tree`. A fixed unit may carry `warnings` — baseline nodes another unit owns
+that this fix materialized into place (missing-element → layout); show them at
+GATE-DONE, they are expected to resolve when their own units run.
 A `status:'tree-dirty'` return means the run stopped because the working tree could
 not be restored to its baseline — show the reason and hand the branch to the human.
 Verify nothing was pushed (`git log @{push}..` non-empty, or no upstream).
