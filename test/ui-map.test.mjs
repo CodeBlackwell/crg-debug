@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateProfile, parseFrameName, inferBreakpoint, pairFrames } from '../lib/ui-map.mjs'
+import { validateProfile, parseFrameName, inferBreakpoint, pairFrames, pollUntilUp, blessEntry } from '../lib/ui-map.mjs'
 
 const goodProfile = () => ({
   schemaVersion: 1,
@@ -73,4 +73,39 @@ test('pairFrames with no declared screens accepts any screen segment', () => {
   const { paired } = pairFrames([{ id: '9:1', name: 'Anything / Desktop', width: 1440, height: 900 }], BPS, [])
   assert.equal(paired.length, 1)
   assert.equal(paired[0].screen, 'Anything')
+})
+
+// ---- dev-server readiness ------------------------------------------------------------
+
+test('pollUntilUp returns as soon as the probe answers', async () => {
+  let calls = 0
+  const probe = async () => ++calls >= 3
+  const res = await pollUntilUp(probe, { timeoutSec: 60, intervalSec: 0.001, sleep: () => Promise.resolve() })
+  assert.deepEqual(res, { up: true })
+  assert.equal(calls, 3)
+})
+
+test('pollUntilUp times out with the last error preserved', async () => {
+  const probe = async () => { throw new Error('ECONNREFUSED') }
+  const res = await pollUntilUp(probe, { timeoutSec: 0, sleep: () => Promise.resolve() })
+  assert.equal(res.up, false)
+  assert.match(res.lastError, /ECONNREFUSED/)
+})
+
+// ---- deviation blessing ----------------------------------------------------------------
+
+test('blessEntry appends to the profile and mirrors the whole list to the allowlist', () => {
+  const profile = { intentionalDeviations: [{ class: 'layout', figmaNodeId: '1:1', reason: 'old' }] }
+  const entry = { screen: 'Home', class: 'token', token: 'color/primary', reason: 'brand exception' }
+  const res = blessEntry(profile, entry)
+  assert.equal(res.ok, true)
+  assert.equal(res.profile.intentionalDeviations.length, 2)
+  assert.deepEqual(res.allowlist, res.profile.intentionalDeviations, 'allowlist is always the full profile list')
+  assert.equal(profile.intentionalDeviations.length, 1, 'input profile is not mutated')
+})
+
+test('blessEntry rejects entries without a subject or a reason', () => {
+  assert.equal(blessEntry({}, { class: 'token', token: 'x' }).ok, false, 'no reason')
+  assert.equal(blessEntry({}, { class: 'layout', reason: 'r' }).ok, false, 'no subject')
+  assert.ok(blessEntry({}, null).errors.length)
 })

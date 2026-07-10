@@ -29,6 +29,7 @@ cp "$plugin_root/workflows/crg-ui.js" "$dest/crg-ui.js"
 cp "$plugin_root/skills/crg-ui/methodology.md" "$dest/crg-ui.methodology.md"
 cp "$plugin_root/lib/ui-measure.mjs" "$dest/crg-ui.measure.mjs"
 cp "$plugin_root/lib/ui-map.mjs" "$dest/crg-ui.map.mjs"
+cp "$plugin_root/lib/ui-collect.js" "$dest/crg-ui.collect.js"
 
 # crg-agentsmd (AGENTS.md farming). The workflow is stamped with the plugin commit at install
 # time and logs it on launch, so a stale install is visible in the first log line of any run.
@@ -59,6 +60,7 @@ echo "  $dest/crg-ui.js                       (/crg-ui)"
 echo "  $dest/crg-ui.methodology.md           (/crg-ui)"
 echo "  $dest/crg-ui.measure.mjs              (/crg-ui)"
 echo "  $dest/crg-ui.map.mjs                  (/crg-ui)"
+echo "  $dest/crg-ui.collect.js               (/crg-ui)"
 echo "  $dest/crg-agentsmd.js                 (/crg-agentsmd, build ${stamp})"
 echo "  $dest/crg-agentsmd.methodology.md     (/crg-agentsmd)"
 echo "  $dest/crg-agentsmd.corpus.mjs         (/crg-agentsmd)"

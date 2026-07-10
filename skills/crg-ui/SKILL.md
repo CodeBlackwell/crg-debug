@@ -1,7 +1,7 @@
 ---
 name: crg-ui
 description: Converge a live implementation toward its Figma design with a deterministic numeric oracle — capture Figma frame geometry + variables and the live DOM at matched viewports, measure geometry/token/typography deltas per element (a tool computes every delta, never an agent), gate the ranked discrepancy ledger with the human, then fix approved discrepancies in sequential verified units committed on a crg-ui/fix-* branch (never pushed). Use for /crg-ui, "pixel-perfect this against Figma", "converge the UI to the design", "measure design drift".
-argument-hint: "[figma-url] [repo path] [--measure-only] [--from-ledger <path> --ids <id,...>] [--model <name>] [--max-tier <tier>] [--prose]"
+argument-hint: "[figma-url] [repo path] [--measure-only] [--from-ledger <path> --keys <k,...>|--ids <id,...>] [--model <name>] [--max-tier <tier>] [--prose]"
 user_invocable: true
 ---
 
@@ -23,9 +23,10 @@ the bootstrap gate below, never a guess. Read `methodology.md` first — it is t
 judgment contract; the Workflow's JS owns enforcement.
 
 **Prerequisite (deterministic mode):** `$HOME/.claude/workflows/crg-ui.js` installed by
-the bundled `crg-deterministic` enabler. Absent, or `--prose` passed → execute
-`methodology.md` directly in the main loop (its *Execution mode* section), honoring
-every rule verbatim.
+the bundled `crg-deterministic` enabler. Absent, or `--prose` passed → **prose mode**:
+execute `methodology.md` phase by phase in the main loop, running the lib tools
+directly via Bash and reading their output yourself (no agent relays), honoring every
+non-negotiable verbatim — the methodology's *Execution mode* section is the dispatch.
 
 ## Parse `$ARGUMENTS`
 
@@ -34,8 +35,10 @@ every rule verbatim.
 - **repoRoot**: an explicit path wins; else `git rev-parse --show-toplevel`; else STOP and ask.
 - **measureOnly**: `--measure-only` ends the run at GATE-LEDGER with the ledger as the
   deliverable.
-- **fromLedger / ids**: `--from-ledger <path> --ids <id,...>` is the cross-session
-  REPAIR entry. Same-session, pass the measure return's discrepancy objects verbatim instead.
+- **fromLedger / keys / ids**: `--from-ledger <path> --keys <k,...>` (or `--ids
+  <slug.d-nnn,...>` — ledger ids are cell-qualified) is the cross-session REPAIR entry;
+  the slice tool resolves the selection, never an agent. Same-session, pass the measure
+  return's discrepancy objects verbatim instead.
 - **model / maxTier**: forwarded to the Workflow (`haiku` run default; `opus` maxTier
   default). Same semantics as /crg-farm.
 
@@ -72,8 +75,9 @@ Also write `<repoRoot>/.crg-ui/allowlist.json` = the profile's `intentionalDevia
 ## Stage 1 — BOOT (skill-owned)
 
 The Workflow never starts or stops a daemon. `Bash(stack.devCommand, run_in_background:
-true)` with cwd `repoRoot`, then poll `stack.devUrl` with curl until it answers or
-`readyTimeoutSec` runs out (retry ~every 5s; timeout → show the boot log tail, STOP).
+true)` with cwd `repoRoot`, then
+`node $HOME/.claude/workflows/crg-ui.map.mjs waitup <stack.devUrl> --timeout <readyTimeoutSec>`
+— exit 0 is ready; exit 1 → show the boot log tail, STOP.
 On a later `status:'app-down'` return: restart, re-invoke ONCE; a second app-down stops
 the run with the reason.
 
@@ -86,6 +90,7 @@ Workflow({ scriptPath: '$HOME/.claude/workflows/crg-ui.js',
           allowlistPath: '<repoRoot>/.crg-ui/allowlist.json',
           validatorPath: '$HOME/.claude/workflows/crg-ui.map.mjs',
           measureToolPath: '$HOME/.claude/workflows/crg-ui.measure.mjs',
+          collectToolPath: '$HOME/.claude/workflows/crg-ui.collect.js',
           methodologyPath: '$HOME/.claude/workflows/crg-ui.methodology.md' } })
 ```
 
@@ -101,9 +106,11 @@ Show the ledger grouped by class, then screen — per discrepancy: id, severity,
 component/token, expected vs actual, delta. Show `unmatched` as mapping debt
 (remedy: naming, not fixes) and a font-mismatch epidemic as ONE environment finding.
 Options: approve-all / select-subset / mark-intentional / measure-only. Marking
-intentional appends `{screen, class, figmaNodeId|token, reason}` to the profile's
-`intentionalDeviations` AND `allowlist.json`. `--measure-only` or an empty approval
-ends the run here.
+intentional runs
+`node $HOME/.claude/workflows/crg-ui.map.mjs bless <profile.json> --entry '<json>' --allowlist <allowlist.json>`
+with `{screen, class, figmaNodeId|token, reason}` — ONE command writes the profile and
+rewrites `allowlist.json` from it (never edit the two separately). `--measure-only` or
+an empty approval ends the run here.
 
 ## Stage 4 — REPAIR (approved only)
 
@@ -112,15 +119,19 @@ Workflow({ scriptPath: '$HOME/.claude/workflows/crg-ui.js',
   args: { repoRoot, profile, runtime, model, maxTier,
           approvedDiscrepancies: [<the measure return's objects, verbatim>],
           allKeys: [<the measure return's allKeys, verbatim>],
-          allowlistPath, measureToolPath, methodologyPath } })
+          allowlistPath, measureToolPath, collectToolPath, methodologyPath } })
 ```
 
 Pass the discrepancy objects and `allKeys` byte-exact through args — a ledger re-read
-through agents gets transcription-mangled. `--from-ledger <path> --ids <id,...>` is the
-cross-session fallback. Await `{fixed, unfixed, branch}`. Units were verified by
-re-measure (keys resolved AND no regressions) and committed per green unit on the
-`crg-ui/fix-*` branch; verify nothing was pushed (`git log @{push}..` non-empty, or no
-upstream).
+through agents gets transcription-mangled. `--from-ledger <path> --keys <k,...>` (or
+`--ids`) is the cross-session fallback, forwarded as `fromLedger` + `approvedKeys` /
+`approvedIds`: the workflow resolves it with the slice tool under a seal check. Await
+`{fixed, unfixed, branch}`. Units were verified by re-measure (keys resolved AND no
+regressions, seal-checked relays), committed per green unit on the `crg-ui/fix-*`
+branch, and each commit post-verified against the fence allowlist via `git diff-tree`.
+A `status:'tree-dirty'` return means the run stopped because the working tree could
+not be restored to its baseline — show the reason and hand the branch to the human.
+Verify nothing was pushed (`git log @{push}..` non-empty, or no upstream).
 
 ## Stage 5 — GATE-DONE
 

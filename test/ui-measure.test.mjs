@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   normalizeName, figmaVarToCssVar, normalizeColor, pairNodes,
   geometryDiscrepancies, typographyDiscrepancies, tokenDiscrepancies,
-  keyOf, applyAllowlist, measure,
+  keyOf, applyAllowlist, measure, sealOf,
+  normalizeVars, normalizeFigma, normalizeDom, assembleLedger, sliceUiLedger,
 } from '../lib/ui-measure.mjs'
 
 // ---- normalization -------------------------------------------------------------
@@ -94,12 +95,12 @@ test('applyAllowlist drops blessed items scoped by screen', () => {
     { class: 'layout', figmaNodeId: '1:1', component: 'A' },
     { class: 'token', token: 'color/primary' },
   ]
-  const { kept, allowlisted } = applyAllowlist(ds, 'Home', [
+  const { kept, allowlisted } = applyAllowlist(ds, 'Home', 'Desktop', [
     { screen: 'Home', class: 'layout', figmaNodeId: '1:1' },
     { screen: 'Other', class: 'token', token: 'color/primary' },
   ])
   assert.deepEqual(kept.map(d => d.class), ['token'], 'other-screen entries do not apply')
-  assert.deepEqual(allowlisted, [keyOf('Home', ds[0])])
+  assert.deepEqual(allowlisted, [keyOf('Home', 'Desktop', ds[0])])
 })
 
 test('measure assembles a ranked, keyed, stable ledger slice', () => {
@@ -113,13 +114,149 @@ test('measure assembles a ranked, keyed, stable ledger slice', () => {
     elements: [dEl('nav-bar', 0, 0, 1440, 64), dEl('hero', 0, 64, 1440, 410)],
     tokens: { '--color-primary': '#0044ee' },
   }
-  const out = measure(figma, dom, { tolerancePx: 1, screen: 'Home' })
+  const out = measure(figma, dom, { tolerancePx: 1, screen: 'Home', breakpoint: 'Desktop' })
   assert.equal(out.pairs, 2)
   const classes = out.discrepancies.map(d => d.class)
   assert.deepEqual([...classes].sort(), ['layout', 'missing-element', 'token'])
   assert.equal(out.discrepancies[0].severity, 'high', 'high severity ranks first')
-  assert.ok(out.discrepancies.every(d => d.key.startsWith('Home::')))
+  assert.ok(out.discrepancies.every(d => d.key.startsWith('Home::Desktop::')))
+  assert.ok(out.discrepancies.every(d => d.breakpoint === 'Desktop'))
   assert.ok(out.discrepancies.every((d, i) => d.id === `d-${String(i + 1).padStart(3, '0')}`))
-  const again = measure(figma, dom, { tolerancePx: 1, screen: 'Home' })
+  assert.equal(out.keyCount, out.discrepancies.length)
+  assert.equal(out.seal, sealOf(out.discrepancies.map(d => d.key)), 'seal is recomputable from the keys')
+  const again = measure(figma, dom, { tolerancePx: 1, screen: 'Home', breakpoint: 'Desktop' })
   assert.deepEqual(again.discrepancies.map(d => d.key), out.discrepancies.map(d => d.key), 'keys are stable across re-measure')
+  const mobile = measure(figma, dom, { tolerancePx: 1, screen: 'Home', breakpoint: 'Mobile' })
+  assert.notDeepEqual(mobile.discrepancies.map(d => d.key), out.discrepancies.map(d => d.key),
+    'same screen at another breakpoint yields distinct keys — no cross-breakpoint collisions')
+})
+
+// ---- seal -----------------------------------------------------------------------------
+
+test('sealOf is order-insensitive, content-sensitive, and stable', () => {
+  const keys = ['Home::Desktop::layout::1:1', 'Home::Desktop::token::color/primary']
+  assert.equal(sealOf(keys), sealOf([...keys].reverse()), 'relay order does not matter')
+  assert.notEqual(sealOf(keys), sealOf(keys.slice(0, 1)), 'a dropped key changes the seal')
+  assert.notEqual(sealOf(keys), sealOf([keys[0], keys[1] + 'x']), 'a mangled key changes the seal')
+  assert.equal(sealOf([]), sealOf([]), 'empty is a valid, stable seal')
+  assert.match(sealOf(keys), /^[0-9a-f]{8}$/)
+})
+
+// ---- raw-capture normalizers ------------------------------------------------------------
+
+test('normalizeVars flattens raw variable dumps into a sorted primitive map', () => {
+  const out = normalizeVars({
+    'spacing/lg': 24,
+    'color/primary': { r: 0, g: 85 / 255, b: 1 },
+    'color/overlay': { r: 0, g: 0, b: 0, a: 0.5 },
+    'type/body': { resolvedValue: '16px' },
+    'color/modal': { valuesByMode: { 'mode:1': { r: 1, g: 1, b: 1 } } },
+    'junk/null': null,
+  })
+  assert.deepEqual(out, {
+    'color/modal': '#ffffff',
+    'color/overlay': '#00000080',
+    'color/primary': '#0055ff',
+    'spacing/lg': 24,
+    'type/body': '16px',
+  })
+  assert.deepEqual(Object.keys(out), Object.keys(out).sort(), 'keys are sorted for determinism')
+  assert.deepEqual(normalizeVars({ variables: { 'a/b': '#fff' } }), { 'a/b': '#fff' }, 'unwraps a variables envelope')
+})
+
+test('normalizeFigma does the math: frame-relative coords, depth<=2, named-node filter', () => {
+  const raw = {
+    nodes: [{
+      id: '0:1', name: 'Home / Desktop', type: 'FRAME',
+      absoluteBoundingBox: { x: 100, y: 200, width: 1440, height: 900 },
+      children: [
+        { id: '1:1', name: 'Nav Bar', type: 'INSTANCE', absoluteBoundingBox: { x: 100, y: 200, width: 1440, height: 64 } },
+        { id: '1:2', name: 'Rectangle 3', type: 'RECTANGLE', absoluteBoundingBox: { x: 0, y: 0, width: 9, height: 9 } },
+        { id: '1:3', name: 'Frame 12', type: 'FRAME', absoluteBoundingBox: { x: 0, y: 0, width: 9, height: 9 } },
+        {
+          id: '1:4', name: 'Hero', type: 'FRAME', absoluteBoundingBox: { x: 100, y: 264, width: 1440, height: 400 },
+          children: [
+            { id: '2:1', name: 'Heading', type: 'TEXT', absoluteBoundingBox: { x: 148, y: 296, width: 600, height: 40 }, style: { fontFamily: 'Inter', fontSize: 32, fontWeight: 700 } },
+            { id: '2:2', name: 'Vector 7', type: 'VECTOR', absoluteBoundingBox: { x: 0, y: 0, width: 9, height: 9 } },
+            {
+              id: '2:3', name: 'CTA Row', type: 'GROUP', absoluteBoundingBox: { x: 148, y: 400, width: 300, height: 48 },
+              children: [{ id: '3:1', name: 'Primary Button', type: 'COMPONENT', absoluteBoundingBox: { x: 148, y: 400, width: 140, height: 48 } }],
+            },
+          ],
+        },
+      ],
+    }],
+  }
+  const out = normalizeFigma(raw, { frameId: '0:1', variables: { 'color/primary': '#0055ff' } })
+  assert.deepEqual(out.frame, { id: '0:1', name: 'Home / Desktop', width: 1440, height: 900 })
+  assert.deepEqual(out.nodes.map(n => n.name), ['Nav Bar', 'Hero', 'Heading', 'CTA Row'],
+    'default-named frames/rects/vectors drop; depth-3 Primary Button is out of range')
+  const heading = out.nodes.find(n => n.name === 'Heading')
+  assert.deepEqual([heading.x, heading.y], [48, 96], 'coords are frame-relative')
+  assert.deepEqual([heading.fontFamily, heading.fontSize, heading.fontWeight], ['Inter', 32, 700])
+  assert.deepEqual(out.variables, { 'color/primary': '#0055ff' })
+  assert.throws(() => normalizeFigma(raw, { frameId: '9:9' }), /not found/)
+})
+
+test('normalizeDom canonicalizes collector output: coerced numbers, stable order', () => {
+  const out = normalizeDom({
+    result: {
+      elements: [
+        { component: 'hero', selector: '[data-component="hero"]', x: '0', y: 64.4, width: 1440, height: 410, fontSize: '16px' },
+        { component: 'nav-bar', selector: '[data-component="nav-bar"]', x: 0, y: 0, width: 1440, height: 64 },
+        { component: '', selector: '' },
+      ],
+      tokens: { '--color-primary': ' #0044ee ', 'not-a-token': 'x' },
+    },
+  }, { route: '/', width: 1440, height: 900 })
+  assert.deepEqual(out.viewport, { width: 1440, height: 900 })
+  assert.deepEqual(out.elements.map(e => e.component), ['hero', 'nav-bar'], 'sorted, empties dropped')
+  assert.equal(out.elements[0].x, 0, 'string numbers coerce')
+  assert.deepEqual(out.tokens, { '--color-primary': '#0044ee' }, 'only custom properties, trimmed')
+  assert.throws(() => normalizeDom({ nope: true }), /elements array/)
+})
+
+// ---- ledger assembly + slicing ------------------------------------------------------------
+
+const PROFILE = {
+  project: 'demo', mode: 'responsive',
+  figma: { fileKey: 'FILEKEY' }, tolerance: { geometryPx: 1 },
+  screens: [{ name: 'Home', route: '/' }, { name: 'Pricing', route: '/pricing' }],
+}
+const measureOut = (screen, breakpoint, ds) => ({
+  screen, breakpoint, pairs: 5, keyCount: ds.length, seal: sealOf(ds.map(d => d.key)),
+  discrepancies: ds, unmatchedFigma: [], unmatchedDom: [], unmatchedTokens: [], allowlisted: [],
+})
+const disc = (id, screen, breakpoint, cls, subject) => ({
+  id, key: `${screen}::${breakpoint}::${cls}::${subject}`, screen, breakpoint, class: cls,
+  ...(cls === 'token' ? { token: subject } : { figmaNodeId: subject, component: 'X' }), severity: 'high',
+})
+
+test('assembleLedger qualifies ids per cell and seals allKeys', () => {
+  const ledger = assembleLedger([
+    { slug: 'home-desktop', out: measureOut('Home', 'Desktop', [disc('d-001', 'Home', 'Desktop', 'layout', '1:1')]) },
+    { slug: 'pricing-desktop', out: measureOut('Pricing', 'Desktop', [disc('d-001', 'Pricing', 'Desktop', 'token', 'color/primary')]) },
+  ], PROFILE, { repoRoot: '/repo', failed: ['home-mobile'] })
+  assert.equal(ledger.schemaVersion, 2)
+  assert.deepEqual(ledger.cells.map(c => c.route), ['/', '/pricing'], 'routes resolve from the profile')
+  assert.deepEqual(ledger.cells.flatMap(c => c.discrepancies.map(d => d.id)),
+    ['home-desktop.d-001', 'pricing-desktop.d-001'], 'ids are unique across cells')
+  assert.deepEqual(ledger.failedCells, ['home-mobile'])
+  assert.equal(ledger.seal, sealOf(ledger.allKeys))
+  assert.equal(ledger.allKeys.length, 2)
+})
+
+test('sliceUiLedger selects by key or qualified id and double-seals', () => {
+  const ledger = assembleLedger([
+    { slug: 'home-desktop', out: measureOut('Home', 'Desktop', [
+      disc('d-001', 'Home', 'Desktop', 'layout', '1:1'), disc('d-002', 'Home', 'Desktop', 'token', 'color/primary'),
+    ]) },
+  ], PROFILE)
+  const byKey = sliceUiLedger(ledger, { keys: ['Home::Desktop::layout::1:1'] })
+  assert.deepEqual(byKey.discrepancies.map(d => d.id), ['home-desktop.d-001'])
+  const byId = sliceUiLedger(ledger, { ids: ['home-desktop.d-002'] })
+  assert.deepEqual(byId.discrepancies.map(d => d.key), ['Home::Desktop::token::color/primary'])
+  assert.equal(byId.seal, sealOf(ledger.allKeys), 'seal covers the full baseline')
+  assert.equal(byId.selectedSeal, sealOf(byId.discrepancies.map(d => d.key)), 'selectedSeal covers the slice')
+  assert.deepEqual(sliceUiLedger(ledger, { keys: ['nope'] }).discrepancies, [])
 })
