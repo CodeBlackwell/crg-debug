@@ -242,7 +242,7 @@ Summarize files/nodes/edges as summary. ${UNTRUSTED}`,
     properties: { wrote: { type: 'string' }, variableCount: { type: 'integer' }, note: { type: 'string' } },
   }
   const vars = await agent(
-    `Transcribe the design variables of figma file ${JSON.stringify(profile.figma && profile.figma.fileKey)} for a crg-ui run. Load the figma MCP tools via ToolSearch ("select:mcp__figma__get_variable_defs" or the plugin-prefixed equivalent — search "figma variable" if unsure of the exact name), call get_variable_defs for the file, and write its output to ${uiDir}/variables.raw.json VERBATIM (create ${uiDir} first) — do not reshape, resolve, or convert anything; the tool does that. Then run:
+    `Transcribe the design variables of figma file ${JSON.stringify(profile.figma && profile.figma.fileKey)} for a crg-ui run. Load the figma MCP tools via ToolSearch ("select:mcp__figma__get_variable_defs" or the plugin-prefixed equivalent — search "figma variable" if unsure of the exact name), call get_variable_defs anchored on node ${JSON.stringify(cells[0] && cells[0].frameId)} (the tool requires a nodeId; variables are file-scoped, so any profile frame anchors them — never invent an id), and write its output to ${uiDir}/variables.raw.json VERBATIM (create ${uiDir} first) — do not reshape, resolve, or convert anything; the tool does that. Then run:
 node ${JSON.stringify(measureToolPath)} normalize-vars ${JSON.stringify(`${uiDir}/variables.raw.json`)} --out ${JSON.stringify(`${uiDir}/variables.json`)}
 Relay its printed JSON: return wrote = its "wrote" and variableCount = its "count". A count of 0 is a valid outcome, not an error. If get_variable_defs itself failed, return wrote="" and say why in note. ${UNTRUSTED}`,
     { label: 'variables', phase: 'Variables', schema: VARS_SCHEMA, model },
@@ -384,15 +384,21 @@ if (!approved.length) {
     approvedKeys.length ? `--keys ${JSON.stringify(approvedKeys.join(','))}` : '',
     approvedIds.length ? `--ids ${JSON.stringify(approvedIds.join(','))}` : '',
   ].filter(Boolean).join(' ')
-  const loaded = await agent(
+  const runSlice = attempt => agent(
     `Slice a crg-ui ledger with the deterministic tool and relay its output VERBATIM. Do NOT edit any file, do NOT read the ledger yourself. Run:
 node ${JSON.stringify(measureToolPath)} slice ${JSON.stringify(fromLedger)} ${sliceFlags}
-Report the command + REAL exit code as a results[] row and return the tool's printed discrepancies, allKeys, seal, and selectedSeal COMPLETE AND UNMODIFIED — the seals are recomputed from your relay. ${UNTRUSTED}`,
-    { label: 'slice-ledger', phase: 'Fix', schema: SLICE_SCHEMA, model },
+Report the command + REAL exit code as a results[] row and return the tool's printed discrepancies, allKeys, seal, and selectedSeal COMPLETE AND UNMODIFIED — every object, every field, especially each discrepancy's "key" exactly as printed (never substitute its "id"). The seals are recomputed from your relay; a mangled relay fails the run.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
+    { label: `slice-ledger${attempt > 1 ? `:retry` : ''}`, phase: 'Fix', schema: SLICE_SCHEMA, model },
   )
-  if (!loaded || (loaded.results || []).some(r => r.exitCode !== 0)) throw new Error(`repair: slice tool failed on ledger ${fromLedger}`)
-  if (loaded.seal !== sealOf(loaded.allKeys) || loaded.selectedSeal !== sealOf((loaded.discrepancies || []).map(d => d.key))) {
-    throw new Error('repair: slice relay failed its seal check — refusing to repair a transcribed discrepancy set')
+  const sliceOk = l => l && (l.results || []).every(r => r.exitCode === 0)
+    && l.seal === sealOf(l.allKeys) && l.selectedSeal === sealOf((l.discrepancies || []).map(d => d.key))
+  let loaded = await runSlice(1)
+  if (!sliceOk(loaded)) {
+    log('slice relay failed its seal check — one retry')
+    loaded = await runSlice(2)
+  }
+  if (!sliceOk(loaded)) {
+    throw new Error('repair: slice relay failed its seal check twice — refusing to repair a transcribed discrepancy set (pass approvedDiscrepancies verbatim instead)')
   }
   approved = loaded.discrepancies || []
   baseline = loaded.allKeys || []

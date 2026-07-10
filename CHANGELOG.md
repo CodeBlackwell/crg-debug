@@ -4,6 +4,64 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.22.0] - 2026-07-10
+
+### Added
+- **`/crg-ui-prep` harnessed** — the prep walkthrough gets the same deterministic leg
+  as the other four skills, and its output becomes a machine-checked hand-off:
+  - *New tool core `lib/ui-prep.mjs`.* Every scorecard status is a computed fact:
+    `audit-repo` (framework/dev scripts, `data-component` coverage, raw-hex count
+    outside token files, render-seam greps, routes from router source, Storybook,
+    graph freshness vs HEAD — non-computable judgments like the auth seam come back
+    `unknown` with raw evidence, never guessed), `audit-env` (uv/Playwright by exit
+    code; figma `whoami` + DPR supplied by the audit agent), `normalize-figma-audit`
+    (frame pairing + exact sizes, variable count, code-token name mirroring via
+    `figmaVarToCssVar`, component census, Code Connect coverage — over VERBATIM MCP
+    dumps), `scorecard` (merges computed facts into prep.json — `done`/`descoped`/
+    `n/a` are settled human decisions and are NEVER downgraded; `unknown` never
+    overwrites; sealed over `id=status`), `record` (prep.json's only writer),
+    `verify <item>` (one item's audit check as an exit code; `2.5 --captures a,b`
+    byte-compares two captures), and `packet` / `verify-packet` (below).
+  - *New `workflows/crg-ui-prep.js`.* AUDIT fans out repo+env audits then the figma
+    transcription, and the scorecard relay is proven by recomputing its seal from the
+    relayed items (mismatch → one retry → `audit-mismatch`). PROPOSE returns one
+    structured read-only artifact per gap (rename table, variable map, complete
+    unified diff + file list, exact commands) for the skill's wizard gates — item 1.1
+    (bootstrap design generation) is never proposed by the harness; the skill owns it
+    behind the bless gate. APPLY executes gate-approved proposals passed back
+    byte-exact, fences the touched files to the proposal (violation → revert →
+    failed), verifies each gap with the prep tool's exit code, and records green
+    items via the `record` tool. PACKET assembles and verifies the ready packet.
+  - *The ready packet.* `.crg-ui/prep-packet.json` = profile + attestations + pairing
+    under ONE FNV-1a seal recomputed from the LIVE files at verify time. `/crg-ui`'s
+    Stage 0 now runs `verify-packet` first: exit 0 → intake skipped entirely
+    (perfect-user Story 9 as an exit code); any drift in profile, allowlist, prep
+    items, or pairing fails the seal and falls back to the normal GATE-PROFILE.
+    Profile-critical open items block the packet; cosmetic gaps ride along visibly as
+    `openGaps`.
+  - *Skill dispatch + dogfood fixes.* `skills/crg-ui-prep/SKILL.md` gains the
+    execution-mode dispatch (Workflow when installed, `--prose` fallback running the
+    same tool via Bash), wave-based gap loop (PROPOSE → wizard gates → APPLY), a
+    plain-language rule for gate copy (no "codemod"-class jargon in door labels), and
+    explicit mirror-the-app vs design-something-new doors at the 1.1 bootstrap gate
+    with the parallel-generation + assembly-QA pattern documented.
+  - Enabler installs `crg-ui-prep.js`, `crg-ui-prep.checklist.md`, and
+    `crg-ui.prep.mjs` (imports rewritten to the installed tool names). Tests:
+    `test/ui-prep.test.mjs` + `test/crg-ui-prep-helpers.test.mjs` (seal parity with
+    `ui-measure.mjs`, merge semantics, packet tamper cases, proposal fence).
+
+### Fixed
+- **`crg-ui.js` variables agent invented node ids.** `get_variable_defs` requires a
+  nodeId; the brief said "call it for the file", so agents guessed ids (`1:1`, `1:0`)
+  and the run bailed `figma-unreachable`. The brief now anchors the call on the first
+  profile cell's frame id (variables are file-scoped — any profile frame anchors them).
+  Found live on the first end-to-end SPICE measure run.
+- **`crg-ui.js` slice relay gets one seal-checked retry.** A haiku relay of a 17-object
+  slice substituted one discrepancy's ledger `id` for its `key`; the seal check caught
+  it and (correctly) refused to repair, but the run died on the first miss while the
+  scorecard/measure relays already had a retry. The slice brief now warns against the
+  id-for-key substitution and retries once before refusing.
+
 ## [0.21.0] - 2026-07-09
 
 ### Changed

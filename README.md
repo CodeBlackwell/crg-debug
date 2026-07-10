@@ -259,10 +259,20 @@ and the deliverable is a validated draft `.crg-ui/profile.json` — so the next 
 run opens with a zero-question GATE-PROFILE:
 
 ```
-/crg-ui-prep https://figma.com/design/<key>/...   # full audit → gated gap loop → draft profile
+/crg-ui-prep https://figma.com/design/<key>/...   # full audit → gated gap loop → draft profile → packet
 /crg-ui-prep <figma-url> --audit-only             # just the scorecard, no changes
 /crg-ui-prep <figma-url> --top5                   # only the five highest-leverage items (+ deps)
 ```
+
+With the `crg-deterministic` enabler installed, prep runs **harnessed**: a Workflow
+fans out repo/env/figma audit agents whose every status is computed by
+`lib/ui-prep.mjs` (agents transcribe raw MCP dumps verbatim and relay tool output
+under FNV-1a seal checks), per-gap proposals come back as structured artifacts for the
+wizard gates, approved proposals are applied byte-exact with the touched files fenced
+to the proposal and verified by the tool's exit code, and the run ends by assembling a
+sealed `.crg-ui/prep-packet.json`. `/crg-ui`'s Stage 0 runs `verify-packet` against it
+— exit 0 skips intake entirely (Story 9 as a machine check; a stale or hand-edited
+packet fails the seal and falls back to the normal gate).
 
 ## 🗂️ Layout
 
@@ -283,7 +293,9 @@ skills/crg-ui-prep/SKILL.md       /crg-ui-prep entry — audit → gated gap loo
 skills/crg-ui-prep/checklist.md   per-item contract: audit check, fix path, effort, loop order
 lib/ui-measure.mjs                the numeric oracle: geometry/token/typography deltas (deterministic CLI)
 lib/ui-map.mjs                    ui profile validator + Figma frame-name pairing
+lib/ui-prep.mjs                   prep audits, scorecard, item verify, ready packet (deterministic CLI)
 workflows/crg-ui.js               deterministic measure/repair Workflow (installed by the enabler)
+workflows/crg-ui-prep.js          deterministic prep Workflow: audit/propose/apply/packet (installed by the enabler)
 lib/integrations-profile.mjs      matrix-profile validator (reference schema, placeholder + fence checks)
 workflows/crg-integrations.js     deterministic matrix triage/repair Workflow (installed by the enabler)
 lib/corpus.mjs                    review-corpus fetcher, holdout splitter, ledger assembler

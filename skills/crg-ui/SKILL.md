@@ -44,6 +44,13 @@ non-negotiable verbatim — the methodology's *Execution mode* section is the di
 
 ## Stage 0 — PROFILE (first run) → GATE-PROFILE (HARD)
 
+**Ready packet first**: if `<repoRoot>/.crg-ui/prep-packet.json` exists, run
+`node $HOME/.claude/workflows/crg-ui.prep.mjs verify-packet <repoRoot>` (fallback:
+`lib/ui-prep.mjs` beside this skill's lib). Exit 0 → `/crg-ui-prep` attested this repo:
+show the one-line packet summary (project, screens, openGaps) and proceed straight to
+BOOT — zero questions. Exit 1 → show its reasons (a stale or edited packet never
+smuggles past this gate) and fall through to the normal flow below.
+
 Load `<repoRoot>/.crg-ui/profile.json`; validate with
 `node $HOME/.claude/workflows/crg-ui.map.mjs validate <path>` — fix-or-stop on errors.
 If valid, show a one-line summary and proceed (re-runs never re-ask answered questions).

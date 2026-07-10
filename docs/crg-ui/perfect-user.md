@@ -2,7 +2,9 @@
 
 Status: planning (2026-07-08). Companion docs: `user-stories.md` (Story 9 is this
 document made real), `implementation-plan.md`. The `/crg-ui-prep` skill
-(`skills/crg-ui-prep/`) walks a user through this checklist item by item.
+(`skills/crg-ui-prep/`) walks a user through this checklist item by item, and Story 9
+is machine-checked: prep emits a sealed `.crg-ui/prep-packet.json` that `/crg-ui`'s
+Stage 0 verifies with `ui-prep.mjs verify-packet` (exit 0 = zero-question intake).
 
 Everything a user prepares so that launching `/crg-ui` hits the north-star path: intake
 computes everything, GATE-PROFILE is a single zero-question confirmation, and the whole
