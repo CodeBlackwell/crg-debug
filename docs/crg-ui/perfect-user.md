@@ -1,7 +1,8 @@
 # crg-ui — The Perfect User Checklist
 
 Status: planning (2026-07-08). Companion docs: `user-stories.md` (Story 9 is this
-document made real), `implementation-plan.md`.
+document made real), `implementation-plan.md`. The `/crg-ui-prep` skill
+(`skills/crg-ui-prep/`) walks a user through this checklist item by item.
 
 Everything a user prepares so that launching `/crg-ui` hits the north-star path: intake
 computes everything, GATE-PROFILE is a single zero-question confirmation, and the whole

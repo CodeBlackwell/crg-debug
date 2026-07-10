@@ -246,6 +246,24 @@ neighbor is a red), and commits each green unit on a `crg-ui/fix-*` branch. **Ne
 pushes; the oracle is never invented silently** — no Figma file means a bootstrap gate
 (supply a URL, or approve reverse-generated frames *in Figma first*), never a guess.
 
+### 🧰 `/crg-ui-prep` — become the perfect `/crg-ui` user
+
+Walks you gap-by-gap to `docs/crg-ui/perfect-user.md`'s Story 9: audit the Figma file,
+repo, and environment against the full checklist, then close each gap in
+dependency-sorted leverage order — Figma-side assets generated via the figma MCP (frame
+renames, variable creation + binding, componentization, Code Connect), repo-side assets
+as approved diffs (`data-component` codemod, render seams, routes manifest), environment
+items as verified guide steps. Every item gets the same three-door gate (*supply it /
+let me apply it / descope it explicitly*), every answer persists in `.crg-ui/prep.json`,
+and the deliverable is a validated draft `.crg-ui/profile.json` — so the next `/crg-ui`
+run opens with a zero-question GATE-PROFILE:
+
+```
+/crg-ui-prep https://figma.com/design/<key>/...   # full audit → gated gap loop → draft profile
+/crg-ui-prep <figma-url> --audit-only             # just the scorecard, no changes
+/crg-ui-prep <figma-url> --top5                   # only the five highest-leverage items (+ deps)
+```
+
 ## 🗂️ Layout
 
 ```
@@ -261,6 +279,8 @@ skills/crg-integrations/SKILL.md  /crg-integrations entry — matrix triage/repa
 skills/crg-integrations/methodology.md  class definitions + drift asymmetry + fence discipline
 skills/crg-ui/SKILL.md            /crg-ui entry — profile/boot/gates + measure/repair router
 skills/crg-ui/methodology.md      layered oracle + classes + render determinism + fix discipline
+skills/crg-ui-prep/SKILL.md       /crg-ui-prep entry — audit → gated gap loop → draft profile
+skills/crg-ui-prep/checklist.md   per-item contract: audit check, fix path, effort, loop order
 lib/ui-measure.mjs                the numeric oracle: geometry/token/typography deltas (deterministic CLI)
 lib/ui-map.mjs                    ui profile validator + Figma frame-name pairing
 workflows/crg-ui.js               deterministic measure/repair Workflow (installed by the enabler)
