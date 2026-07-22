@@ -32,6 +32,7 @@ measurement, a diff confined to an allowlist. Nothing is ever pushed on your beh
 - [Requirements](#-requirements)
 - [Install](#-install)
 - [Prose vs deterministic mode](#-prose-vs-deterministic-mode)
+  - [The original evaluation](#-the-original-evaluation)
 - [The workflows](#-the-workflows)
 - [The safety model](#-the-safety-model)
 - [Repo layout](#-repo-layout)
@@ -151,9 +152,55 @@ Both modes execute the same `methodology.md`; they differ in **who enforces it**
 | Best for | strong models; small or tightly-coupled code | weak models; large repos; auditable runs |
 
 > **Rule of thumb:** prose gives you the model's native ceiling cheaply; deterministic buys a
-> floor on any model at a token and wall-clock cost. In eval runs, a prose pass went from 0.33
-> precision on a weak model to 1.00 on a strong one, while the deterministic Workflow held the weak
-> model at a usable floor regardless of tier.
+> floor on any model at a token and wall-clock cost.
+
+### 📊 The original evaluation
+
+That rule of thumb was measured, not assumed. At the plugin's conception, the methodology was
+evaluated across three driver models on five debugging-interview repos with published gold
+branches, run headless and graded by a diff-vs-answer LLM judge pinned to opus on every leg
+(**recall** = fraction of planted bugs fixed; **precision** = fraction of non-test changes that
+map to a real bug or are harmless).
+
+**Baseline, prose skill (recall / precision):**
+
+| Repo | planted bugs | opus | sonnet | haiku |
+|------|-------------:|------|--------|-------|
+| debugging-challenge | 7 | 1.00 / 1.00 | 1.00 / 1.00 | 0.857 / 1.00 |
+| BugFix | 14 | 1.00 / 1.00 | 1.00 / 1.00 | 0.79 / 1.00 |
+| ph2-raccoon-saloon | 17–18 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| debugging-challenges | 1 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| react-debug-practice | 2 | 1.00 / 1.00 | 1.00 / 0.83 | 0.00 / 0.00 |
+| **macro** | | **1.00 / 1.00** | **1.00 / 0.966** | **0.729 / 0.80** |
+
+Strong models ceiling on the easy set; the weak tier exposes the spread. A closed-loop synthesis
+step (all grades + the current skill fed to a model proposing minimal edits, behind a regression
+guard) lifted haiku to **0.929 / 1.00** and was kept; sonnet's candidate edit was auto-reverted
+for a −0.014 recall regression. Later rounds on hard discriminator cases — a CPython timsort
+run-stack invariant, an asyncio lost-wakeup race, sudo's CVE-2021-3156 — confirmed the pattern:
+**a prose gate is a request whose compliance scales with model strength** (sonnet swept all three
+on recall; haiku scored 0.00 on timsort by editing the wrong line).
+
+**The decisive table** — the weakest cell (react-debug-practice) run three ways, same repo, same
+judge — is what moved enforcement out of prose and into the deterministic Workflow:
+
+| Path | Model | recall / precision |
+|------|-------|--------------------|
+| Subagent (prose) | haiku | 0.25 / 0.33 |
+| **Workflow (JS-gated)** | **haiku** | **0.40 / 0.60** |
+| Subagent (prose) | sonnet | 0.40 / 1.00 |
+
+The harness lifts the weak model with no model upgrade: haiku's recall rises to match sonnet's,
+and precision holds because the Workflow's adversarial verifier *deferred* the design-quality
+findings and *rejected* a misread syntax flag that the prose run had shipped as false positives.
+The residual gap to sonnet's 1.00 precision is the model, not the path — exactly the
+"prose = ceiling, deterministic = floor" trade.
+
+Caveats the eval records about itself: diff-vs-answer grading measures agreement with a
+reference fix, not test-suite passage; judge decomposition of the answer key adds noise on
+small cells; and the Workflow's separate BugFix validation used real compile/test exit codes
+instead (13 confirmed bugs, 0 unfixed, green gate) — a stronger signal, deliberately not mapped
+onto the recall/precision tables.
 
 Two bundled agents cover a third shape — a **sequential single-context run** for orchestrators that
 can't nest subagents: `crg-debugger` and `crg-ui-converger`.
