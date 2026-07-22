@@ -198,6 +198,50 @@ test('normalizeFigma does the math: frame-relative coords, depth<=2, named-node 
   assert.throws(() => normalizeFigma(raw, { frameId: '9:9' }), /not found/)
 })
 
+test('normalizeFigma accumulates parent-relative coords into frame-relative (MCP get_metadata dumps)', () => {
+  // Flat x/y with no absoluteBoundingBox = relative to the immediate parent.
+  const raw = {
+    type: 'frame', id: '2:2', name: 'Overview', x: 0, y: 0, width: 1440, height: 900,
+    children: [
+      {
+        type: 'frame', id: '2:4', name: 'KPI Strip', x: 0, y: 56, width: 1440, height: 76,
+        children: [{ type: 'frame', id: '3:22', name: 'KPI: TOTAL VALUE', x: 12, y: 12, width: 192, height: 64, children: [{ type: 'text', id: '4:1', name: 'label', x: 0, y: 0, width: 50, height: 10 }] }],
+      },
+      {
+        type: 'frame', id: '2:5', name: 'Content', x: 0, y: 132, width: 1440, height: 740,
+        children: [{ type: 'frame', id: '2:7', name: 'Col B', x: 584, y: 12, width: 430, height: 716 }],
+      },
+      { type: 'text', id: '3:10', name: 'Titleblock', x: 368, y: 872, width: 703, height: 12 },
+    ],
+  }
+  const out = normalizeFigma(raw, { frameId: '2:2' })
+  const at = name => out.nodes.find(n => n.name === name)
+  assert.deepEqual([at('KPI Strip').x, at('KPI Strip').y], [0, 56], 'depth-1 unchanged')
+  assert.deepEqual([at('KPI: TOTAL VALUE').x, at('KPI: TOTAL VALUE').y], [12, 68], 'depth-2 accumulates parent offset')
+  assert.deepEqual([at('Col B').x, at('Col B').y], [584, 144], 'the bug that sank the SPICE run')
+  assert.equal(at('KPI: TOTAL VALUE').hasChildren, true, 'non-leaf nodes flagged')
+  assert.equal(at('Col B').hasChildren, undefined, 'leaf nodes unflagged')
+  assert.equal(at('Titleblock').isText, true, 'text nodes flagged')
+})
+
+test('pairNodes rejects placeholder matches: empty DOM element vs content-bearing figma node', () => {
+  const figma = [
+    { ...fNode('2:4', 'KPI Strip', 0, 56, 1440, 76), hasChildren: true },
+    { ...fNode('3:10', 'Titleblock', 368, 872, 703, 12), isText: true },
+    fNode('2:7', 'Col B', 584, 144, 430, 716), // leaf: empty div is legitimate
+  ]
+  const strip = { ...dEl('KPI Strip', 0, 56, 1440, 76), textLength: 0, childCount: 0 }
+  const title = { ...dEl('Titleblock', 368, 872, 703, 12), textLength: 0, childCount: 2 }
+  const colB = { ...dEl('Col B', 584, 144, 430, 716), textLength: 0, childCount: 0 }
+  const out = pairNodes(figma, [strip, title, colB])
+  assert.deepEqual(out.unmatchedFigma.map(n => n.name), ['KPI Strip', 'Titleblock'],
+    'empty div vs non-leaf node and textless element vs TEXT node both stay missing')
+  assert.deepEqual(out.pairs.map(p => p.figma.name), ['Col B'])
+  // Old captures without content fields never reject.
+  const legacy = pairNodes(figma, [dEl('KPI Strip', 0, 56, 1440, 76)])
+  assert.deepEqual(legacy.pairs.map(p => p.figma.name), ['KPI Strip'])
+})
+
 test('normalizeDom canonicalizes collector output: coerced numbers, stable order', () => {
   const out = normalizeDom({
     result: {

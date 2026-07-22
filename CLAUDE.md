@@ -64,7 +64,7 @@ The enabler copies these into `~/.claude/workflows/` under dotted names
 
 ## Release & sync discipline
 
-- **Version source of truth is `.claude-plugin/plugin.json`** (currently 0.23.0).
+- **Version source of truth is `.claude-plugin/plugin.json`.**
   `package.json` is test-runner metadata only. CHANGELOG follows Keep a Changelog; new
   work goes under `[Unreleased]` until released.
 - After pushing this repo, `git pull` the marketplace clone at

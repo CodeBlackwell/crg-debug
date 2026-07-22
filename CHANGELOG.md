@@ -4,6 +4,78 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.24.0] - 2026-07-21
+
+`/crg-ralph` — the constructive sibling of `/crg-debug` — plus measure-tool fixes
+earned by its first dogfood run (SPICE FOREX Phase 1) and the crg-ui runs alongside it.
+
+### Added
+- **`/crg-ralph` — graph-compiled Army construction** (the constructive sibling of
+  `/crg-debug`; `docs/crg-ralph/design.md` built). PLAN: decompose a feature request —
+  or ingest an existing hand-authored Army PRD dir (`PRD.md` + `agents/*-agent.md`) —
+  into stories whose predicted touch sets are attacked by a per-story adversarial
+  critic, then packed by deterministic JS into dependency-layered, fence-disjoint
+  waves with community lanes and hub-first ranking; the plan persists to
+  `.crg-ralph/plan.json` (tool-validated by exit code) and feature-mode emits a
+  standard Army PRD dir the `ralph` CLI can run unchanged. GATE-PLAN is a hard human
+  gate. BUILD: parallel lane builders per wave under prefix-aware fence allowlists
+  (Army owned paths are directories) enforced in JS, blind command/browser criteria
+  gates whose exit codes the script reads, a strictly-upward model ladder whose
+  escalations carry the failed attempt's gate evidence, and a commit per green wave
+  (explicit paths, no-attribution message gate, diff-tree ⊆ fence, porcelain
+  accounting against the tree baseline) followed by graph re-ingest. The skill then
+  composes a crg-debug detect-only sweep over the run's diff, gated fixes via
+  `fromLedger`. Never pushes.
+- **PRD-ingest fidelity rules shaped by the first dogfood target** (SPICE
+  `PRDs/32-forex-phase1`): prose acceptance criteria travel VERBATIM as the builder
+  checklist; machine criteria are synthesized honoring the PRD's own wave gates and
+  local-test caveats (a suite the PRD says cannot run locally becomes its prescribed
+  compile/parse check; deploy/remote-host checks are never synthesized — they surface
+  as manual acceptance items); PRD invariants + pinned contracts are fenced into
+  every builder brief; declared waves become implicit prior-wave dependencies the
+  packer verifies, serializing any within-wave fence overlap the hand-authored plan
+  missed.
+- `lib/ralph-plan.mjs` (`validate`, `validate-profile`, `emit-prd`) + installed as
+  `crg-ralph.plan.mjs`; `workflows/crg-ralph.js`; `skills/crg-ralph/`
+  (SKILL.md + methodology.md); enabler installs all three. Tests:
+  `test/ralph-plan.test.mjs`, `test/crg-ralph-helpers.test.mjs` (packer, fences,
+  ladder, git-plumbing readers extracted from the shipped workflow).
+
+### Fixed
+- **crg-ralph dogfood hardening** (first live run, SPICE FOREX Phase 1 — each fix
+  earned by a real failure):
+  - the human-approved profile toolchain is now authoritative end to end: PLAN
+    persists it into plan.json over the setup agent's discovery, BUILD's wave/final
+    gates run only its commands, and both story-sourcing prompts receive it as the
+    ground truth on what runs locally (the first run's wave gate ran a *discovered*
+    `mypy src` the profile had nulled, and the ingester synthesized a pytest
+    criterion for a package the profiler had proven locally broken);
+  - the wave gate judges the DELTA against plan-time `baselineFailures` (passed in
+    by the skill): a failure the gate matches to a known baseline failure is
+    reported `preexisting`, never blocking — a red baseline can no longer hold
+    every wave hostage after the human knowingly approved building over it;
+  - reproduction (TDD RED) now fails only when NO command criterion was observed
+    red — a single already-green row (a compile guard on an existing file) is a
+    polarity-invalid criterion, not staleness; stale / not-reproduced stories get
+    their reported edits restored instead of being trusted to have "touched
+    nothing" (the porcelain accounting caught three builders' real edits after
+    their stories were killed on one green compile guard);
+  - `unbuilt` bookkeeping deduplicated (a red wave gate recorded held stories
+    twice: once drained, once dependency-cascaded).
+- **crg-ui: phantom-element pairing rejected by the measure tool.** The DOM
+  collector now captures `textLength` + `childCount`, and `pairNodes` refuses to
+  pair an empty tagged element (no text, no children) with a Figma node that has
+  content — a bare `data-component` div at the right coordinates no longer counts
+  as the element existing; it stays `missing-element`. Old captures without the
+  content fields pair as before. The fix brief states the rule and warns that
+  `position:fixed` at the expected box is a new bug, not convergence.
+- **crg-ui: nested Figma coordinates normalized correctly.** MCP `get_metadata`
+  dumps carry x/y relative to the immediate PARENT, so `normalizeFigma` now
+  accumulates ancestor offsets when walking nested children (REST-style dumps
+  with `absoluteBoundingBox` still subtract the frame origin). Previously every
+  depth≥2 expected box stayed parent-relative, poisoning the ledger's geometry
+  deltas for nested nodes.
+
 ## [0.23.0] - 2026-07-09
 
 Lessons from the first live `/crg-ui` repair run (SPICE public dashboard), where fix

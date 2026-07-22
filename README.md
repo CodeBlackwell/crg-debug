@@ -3,7 +3,7 @@
 **A family of graph-driven, harness-enforced engineering workflows for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.23.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.24.0-informational)](CHANGELOG.md)
 
 One plugin, eight commands, one idea: build a knowledge graph of the codebase, fan out narrow
 agents over it, and let **deterministic code — not the model — decide what counts as done**.
