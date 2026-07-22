@@ -1,35 +1,120 @@
 # 🐛 crg-debug
 
-**Graph-driven parallel debugging for [Claude Code](https://claude.com/claude-code).**
+**A family of graph-driven, harness-enforced engineering workflows for [Claude Code](https://claude.com/claude-code).**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.19.0-informational)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.23.0-informational)](CHANGELOG.md)
 
-`/crg-debug` builds a code knowledge graph 🕸️, fans out concern-disjoint discovery agents over it,
-adversarially verifies every candidate 🔍, then fixes confirmed bugs in test-first waves over
-file-disjoint sets. Each validated wave is committed on a `crg-debug/fix-*` branch off the current
-HEAD (only that wave's own files, allowlist-verified) and the graph re-ingested — **never pushed**,
-and never committed to your own branch.
+One plugin, eight commands, one idea: build a knowledge graph of the codebase, fan out narrow
+agents over it, and let **deterministic code — not the model — decide what counts as done**.
+Every workflow ends in evidence a script verified: a real exit code, a checksum-sealed
+measurement, a diff confined to an allowlist. Nothing is ever pushed on your behalf.
 
-`/crg-farm` 🌾 wraps that engine in a bug-farming loop: it sources real open bugs — a named repo
-gets a scoped `/xplore` sweep, a topic runs a themed cross-repo GitHub search, and no direction at
-all wildcard-searches all of GitHub — verifies none are already fixed or in-flight upstream,
-triages them, escalates the model only where repair struggles, and ships **draft PRs**, pausing for
-your approval at every consequential boundary (commit and upstream submit are always hard stops).
-See **Usage** below.
+| Command | What it does |
+|---|---|
+| [`/crg-debug`](#-crg-debug--find-and-fix-real-bugs) | Find real bugs with adversarial verification, fix them in test-first waves |
+| [`/crg-farm`](#-crg-farm--the-bug-farming-loop) | Farm open bugs across GitHub into draft PRs, human-gated |
+| [`/crg-build`](#-crg-build--launch-readiness-campaigns) | Survey an app's launch readiness across 7 dimensions, build the approved gaps |
+| [`/crg-ralph`](#-crg-ralph--graph-compiled-feature-armies) | Compile a feature request (or Army PRD) into graph-verified parallel build waves |
+| [`/crg-ui`](#-crg-ui--converge-the-ui-to-its-figma-design) | Measure pixel drift against Figma with a numeric oracle, fix approved deltas |
+| [`/crg-ui-prep`](#-crg-ui-prep--become-the-perfect-crg-ui-user) | Audit + close every setup gap so `/crg-ui` starts with zero questions |
+| [`/crg-integrations`](#-crg-integrations--triage--repair-an-integration-matrix) | Triage a host × scenario test matrix (regression/drift/flake), repair approved clusters |
+| [`/crg-agentsmd`](#-crg-agentsmd--mine-a-measured-agentsmd) | Mine a repo's review history into an AGENTS.md scored against held-out corrections |
 
 ---
 
-## ⚙️ Requirements
+## 📖 Contents
 
-- **Claude Code** — provides the skill/agent/MCP runtime.
+- [How it works](#-how-it-works-in-five-sentences)
+- [Why it works so well](#-why-it-works-so-well)
+  - [The code-review-graph advantage](#the-code-review-graph-advantage-per-workflow)
+  - [Context & harness engineering](#context--harness-engineering-per-workflow)
+- [Requirements](#-requirements)
+- [Install](#-install)
+- [Prose vs deterministic mode](#-prose-vs-deterministic-mode)
+- [The workflows](#-the-workflows)
+- [The safety model](#-the-safety-model)
+- [Repo layout](#-repo-layout)
+- [Testing](#-testing)
+- [License](#-license)
+
+---
+
+## 🧠 How it works, in five sentences
+
+1. **Graph first.** Each run builds or refreshes a [code-review-graph](https://pypi.org/project/code-review-graph-codeblackwell/)
+   of the repo — functions, callers, flows, hubs, communities, test links — so agents can *ask*
+   where things are instead of grepping for them.
+2. **Narrow agents, wide fan-out.** Work is partitioned into disjoint slices (concerns, files,
+   screens, matrix cells, stories) and each slice gets its own agent with a small, fenced brief —
+   no agent ever holds the whole problem.
+3. **Adversarial verification.** Nothing an agent claims is trusted: findings face independent
+   refuters and reproducers, fixes face blind gate agents that report raw exit codes, and
+   measurements travel under checksums.
+4. **Deterministic enforcement.** A JS harness (or a strict methodology in prose mode) owns phase
+   order, wave packing, fences, commit checks, and every pass/fail verdict — the model supplies
+   judgment, the script supplies discipline.
+5. **Human gates at every consequential boundary.** Profiles, fix approvals, commits, and PR
+   submission all stop for you; the automation's job is to arrive at those gates with evidence,
+   not to blow through them.
+
+## 🚀 Why it works so well
+
+Two engineering choices do most of the lifting, and every `crg-*` workflow leans on both.
+
+### The code-review-graph advantage, per workflow
+
+An LLM's scarcest resource is attention. The graph converts "read half the repo to find the thing"
+into one cheap query, so each agent's context window is spent on *judgment* instead of *search* —
+and the graph is **re-ingested after every commit**, so later phases reason about the tree as it
+actually is, not as it was when the run started.
+
+| Workflow | What the graph buys it |
+|---|---|
+| `/crg-debug` | Scope resolution (`semantic_search` + `impact_radius`), hotspot maps (hubs, large functions, knowledge gaps), discovery via flows/callers instead of grep, and **blast-radius test selection** — the close gate runs only the tests that exercise touched files |
+| `/crg-farm` | Per-bug complexity scoring: `impact_radius` per file feeds the recommended starting model tier, so cheap models get cheap bugs |
+| `/crg-build` | Survey agents map the app from `architecture_overview` + hubs at minimal detail; wave gates scope regression tests via `tests_for` |
+| `/crg-ralph` | The graph **compiles the plan**: `impact_radius` predicts each story's touch set (then an adversarial critic re-checks it), communities become lanes, hubs rank stories into the earliest waves, and overlapping radii force serialization |
+| `/crg-ui` / `/crg-ui-prep` | Fix and proposal agents locate a component's source via `semantic_search` / `minimal_context` instead of scanning the frontend tree |
+| `/crg-integrations` | The repair diagnosis (opus) walks the host-adapter seam, its callers, and the blast radius through graph queries at minimal detail |
+| `/crg-agentsmd` | **The honest exception** — it mines the GitHub review record, not the graph. Its edge comes from the harness side: structural holdout + evidence-gated schemas |
+
+### Context & harness engineering, per workflow
+
+The second half is refusing to trust model output. Agents *claim*; gates *observe*; the **script
+decides** — with pure, unit-tested JS helpers rendering every verdict. Shared machinery across the
+family: `fence()` wraps every piece of repo/issue/Figma text as untrusted data (prompt-injection
+neutralized at the interpolation site), commit messages are gate-checked (no AI attribution, ever),
+committed files must be a subset of a declared allowlist, and model escalation ladders climb
+strictly upward — one shot per tier, with the failed attempt's evidence carried into the next brief.
+
+| Workflow | Signature harness mechanisms |
+|---|---|
+| `/crg-debug` | TDD RED→GREEN where an *independent* gate re-runs the test and the script reads the exit code; file-disjoint fix waves with fixed-point and thrash guards; allowlist-verified commits (strays auto-uncommitted) |
+| `/crg-farm` | The candidate cap, tier ladder, security-channel decision, and draft-only PR rule are all literal JS, not prompts; a lossless append-only farm DB records every gate and wait |
+| `/crg-build` | Blind command gates + a **serialized** browser gate (one shared Playwright, script-judged verdict); criterion polarity (assert the *built* behavior); tokens minted per session, never stored |
+| `/crg-ralph` | Deterministic dependency-layered wave packer with cycle-breaking; prefix-aware fences; wave gates judge the **delta vs baseline** failures; porcelain accounting catches every stray edit |
+| `/crg-ui` | The numeric oracle: a CLI computes every delta, and **FNV-1a seals** prove agents relayed its output verbatim (a paraphrased relay fails the checksum); node-matched verify judge; diff-tree post-commit check; porcelain baseline restore |
+| `/crg-ui-prep` | Every scorecard status is tool-computed and sealed; approved diffs applied byte-exact inside a file fence; the final packet re-verifies against live files so stale prep can't sneak through |
+| `/crg-integrations` | Deterministic matrix ingest (an agent once silently truncated 1400 rows to "all green" — never again); pixel stats can only *veto* drift, never confirm it; verify = exit 0 **and** ≥1 test actually ran |
+| `/crg-agentsmd` | Miners physically cannot see the holdout (train-only files); every rule needs a verbatim evidence quote at the schema boundary; the A/B harness throws on workspace contamination |
+
+The pattern compounds: the graph makes each agent cheap and precise, the harness makes each agent's
+output verifiable, and the gates make the whole run auditable. That's why a weak model under the
+deterministic harness holds a usable floor that prompt-only orchestration can't guarantee.
+
+## 🔧 Requirements
+
+- **Claude Code** — provides the skill / agent / MCP / Workflow runtime.
 - **[`code-review-graph-codeblackwell`](https://pypi.org/project/code-review-graph-codeblackwell/)** —
-  the graph engine, exposed to Claude as an MCP server. This plugin declares it in `.mcp.json` as
+  the graph engine, declared in `.mcp.json` as
   `uvx --from 'code-review-graph-codeblackwell>=2.4.0' code-review-graph serve`, so you need
   [`uv`](https://docs.astral.sh/uv/) on your `PATH`. It is a community fork of
-  [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) (Tirth Kanani, MIT),
-  maintained so fixes ship without waiting on upstream review. The CLI command and MCP tools are still
-  named `code-review-graph`, so the methodology and tool references are unchanged.
+  [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) (Tirth Kanani, MIT);
+  the CLI and MCP tool names are unchanged.
+- **Optional:** Docker (for `/crg-farm --env container` buildability provisioning), `gh` (for
+  `/crg-farm` sourcing and `/crg-agentsmd` corpus fetch), the Figma + Playwright MCP servers (for
+  `/crg-ui` and `/crg-ui-prep`).
 
 ## 📦 Install
 
@@ -38,280 +123,297 @@ See **Usage** below.
 /plugin install crg-debug
 ```
 
-That gives you `/crg-debug` in **prose mode**: Claude's main loop orchestrates the methodology,
-dispatching parallel `Agent` waves per phase. Works on every model tier. ✅
+That gives you every command in **prose mode**: Claude's main loop orchestrates the methodology
+directly. Works on every model tier. ✅
 
-### 🎛️ Optional: deterministic mode
+### 🎛️ Recommended: the deterministic enabler
 
-Prose orchestration relies on the model following the protocol. For the strongest guarantees, upgrade
-to the **deterministic JS Workflow**, where the script — not the model — owns phase order, wave
-packing, loop termination, and the per-bug close gates (it reads real exit codes). Claude Code plugins
-cannot package workflows, so a one-time enabler installs it:
+Claude Code plugins cannot package Workflows, so a one-time enabler installs them:
 
 ```
 crg-deterministic
 ```
 
-This copies the bundled workflow and its methodology into `~/.claude/workflows/`. Afterward
-`/crg-debug` automatically prefers the Workflow; pass `--prose` to force prose mode. Watch a live run
-with `/workflows`. 📡
+This copies all eight JS Workflows, their methodologies, and the deterministic tool CLIs into
+`~/.claude/workflows/` (idempotent — re-run it after plugin updates). Afterward every `crg-*`
+command automatically prefers its Workflow; pass `--prose` to any command to force prose mode.
+Watch live runs with `/workflows`. 📡
 
-## 🧭 Choosing a mode
+## 🧭 Prose vs deterministic mode
 
-Both modes run the same `methodology.md`; they differ in **who enforces it**. In prose mode the model
-follows the protocol, so compliance tracks model strength. In deterministic mode the script owns phase
-order, verification, and the per-bug close gates, so the floor holds on any model.
+Both modes execute the same `methodology.md`; they differ in **who enforces it**.
 
 | | 📝 Prose | 🔒 Deterministic |
 |---|---|---|
-| Enforcement | advisory — model may skip phases | in code — binds on any model |
+| Enforcement | advisory — the model follows the protocol | in code — binds on any model |
 | Cost / latency | one context, fast | many parallel agents, minutes |
 | Coverage | one attention budget | parallel sweep, scales past one context |
-| Best for | strong models; small or tightly-coupled code | weak models; large multi-file repos; auditable runs |
+| Best for | strong models; small or tightly-coupled code | weak models; large repos; auditable runs |
 
-> **Rule of thumb:** prose gives you the model's native ceiling cheaply; deterministic buys a floor on
-> a weak model at a token and wall-clock cost.
+> **Rule of thumb:** prose gives you the model's native ceiling cheaply; deterministic buys a
+> floor on any model at a token and wall-clock cost. In eval runs, a prose pass went from 0.33
+> precision on a weak model to 1.00 on a strong one, while the deterministic Workflow held the weak
+> model at a usable floor regardless of tier.
 
-Eval runs bear this out: on one repo a prose pass went from 0.33 precision on a weak model to 1.00 on a
-strong one, while the deterministic Workflow held the weak model at a usable floor regardless of tier.
-Shape matters too — breadth (many independent bugs across files) favors the Workflow's parallel
-discovery; depth (a few interacting bugs in one place) can favor prose's single-context reasoning.
+Two bundled agents cover a third shape — a **sequential single-context run** for orchestrators that
+can't nest subagents: `crg-debugger` and `crg-ui-converger`.
 
-## 🚀 Usage
+## 🧰 The workflows
+
+### 🐛 `/crg-debug` — find and fix real bugs
+
+Builds/refreshes the graph, maps hotspots, fans out concern-disjoint discovery agents, and
+adversarially verifies every candidate (one refuter + one reproducer; a finding survives only if
+confirmed and never refuted). With fix mode (the default) it then repairs confirmed bugs in
+**file-disjoint TDD waves** — RED observed before any edit, GREEN verified by an independent gate
+whose exit code the script reads — committing each validated wave on a `crg-debug/fix-*` branch
+(never pushed, never your branch) and re-ingesting the graph.
 
 ```
 /crg-debug                       # full-repo sweep, detect + fix
-/crg-debug src/auth              # scope to an area/file/issue
-/crg-debug --detect-only         # read-only: confirmed bug ledger, no edits
-/crg-debug --model haiku         # override the model for the run
-/crg-debug --prose               # force prose orchestration even if the Workflow is installed
+/crg-debug src/auth              # scope to an area/file
+/crg-debug --issue owner/repo#123  # symptom-directed sweep from a GitHub issue
+/crg-debug --detect-only         # read-only: confirmed-bug ledger, no edits
+/crg-debug --from-ledger .crg-debug/ledger.json   # fix-only over a prior ledger
+/crg-debug --model haiku         # model for the run (default haiku)
+/crg-debug --prose               # force prose orchestration
 ```
 
-The run ends with a severity-ranked bug ledger 📋 and a timestamped report at the repo root. Fix
-waves land as commits on a `crg-debug/fix-*` branch (never pushed) — review them, then merge or run
-`/cpdv`. Pass `commit: false` (Workflow arg) for the legacy working-tree-only mode.
+Deliverable: a severity-ranked ledger at `.crg-debug/ledger.json` plus fix commits to review and
+merge (or ship with `/cpdv`).
 
 ### 🌾 `/crg-farm` — the bug-farming loop
 
-`/crg-farm` wraps `/crg-debug` in a repeatable loop that sources real open bugs, triages them
-cheaply, escalates the model only where repair struggles, and ships draft PRs — pausing for your
-approval at every boundary that matters. It never assumes "the current repo" — what it sources
-depends on the direction you give it:
+Wraps `/crg-debug` in a sourcing loop over real open bugs. Direction decides sourcing: a repo name
+gets a scoped `/xplore` sweep, free text runs a themed cross-repo GitHub search, no direction
+wildcard-searches all of GitHub. Candidates are deduped, ranked by impact × review-likelihood,
+triaged with detect-only runs, fixed with a strictly-upward model ladder (haiku→sonnet→opus, one
+shot per tier, failures carried as evidence into the next tier), and staged as **draft PRs**.
 
 ```
-/crg-farm                          # no direction: wildcard-search all of GitHub for open bugs (gh search issues)
-/crg-farm memory leaks in async rust cli tools   # topic: themed cross-repo GitHub search
-/crg-farm owner/repo               # scoped: /xplore sweep of that one repo
-/crg-farm --issue owner/repo#123   # scoped: farm a specific reported issue
-/crg-farm --auto                   # auto-pass soft gates; still HARD-stops at commit + PR submit
-/crg-farm --auto-bypass            # fully unattended through commit + a draft PR, top-3 candidates; GATE-SUBMIT stays human
-/crg-farm --max-tier sonnet        # cap model escalation below opus
-/crg-farm --env container          # provision a dedicated cached Docker env per repo (default under the harness)
-/crg-farm --env none               # skip provisioning; baseline against the host as-is (no Docker)
+/crg-farm                          # wildcard: search all of GitHub for open bugs
+/crg-farm memory leaks in async rust cli tools   # themed cross-repo search
+/crg-farm owner/repo               # scoped sweep of one repo
+/crg-farm --issue owner/repo#123   # farm one reported issue
+/crg-farm --auto                   # auto-pass soft gates; commit + submit still block
+/crg-farm --auto-bypass            # unattended through commit + draft PR (top 3); submit stays human
+/crg-farm --max-tier sonnet        # cap the escalation ladder
+/crg-farm --env container|none     # per-repo cached Docker env, or host as-is
 ```
 
-RECON (scoped `/xplore`, or a themed/wildcard `gh search issues`) → dedup → rank candidates by
-impact × review-likelihood (stars, issue severity, merge cadence) → **GATE-RECON** → triage
-(`--detect-only`) → **GATE-TRIAGE** → fix (`--from-ledger`, escalating haiku→sonnet→opus over only
-the unfixed bugs) → **GATE-ESCALATE** → **GATE-DIFF** → PR-prep → **GATE-SUBMIT**. `GATE-DIFF`
-(working-tree→commit) and `GATE-SUBMIT` (fork→upstream) always block for an explicit human "yes" —
-`--auto` never bypasses them. Every candidate repo is cloned/synced into a persistent cache at
-`~/.claude/crg-farm/repos/<owner>/<repo>`, and every run, candidate, gate decision, fix attempt, and
-PR is recorded to `~/.claude/crg-farm/history.jsonl` for cross-run dedup and audit.
+Three things distinguish it:
 
-`--auto-bypass` is a **separate flag from `--auto`**, never implied by it: it auto-passes every
-gate through commit (`GATE-DIFF`), so a run goes end-to-end unattended — top 3 ranked candidates,
-fixed concurrently (capped at 3 in-flight), committed, and opened as **draft** PRs, ending in a
-report of what opened. It never touches `GATE-SUBMIT` — nothing is ever flipped to
-ready-for-review automatically, no matter what flags were passed; a human still has to submit each
-draft. On a regression, escalation climbs to the next, strictly higher tier — never a retry of the
-tier that just failed, every tier gets exactly one shot — so a `haiku` start can climb through two
-regressions before running out of ladder; a regression at `maxTier` itself is dropped from PR-prep
-and handed to a human instead of being committed. Prefers a code-enforced harness Workflow
-(`workflows/crg-debug.farm-bypass.js`, installed by `crg-deterministic`) when available — `--prose`
-forces the prompt-driven path instead. See `skills/crg-farm/methodology.md` §Auto-bypass mode
-before using it.
+- **Buildability.** Before triage, `--env container` (the harness default) provisions a dedicated,
+  fingerprint-cached Docker environment per repo, so baseline failures reflect the *code*, not a
+  missing toolchain. Failures are classified `code` (→ a real bug) vs `env`; a repo that can't be
+  made buildable is `unfarmable` and handed off cleanly — the verdict is remembered so future runs
+  demote it before spending a slot.
+- **Security routing.** A security-sensitive finding never flows silently into a public PR: a
+  quick actually-run PoC, an exploit-path trace, and the repo's own SECURITY/CONTRIBUTING policy
+  feed one deliberately asymmetric decision — a short human-voiced PR only when the fix is
+  mechanical, marginal risk is small, *and* policy allows it; otherwise a concise, disk-only
+  advisory report that is **never transmitted**. Disclosure stays your call, always.
+- **The audit trail.** Every run, candidate, gate ask, decision, fix attempt, and PR is appended to
+  `~/.claude/crg-farm/history.jsonl` (losslessly compacted, never deleted) for cross-run dedup.
 
-**Buildability (`--env`).** Before triaging a candidate, the harness makes its repo genuinely
-buildable so the baseline reflects the *code*, not a missing toolchain. `--env container` (the
-default) provisions a **dedicated, cached Docker environment per repo** — a slim base image,
-hand-installed system deps, language deps in a persistent named volume, source bind-mounted, and
-every build/typecheck/test command run inside it. The image is fingerprinted by the repo's
-manifests and reused as-is unless deps change, so an env is built once per repo, not once per run.
-Each baseline failure is then classified **`code`** (a real source defect → seeded as a bug) or
-**`env`** (a missing tool/dep/system library, or a build not applicable to the project); a repo that
-can't be made buildable is **`unfarmable`** and hands off cleanly rather than being mistaken for a
-bug. `--env none` (the standalone `/crg-debug` default) skips provisioning entirely. See
-`skills/crg-farm/methodology.md` §Environment provisioning.
+`GATE-DIFF` (working tree → commit) and `GATE-SUBMIT` (draft → ready) are hard stops that `--auto`
+never crosses. `--auto-bypass` runs unattended through commit and an opened **draft** PR — but no
+flag, ever, flips a draft to ready-for-review. That last click is yours.
 
-A bug flagged security-sensitive (injection, auth bypass, secrets exposure, SSRF/traversal,
-insecure deserialization, crypto misuse, memory-safety) never enters that pipeline silently —
-**`GATE-SECURITY-ROUTE`** diverts it to the advisory track instead: a quick, actually-run PoC, a
-hop-by-hop exploit-path trace, and a check of the target repo's own `CONTRIBUTING.md`/`SECURITY.md`,
-then **`GATE-DISPATCH-CHANNEL`** picks the channel from what that evidence actually showed — a
-short, human-voiced PR (`pr-with-motivation`) when the fix is mechanical, the marginal risk beyond
-the bug's own precondition is genuinely small, and the repo's own policy doesn't demand private
-reporting, or a short, conservatively-worded, disk-only report (`advisory-report`, gated by
-**`GATE-ADVISORY-REVIEW`**, never transmitted) the moment any of that isn't true. This exists
-because a live run once escalated a one-line-fixable bug into a multi-page formal report a
-maintainer rightly rejected as disproportionate — most security-sensitive bugs are worth fixing
-exactly like any other bug, just with the channel decided first, deliberately biased toward the
-safe fallback whenever anything is ambiguous. Whichever channel is chosen, this tool never files,
-emails, or discloses anything on your behalf under any option — disclosure stays your call, and no
-flag ever crosses `GATE-SUBMIT` unattended. `--auto-bypass`'s harness runs this whole check itself,
-unattended, using the same conservative computed default — a mechanical PR still only ever opens as
-a **draft**, same as any other bug. See `skills/crg-farm/methodology.md` §Security classification &
-the advisory track.
+### 🧱 `/crg-build` — launch-readiness campaigns
 
-### 📜 `/crg-agentsmd` — mine a measured AGENTS.md
-
-An instrument, not a generator: it mines a repo's review fossil record (PR review threads, diff
-evolution, git archaeology) for the tacit rules maintainers actually enforce, adversarially
-verifies every rule (counterexample hunt, restatement detection, executability), then **scores the
-survivors against a held-out slice of real review corrections** the miners never saw. Rules no
-held-out correction credits are cut; the draft is ordered by measured predictive value and written
-beside its evidence ledger — never committed, never posted.
+Points the engine at *shipping an app* rather than debugging it. Operates on a multi-subrepo
+umbrella app: an optional first-run `/crg-debug` stabilize pass, then repeated campaign loops of
+**SURVEY** (dimension-disjoint agents grade `stability, completeness, consistency, polish,
+reachability, docs, launch-blockers` against the live, booted app) → **GATE-SPEC** (you pick the
+buildable subset; launch-blockers are never auto-recommended) → **BUILD** (dependency-ordered,
+file-disjoint waves; every acceptance criterion asserts the *corrected* behavior and must fail
+before the build and pass after) → **UX-REVIEW** (two scorers + merge).
 
 ```
-/crg-agentsmd                      # current repo: mine -> verify -> score -> draft
-/crg-agentsmd path/to/repo         # explicit repo
-/crg-agentsmd --mine-only          # stop at the verified rules ledger
-/crg-agentsmd --score-only         # re-score an existing ledger (skip mining)
-/crg-agentsmd --score-sample 60    # judge a stride sample of the holdout (cheap iteration)
-/crg-agentsmd --ab                 # add the three-arm implementation A/B (expensive; asks first)
+/crg-build                        # full campaign on the current app
+/crg-build --dimensions polish,docs   # narrow the survey
+/crg-build --skip-stabilize       # skip the first-run crg-debug pass
+/crg-build --headed               # add a qualitative in-browser UX pass
+/crg-build --auto-bypass          # compute GATE-SPEC; profile + stabilize gates still block
+/crg-build --max-waves 6 --model haiku --prose
 ```
 
-Honest calibration from the pilot (NixOS/nix-security-tracker, 749 PRs, 183 held-out comments):
-the mined draft would have preempted **24%** of held-out review corrections vs **12%** for a
-length-matched generic placebo — the difference is exactly the repo-specific rules nobody could
-guess from one file. A 3-PR implementation A/B showed **no lift over placebo**: this documents
-measured reviewer norms; it is not demonstrated to make agents build better code. Repos with fewer
-than ~30 reviewed PRs return `thin-corpus` instead of a padded guess.
+The skill owns daemons (the Workflow never starts or stops a server) and auth tokens are minted
+fresh per session — never stored, never embedded in criteria. Commits land per subrepo, per green
+wave; never pushed.
+
+### 🪖 `/crg-ralph` — graph-compiled feature armies
+
+The constructive sibling of `/crg-debug`: instead of finding bugs, it **plans and builds a
+feature** as dependency-layered waves of parallel lane agents. In feature mode it decomposes your
+request into Army-sized stories; in PRD-ingest mode it reads an existing hand-authored
+Army-of-Ralph PRD dir (`PRD.md` + `agents/`) verbatim — and in both, every story's
+predicted touch set is attacked by an adversarial critic, then packed by deterministic JS into
+fence-disjoint waves (graph communities become lanes, hub-touching stories build first, overlapping
+blast radii serialize).
+
+```
+/crg-ralph add rate limiting to the API           # feature mode: decompose → plan → build
+/crg-ralph PRDs/32-forex-phase1                   # ingest an existing Army PRD dir
+/crg-ralph <input> --plan-only                    # stop at GATE-PLAN; emit the Army PRD dir
+/crg-ralph --from-plan .crg-ralph/plan.json --stories US-001,US-003   # cross-session build entry
+/crg-ralph <input> --max-tier sonnet --max-waves 8 --prose
+```
+
+GATE-PLAN is a hard human gate showing waves × lanes, forced serializations, broken cycles, and
+baseline failures. BUILD runs blind exit-code criteria gates, a strictly-upward model ladder with
+evidence-carrying escalation, JS-enforced prefix fences, and porcelain accounting — then a scoped
+`/crg-debug` sweep over the run's own diff closes the loop. Feature mode also emits a standard Army
+PRD dir the `ralph` CLI can run unchanged, so the planner is useful even without the builder.
+
+### 🎨 `/crg-ui` — converge the UI to its Figma design
+
+The Figma file is the oracle, the live app is the subject, and a deterministic measure tool is the
+judge. MEASURE captures each screen × breakpoint cell — Figma frame geometry + variables
+(transcribed verbatim), live DOM via a shipped collector script (one shared browser, strictly
+sequential) — and the tool computes every geometry/token/typography delta, assembling a keyed,
+ranked discrepancy ledger. **An agent never eyeballs a screenshot or does coordinate math**; every
+relay is checksum-sealed, so a mangled transcription fails loudly instead of lying quietly.
+
+```
+/crg-ui https://figma.com/design/<key>/...        # measure + gated repair
+/crg-ui <figma-url> path/to/repo --measure-only   # read-only ranked ledger
+/crg-ui --from-ledger .crg-ui/ledger.json --ids d-001,d-004   # cross-session repair
+/crg-ui <figma-url> --max-tier sonnet --model haiku --prose
+```
+
+GATE-LEDGER approves fixes or blesses items as intentional deviations (persisted and filtered
+forever after — never re-litigated). REPAIR groups approved items into containment units (a missing
+container absorbs its children — one root cause, one fix, one verify), routes each through a
+class-based model ladder, verifies by **re-capturing and re-measuring the exact cells** with a
+node-matched judge (breaking a neighbor is a red), post-verifies every commit's diff-tree against
+the fence, and restores the tree to its porcelain baseline after red units. Commits on
+`crg-ui/fix-*`; never pushed. No Figma file → a bootstrap gate, never a guessed oracle.
+
+### 🧰 `/crg-ui-prep` — become the perfect `/crg-ui` user
+
+Walks you gap-by-gap to the "Story 9" user in `docs/crg-ui/perfect-user.md` — the one whose
+`/crg-ui` run opens with **zero questions**. It audits the Figma file, repo, and environment
+against the full checklist (every status computed by `lib/ui-prep.mjs`, sealed), then closes gaps
+in dependency-sorted leverage order: Figma-side assets via the figma MCP (frame renames, variable
+binding, componentization), repo-side assets as approved diffs (`data-component` codemod, render
+seams), environment items as verified guide steps. Every item gets the same three-door gate —
+*supply it / let me apply it / descope it explicitly* — and every answer persists.
+
+```
+/crg-ui-prep https://figma.com/design/<key>/...   # full audit → gated gap loop → draft profile → packet
+/crg-ui-prep <figma-url> --audit-only             # just the sealed scorecard
+/crg-ui-prep <figma-url> --top5                   # five highest-leverage items (+ deps)
+```
+
+Deliverable: a validated draft `.crg-ui/profile.json` plus a sealed `.crg-ui/prep-packet.json`.
+`/crg-ui`'s Stage 0 verifies the packet by exit code against the **live** files — a green packet
+skips intake entirely; a stale or hand-edited one fails the seal and falls back to the normal gate.
 
 ### 🧩 `/crg-integrations` — triage & repair an integration matrix
 
-Points the crg core at a project's **host × scenario integration matrix** — the grid a docs widget,
-SDK, or embed runs against many host frameworks. Two gated machines over one methodology:
+For projects whose test surface is a **host × scenario matrix** (a docs widget, SDK, or embed run
+against many host frameworks). TRIAGE (read-only) ingests the red cells with a deterministic tool,
+retries away flakes, clusters by normalized failure signature, and classifies each cluster
+`regression | drift | under-dev | flake` — a JS prefilter first, a model only for the residue, and
+an unclassifiable cluster defaults conservatively to regression.
 
 ```
-/crg-integrations                                   # current repo: triage, stop at GATE-CLUSTERS
-/crg-integrations path/to/repo --triage-only        # read-only triage ledger, nothing else
+/crg-integrations                                   # triage, stop at GATE-CLUSTERS
+/crg-integrations path/to/repo --triage-only        # read-only triage ledger
 /crg-integrations --from-ledger <path> --clusters cl-001,cl-004   # repair approved clusters
 /crg-integrations --from-matrix results.json --no-regen           # triage an existing matrix
 ```
 
-**TRIAGE** (read-only) refreshes the graph, ingests the red cells, retries away flakes, clusters by
-normalized failure signature, and classifies each cluster **regression | drift | under-dev | flake** —
-deterministic-first, with a JS prefilter ahead of the model. Screenshot failures go through an
-**pixel-stat drift veto** (large or concentrated change = regression; everything else is
-*unconfirmed* and must be confirmed by a vision agent — calibration on 71 real drift golden pairs
-showed drift and small-element regressions are numerically inseparable, so the numbers only ever
-rule drift *out*), because a regression misread as drift silently corrupts the golden oracle. Drift is **never
-auto-re-baked** — the `--update-snapshots` command is emitted into a human-gated queue. **REPAIR**
-(only human-approved regression clusters) diagnoses each against the graph, fixes it in an isolated
-worktree inside a per-host **fence** (shared-file fixes are `needs-human`, never auto-edited),
-verifies by re-running the exact cell (exit code AND a test that actually ran — 0 tests is a fail),
-and gates the run branch against regressions. Commits locally on a `crg-integrations/fix-*` branch;
-**never pushes.** The genericity seam is the profile: all hot-path logic runs over one normalized
-reference matrix shape, so a project with a different runner supplies a one-line `matrixAdapter`
-convert command and everything downstream is identical.
+Screenshot failures pass through a calibrated **pixel-stat drift veto** (71 real drift golden
+pairs showed drift and small-element regressions are numerically inseparable — so the numbers only
+ever rule drift *out*; only a vision agent may confirm it), because a regression misread as drift
+silently corrupts the golden oracle. Drift is **never auto-re-baked**: the exact
+`--update-snapshots` command is emitted into a human-gated queue. REPAIR (approved regression
+clusters only) diagnoses against the graph, fixes inside per-host fenced worktrees (shared-file
+fixes are `needs-human`, never auto-edited), verifies by re-running the exact cell — exit 0 **and**
+at least one test actually ran — and gates the run branch against new reds. Never pushes. Projects
+with a different runner supply a one-line `matrixAdapter` convert command; everything downstream is
+identical.
 
-### 🎨 `/crg-ui` — converge the UI to its Figma design
+### 📜 `/crg-agentsmd` — mine a measured AGENTS.md
 
-Points the crg core at **design convergence**: the Figma file is the oracle, the live app
-is the subject, and a deterministic measure tool is the judge. Capture Figma frame
-geometry + variables and the live DOM at matched viewports, measure per-element
-geometry/token/typography deltas (the tool computes every delta — never an agent
-eyeballing a screenshot), gate the ranked discrepancy ledger, then fix approved items in
-sequential verified units:
+An instrument, not a generator. It mines a repo's review fossil record — PR review threads, diff
+evolution, git archaeology — for the tacit rules maintainers actually enforce, adversarially
+verifies every rule (counterexample hunt in the live tree, fabricated-evidence check, restatement
+detection, command executability), then **scores survivors against a held-out slice of real review
+corrections the miners never saw**. Rules no correction credits are cut; the draft is ordered by
+measured predictive value and written beside its evidence ledger — never committed, never posted.
 
 ```
-/crg-ui https://figma.com/design/<key>/...        # measure + gated repair on the current repo
-/crg-ui <figma-url> path/to/repo --measure-only   # read-only: ranked discrepancy ledger, no edits
-/crg-ui --from-ledger .crg-ui/ledger.json --ids d-001,d-004   # cross-session repair entry
-/crg-ui <figma-url> --max-tier sonnet             # cap the fix-model escalation ladder
+/crg-agentsmd                      # current repo: mine → verify → score → draft
+/crg-agentsmd path/to/repo         # explicit repo
+/crg-agentsmd --mine-only          # stop at the verified rules ledger
+/crg-agentsmd --score-only         # re-score an existing ledger
+/crg-agentsmd --score-sample 60    # judge a stride sample of the holdout (cheap iteration)
+/crg-agentsmd --ab                 # three-arm implementation A/B (expensive; asks first)
 ```
 
-**PROFILE** (first run, GATE-PROFILE) resolves stack, dev command, breakpoint frames
-(paired by the `<Screen> / <Breakpoint>` naming convention, human-confirmed), fences, and
-tolerance — every answer persists, so re-runs never re-ask. **MEASURE** (read-only)
-captures each screen × breakpoint cell and stops with a keyed, ranked ledger:
-`layout | token | typography | missing-element`, severity-graded, with unmatched
-elements reported as mapping debt. **GATE-LEDGER** approves fixes, or blesses items as
-intentional deviations (persisted, filtered on every later run — never re-litigated).
-**REPAIR** fixes each unit with a class-routed model ladder (token/typography start
-haiku; layout starts sonnet; one shot per tier, strictly upward), verifies by
-re-capture + re-measure in real code (unit keys resolved AND no new keys — breaking a
-neighbor is a red), and commits each green unit on a `crg-ui/fix-*` branch. **Never
-pushes; the oracle is never invented silently** — no Figma file means a bootstrap gate
-(supply a URL, or approve reverse-generated frames *in Figma first*), never a guess.
+Honest calibration (pilot: NixOS/nix-security-tracker, 749 PRs, 183 held-out comments): the mined
+draft preempted **24%** of held-out corrections vs **12%** for a length-matched generic placebo —
+the gap is exactly the repo-specific rules nobody could guess. A 3-PR implementation A/B showed
+**no lift over placebo**: this documents measured reviewer norms; it is not demonstrated to make
+agents build better code. Repos under ~30 reviewed PRs return `thin-corpus`, not a padded guess.
 
-### 🧰 `/crg-ui-prep` — become the perfect `/crg-ui` user
+## 🔒 The safety model
 
-Walks you gap-by-gap to `docs/crg-ui/perfect-user.md`'s Story 9: audit the Figma file,
-repo, and environment against the full checklist, then close each gap in
-dependency-sorted leverage order — Figma-side assets generated via the figma MCP (frame
-renames, variable creation + binding, componentization, Code Connect), repo-side assets
-as approved diffs (`data-component` codemod, render seams, routes manifest), environment
-items as verified guide steps. Every item gets the same three-door gate (*supply it /
-let me apply it / descope it explicitly*), every answer persists in `.crg-ui/prep.json`,
-and the deliverable is a validated draft `.crg-ui/profile.json` — so the next `/crg-ui`
-run opens with a zero-question GATE-PROFILE:
+Constant across the whole family:
+
+- **Never pushes.** Fixes land on dedicated local branches (`crg-debug/fix-*`, `crg-ui/fix-*`,
+  `crg-integrations/fix-*`, `crg-ralph/build-*`) off your current HEAD — review, then merge.
+- **Never past draft.** `/crg-farm` opens PRs as drafts; no flag flips one to ready-for-review.
+- **Never discloses.** Security advisories are written to local disk only; filing them is yours.
+- **Never re-bakes an oracle.** Golden snapshots and Figma deviations change only by explicit
+  human approval, and blessed decisions persist so they're never re-litigated.
+- **No AI attribution.** Commit messages are gate-checked against any Claude/Anthropic/co-author
+  trailer, in code.
+- **Untrusted by default.** Issue bodies, repo source, and design payloads are fenced as data —
+  a prompt injection in a README being audited can't steer the run.
+
+## 📁 Repo layout
 
 ```
-/crg-ui-prep https://figma.com/design/<key>/...   # full audit → gated gap loop → draft profile → packet
-/crg-ui-prep <figma-url> --audit-only             # just the scorecard, no changes
-/crg-ui-prep <figma-url> --top5                   # only the five highest-leverage items (+ deps)
+.claude-plugin/           plugin manifest + self-hosted marketplace catalog
+.mcp.json                 declares the code-review-graph MCP server (uvx)
+bin/crg-deterministic     the enabler: installs Workflows + tools into ~/.claude/workflows/
+skills/<name>/SKILL.md    each command's entry point — flags, gates, prose-vs-workflow routing
+skills/<name>/methodology.md   the single source of truth both modes execute
+workflows/*.js            the deterministic JS Workflows (one per command, + farm-bypass harness)
+agents/                   crg-debugger + crg-ui-converger (sequential single-context variants)
+lib/                      deterministic tool cores, all unit-tested:
+  ui-measure.mjs            the crg-ui numeric oracle (normalize / measure / assemble / slice)
+  ui-collect.js             browser-side DOM collector (evaluated verbatim, never re-derived)
+  ui-map.mjs                crg-ui profile validator + Figma frame pairing + waitup + bless
+  ui-prep.mjs               crg-ui-prep audits, sealed scorecard, item verify, ready packet
+  ralph-plan.mjs            crg-ralph plan/profile validator + Army PRD renderer
+  build-profile.mjs         crg-build profile validator + autoApprove + UX scoring
+  integrations-profile.mjs  matrix-profile validator (placeholders, fences, drift knobs)
+  integrations-ingest.mjs   deterministic matrix ingest (red-cell grouping, anti-truncation)
+  corpus.mjs                crg-agentsmd review-corpus fetcher + stratified holdout splitter
+  agentsmd-score.mjs        retrodictive holdout scorer
+  agentsmd-ab.mjs           contamination-clean three-arm A/B harness
+  ledger-slice.mjs          narrow a bug ledger to a subset (triage + escalation)
+  issue-ref.mjs             GitHub issue-ref + remote parsing
+  farm-db.mjs               append-only farm/campaign history with lossless compaction
+docs/crg-ui/, docs/crg-ralph/   design docs (perfect-user stories, army-compilation design)
+test/                     node --test suite over every pure helper and tool CLI
 ```
 
-With the `crg-deterministic` enabler installed, prep runs **harnessed**: a Workflow
-fans out repo/env/figma audit agents whose every status is computed by
-`lib/ui-prep.mjs` (agents transcribe raw MCP dumps verbatim and relay tool output
-under FNV-1a seal checks), per-gap proposals come back as structured artifacts for the
-wizard gates, approved proposals are applied byte-exact with the touched files fenced
-to the proposal and verified by the tool's exit code, and the run ends by assembling a
-sealed `.crg-ui/prep-packet.json`. `/crg-ui`'s Stage 0 runs `verify-packet` against it
-— exit 0 skips intake entirely (Story 9 as a machine check; a stale or hand-edited
-packet fails the seal and falls back to the normal gate).
-
-## 🗂️ Layout
+## 🧪 Testing
 
 ```
-.claude-plugin/plugin.json        plugin manifest
-.claude-plugin/marketplace.json   self-hosted marketplace catalog
-skills/crg-debug/SKILL.md         /crg-debug entry — routes prose vs deterministic
-skills/crg-debug/methodology.md   single source of truth (phases + judgment rules)
-skills/crg-farm/SKILL.md          /crg-farm entry — the bug-farming loop orchestrator
-skills/crg-farm/methodology.md    Named-Gate Protocol + escalation + PR-prep + farm-DB shapes
-skills/crg-agentsmd/SKILL.md      /crg-agentsmd entry — measured AGENTS.md mining
-skills/crg-agentsmd/methodology.md  miner discipline + verification attacks + holdout scoring
-skills/crg-integrations/SKILL.md  /crg-integrations entry — matrix triage/repair router + 3 gates
-skills/crg-integrations/methodology.md  class definitions + drift asymmetry + fence discipline
-skills/crg-ui/SKILL.md            /crg-ui entry — profile/boot/gates + measure/repair router
-skills/crg-ui/methodology.md      layered oracle + classes + render determinism + fix discipline
-skills/crg-ui-prep/SKILL.md       /crg-ui-prep entry — audit → gated gap loop → draft profile
-skills/crg-ui-prep/checklist.md   per-item contract: audit check, fix path, effort, loop order
-lib/ui-measure.mjs                the numeric oracle: geometry/token/typography deltas (deterministic CLI)
-lib/ui-map.mjs                    ui profile validator + Figma frame-name pairing
-lib/ui-prep.mjs                   prep audits, scorecard, item verify, ready packet (deterministic CLI)
-workflows/crg-ui.js               deterministic measure/repair Workflow (installed by the enabler)
-workflows/crg-ui-prep.js          deterministic prep Workflow: audit/propose/apply/packet (installed by the enabler)
-lib/integrations-profile.mjs      matrix-profile validator (reference schema, placeholder + fence checks)
-workflows/crg-integrations.js     deterministic matrix triage/repair Workflow (installed by the enabler)
-lib/corpus.mjs                    review-corpus fetcher, holdout splitter, ledger assembler
-lib/agentsmd-score.mjs            retrodictive holdout scorer (deterministic)
-lib/agentsmd-ab.mjs               three-arm A/B harness CLIs (contamination-clean workspaces)
-workflows/crg-agentsmd.js         deterministic AGENTS.md Workflow (installed by the enabler)
-agents/crg-debugger.md            sequential single-context variant
-lib/ledger-slice.mjs              narrow a ledger to a bug subset (triage + escalation)
-lib/farm-db.mjs                   global append-only farm history (JSONL)
-.mcp.json                         declares the code-review-graph MCP server
-workflows/crg-debug.js            deterministic Workflow (installed by the enabler)
-bin/crg-deterministic             installs the Workflow + helpers into ~/.claude/workflows/
+node --test        # 225 tests across 20 files, ~3s
 ```
 
-Both orchestrators read the same `methodology.md`; the only difference is who owns control flow — the
-model (prose) or the script (deterministic).
+Every Workflow keeps its pure logic in a marked `pure-helpers` block that tests eval-extract and
+exercise directly — the tested code *is* the shipped code. The one skipped test is a live Docker
+provisioning check that only runs when Docker is up.
 
 ## 📄 License
 
