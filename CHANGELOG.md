@@ -4,6 +4,34 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.25.0] - 2026-07-31
+
+Wave-shape control and honest stop reporting, both earned by the first BUILD run over
+the 54-story dogfood PRD.
+
+### Added
+- **`maxPerWave` arg** (clamped 1..16, default 8) for both pack sites — the plan-time
+  pack and the build loop's per-round repack. It was hardcoded to 4, so widening a wave
+  meant editing the script. The default is 8 rather than the ceiling because N is the
+  blast radius of one red wave-regression gate: that failure holds back every story in
+  the wave *and* stops the build. Measured on the 54-story PRD, returns flatten well
+  before the ceiling — N=4 packs 20 waves, N=6 and N=8 pack 17, N=12 and N=16 pack 16.
+  The residue is dependency depth and fence collisions, which no cap can widen.
+
+### Fixed
+- **A build halted by `dirtyStop` blamed the wave cap.** Every remaining story was
+  marked `wave cap (N) reached` even when the loop stopped mid-run with waves to spare,
+  sending the reader hunting a limit that was never hit. The recorded reason is now the
+  actual one.
+
+### Known gap
+- Toolchain commands generate lockfiles (`uv.lock`, `package-lock.json`) that no critic
+  predicts, because they are not source files. Unfenced and ungitignored, they read as
+  stray edits and trip `dirtyStop` after an otherwise green wave. Workaround: name the
+  lockfile in the fence of the story owning its manifest. The principled fix — capture
+  the dirty-tree baseline after one toolchain warm-up run, so toolchain output is
+  baseline rather than stray — is not implemented here.
+
 ## [0.24.1] - 2026-07-31
 
 Three PLAN defects earned by the second `/crg-ralph` dogfood: ingesting a 58-story
