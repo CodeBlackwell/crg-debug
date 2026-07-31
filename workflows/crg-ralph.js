@@ -684,6 +684,7 @@ const waveGateAgent = touched =>
     `Run the wave-level regression gate for the repo at ${repoRoot}. Do NOT edit any file. For each package below whose files were touched, run its build and typecheck (when defined), and its test command scoped to the touched files' blast radius via CRG (get_impact_radius_tool + query_graph_tool(pattern="tests_for")) when a test command exists — never the whole suite. Report the REAL exit code and output tail for every command actually run — do not interpret pass/fail.
 Touched files:
 ${touched.map(f => `- ${f}`).join('\n') || '(none)'}
+If NO package's files were touched — the wave changed only paths outside every package, such as Dockerfile, compose, scripts/, or docs — run every package's typecheck instead. Returning zero rows is read as a REGRESSION and stops the build, so a wave with no scoped surface must still be verified by a superset, never by silence.
 Toolchain (the human-approved gate surface — run ONLY these commands):
 ${tcLine(gateToolchain)}
 ${knownBaselineFailures.length ? `KNOWN plan-time baseline failures (these were already red BEFORE any story was built):
