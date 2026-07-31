@@ -684,7 +684,7 @@ const waveGateAgent = touched =>
     `Run the wave-level regression gate for the repo at ${repoRoot}. Do NOT edit any file. For each package below whose files were touched, run its build and typecheck (when defined), and its test command scoped to the touched files' blast radius via CRG (get_impact_radius_tool + query_graph_tool(pattern="tests_for")) when a test command exists — never the whole suite. Report the REAL exit code and output tail for every command actually run — do not interpret pass/fail.
 Touched files:
 ${touched.map(f => `- ${f}`).join('\n') || '(none)'}
-If NO package's files were touched — the wave changed only paths outside every package, such as Dockerfile, compose, scripts/, or docs — run every package's typecheck instead. Returning zero rows is read as a REGRESSION and stops the build, so a wave with no scoped surface must still be verified by a superset, never by silence.
+If NO package's files were touched — the wave changed only paths outside every package, such as Dockerfile, compose, scripts/, or docs — run nothing and return zero rows. Do NOT reach for packages the wave never touched: in a build that creates its packages over time, an untouched package may not exist yet, and its failure would be noise attributed to this wave.
 Toolchain (the human-approved gate surface — run ONLY these commands):
 ${tcLine(gateToolchain)}
 ${knownBaselineFailures.length ? `KNOWN plan-time baseline failures (these were already red BEFORE any story was built):
@@ -851,8 +851,16 @@ while (open.length && waveNum < maxWaves && !dirtyStop) {
   // approved at GATE-PLAN) is reported, never blocking — the gate judges the delta.
   let waveClean = true
   if (closedNow.length) {
-    const wg = await waveGateAgent([...new Set(closedNow.flatMap(({ r }) => (r.filesTouched || []).map(normPath)))])
-    waveClean = !!(wg && (wg.results || []).length && wg.results.every(x => x.exitCode === 0 || x.preexisting === true))
+    const waveTouched = [...new Set(closedNow.flatMap(({ r }) => (r.filesTouched || []).map(normPath)))]
+    const wg = await waveGateAgent(waveTouched)
+    const rows = (wg && wg.results) || []
+    // Zero rows means one of two very different things. If nothing touched lives under a
+    // gate package, there was genuinely nothing to run and the wave is clean. If something
+    // did, the gate failed to run and silence must stay red.
+    const scoped = waveTouched.some(f => gateToolchain.some(t => t.package && underFence(f, [t.package])))
+    waveClean = rows.length
+      ? rows.every(x => x.exitCode === 0 || x.preexisting === true)
+      : !scoped
   }
 
   // Commit the green wave: explicit paths, message gate, diff-tree ⊆ fence union,
