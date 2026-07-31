@@ -910,7 +910,10 @@ while (open.length && waveNum < maxWaves && !dirtyStop) {
     break
   }
 }
-for (const s of open) markUnbuilt(s, `wave cap (${maxWaves}) reached`)
+// Report why the loop actually ended. dirtyStop halts mid-run with waves to spare, and
+// blaming the cap there sends the reader hunting a limit that was never reached.
+const stopReason = dirtyStop || (waveNum >= maxWaves ? `wave cap (${maxWaves}) reached` : 'no buildable stories remain')
+for (const s of open) markUnbuilt(s, stopReason)
 
 // Final regression gate over the cumulative diff — scoped to the blast radius.
 let finalGate = null
