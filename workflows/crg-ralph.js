@@ -485,7 +485,7 @@ Return the corrected sets (or the originals if the prediction holds). ${UNTRUSTE
     runtime: runtime || undefined,
   }
   await agent(
-    `Create the directory ${repoRoot}/.crg-ralph if it does not exist, then write the following JSON to ${planPath}, overwriting any existing file. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(plan, null, 2)}`,
+    `Create the directory ${repoRoot}/.crg-ralph if it does not exist, then write the following JSON to ${planPath}, overwriting any existing file. ${planPath} usually already exists (a prior plan or resume) — Read it before writing, or your write tool will reject the overwrite and cost a round trip. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(plan, null, 2)}`,
     { label: 'persist', phase: 'Plan', model },
   )
 
