@@ -104,6 +104,31 @@ test('packStories: cycles break deterministically toward the earlier-ranked stor
   assert.deepEqual(run(), run(), 'pure function of its input')
 })
 
+test('packStories: dependsOn is rewritten to the graph actually used', () => {
+  // Blocked stories are filtered out before packing, so a dep naming one dangles in the
+  // persisted plan and fails tool validation. Same for an edge dropped to break a cycle.
+  const [a, b] = [story('a', { dependsOn: ['US-BLOCKED'] }), story('b', { dependsOn: ['a', 'b'] })]
+  H.packStories([a, b])
+  assert.deepEqual(a.dependsOn, [], 'dep on a story absent from the input is dropped')
+  assert.deepEqual(b.dependsOn, ['a'], 'self-edge dropped, real dep kept')
+
+  const [c, d] = [story('c', { dependsOn: ['d'] }), story('d', { dependsOn: ['c'] })]
+  const { cycleBroken } = H.packStories([c, d])
+  const survivors = [...c.dependsOn, ...d.dependsOn]
+  assert.ok(!survivors.includes(cycleBroken[0].droppedDep) || c.dependsOn.length + d.dependsOn.length === 1)
+})
+
+test('maxWaves ceiling admits Army-scale PRDs', () => {
+  // A 54-story PRD at 4 stories/wave needs well over 12 waves; a low ceiling silently
+  // strands the overflow in deferredByCap.
+  const ceiling = Number(src.match(/clampInt\(a && a\.maxWaves, 1, (\d+), \d+\)/)[1])
+  assert.ok(ceiling >= 40, `maxWaves ceiling of ${ceiling} truncates large PRDs`)
+  const stories = Array.from({ length: 20 }, (_, i) => story(`s${i}`, {
+    files: ['src/shared.py'], dependsOn: i ? [`s${i - 1}`] : [],
+  }))
+  assert.equal(H.packStories(stories, { maxWaves: 20 }).waves.length, 20, 'packer honors a high cap')
+})
+
 test('packStories: Army waveHint deps serialize declared waves (foundation before all)', () => {
   // Mirrors the FOREX dogfood: wave-0 foundation, wave-1 lanes with disjoint dir fences.
   const stories = [

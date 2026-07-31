@@ -165,6 +165,9 @@ const packStories = (stories, { maxPerWave = 4, maxWaves = 8 } = {}) => {
     }
   }
   for (const id of ids) if (unplaced.has(id)) deferredByCap.push(byId.get(id))
+  // Publish the dep graph actually used: ids outside this set (blocked stories) and
+  // cycle-broken edges are gone. Callers persist dependsOn, and a dangling id fails validation.
+  for (const id of ids) byId.get(id).dependsOn = deps.get(id)
   return { waves: waves.filter(w => w && w.length), deferredByCap, cycleBroken }
 }
 // <<< pure-helpers
@@ -180,7 +183,7 @@ const methodologyPath = capText(a && a.methodologyPath, 1000)
 const planToolPath = capText(a && a.planToolPath, 1000)
 const fromPlan = capText(a && a.fromPlan, 1000)
 const approvedStoryIds = Array.isArray(a && a.approvedStoryIds) ? a.approvedStoryIds : []
-const maxWaves = clampInt(a && a.maxWaves, 1, 12, 8)
+const maxWaves = clampInt(a && a.maxWaves, 1, 64, 8)
 const profile = (a && a.profile) || {}
 const offLimits = Array.isArray(profile.offLimits) ? profile.offLimits.map(normPath).filter(Boolean) : []
 const maxTier = TIERS.includes(a && a.maxTier) ? a.maxTier : TIERS.includes(profile.maxTier) ? profile.maxTier : 'opus'
