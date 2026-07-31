@@ -4,6 +4,26 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.24.1] - 2026-07-31
+
+Three PLAN defects earned by the second `/crg-ralph` dogfood: ingesting a 58-story
+hand-authored Army PRD, roughly double the size of the first run's.
+
+### Fixed
+- **`maxWaves` was clamped to 12**, silently capping a plan at 48 stories (12 waves x 4
+  per wave). A 54-story pack placed 33 and stranded the rest in `deferredByCap` — no
+  error, just a quietly truncated plan. The ceiling is now 64; the default stays 8.
+- **`packStories` left each story's own `dependsOn` untouched** while resolving its
+  internal graph, so the persisted plan disagreed with the graph the packer actually
+  used. A dep naming a blocked story dangled and failed `ralph-plan validate` with
+  `unknown story id`; edges dropped to break a cycle were likewise persisted as if they
+  still constrained order. The resolved graph is now published back onto each story, so
+  the plan is self-consistent by construction. The validator's rule was correct and is
+  unchanged.
+- **The `persist` agent burned two round trips** whenever `plan.json` already existed —
+  the write tool rejects an unread file, and the prompt never said to expect one. On a
+  120KB plan that is pure latency in the slowest step of PLAN.
+
 ## [0.24.0] - 2026-07-21
 
 `/crg-ralph` — the constructive sibling of `/crg-debug` — plus measure-tool fixes
