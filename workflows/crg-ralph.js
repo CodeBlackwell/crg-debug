@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-compiled Army construction: decompose a feature request (or ingest an existing Army PRD dir) into stories, critic-check every predicted file set against the graph, pack verified-disjoint waves with community lanes and per-story fence allowlists in deterministic JS, emit a standard Army PRD dir + plan ledger — then STOP for GATE-PLAN. Build mode (human-approved stories) runs parallel lane builders per wave with JS-enforced prefix-aware fences, blind exit-code criteria gates, a strictly-upward model ladder whose escalations carry the failed attempt\'s gate evidence, and a commit per green wave (allowlist-verified via git diff-tree) followed by graph re-ingest. Never pushes.',
   whenToUse:
-    'Requires args {repoRoot, methodologyPath, planToolPath, feature?, prdDir?, profile?, model?, maxTier?, maxWaves?, build?, fromPlan?, approvedStoryIds?}. Default = PLAN: exactly one of feature (a feature request to decompose) or prdDir (absolute path to an existing Army PRD dir — PRD.md + agents/*.md — whose stories are ingested verbatim: prose criteria become the checklist, machine criteria are synthesized honoring the PRD\'s own gate caveats, declared waves become implicit prior-wave deps the packer verifies). Persists <repoRoot>/.crg-ralph/plan.json (tool-validated by exit code) and, for feature-mode, emits <repoRoot>/.crg-ralph/prd/ in standard Army format runnable by the ralph CLI. Returns {status:"planned"} for the /crg-ralph skill\'s GATE-PLAN. build:true requires fromPlan (absolute path to that plan.json) + approvedStoryIds: runs ONLY the build waves over approved stories on a crg-ralph/build-* branch. profile carries {project, offLimits[], toolchain?, maxTier?, runtime?{devUrl}}. Invoked by the /crg-ralph skill, which owns gates, the crg-debug sweep composition, and the campaign loop.',
+    'Requires args {repoRoot, methodologyPath, planToolPath, feature?, prdDir?, profile?, model?, maxTier?, maxWaves?, maxPerWave?, build?, fromPlan?, approvedStoryIds?}. Default = PLAN: exactly one of feature (a feature request to decompose) or prdDir (absolute path to an existing Army PRD dir — PRD.md + agents/*.md — whose stories are ingested verbatim: prose criteria become the checklist, machine criteria are synthesized honoring the PRD\'s own gate caveats, declared waves become implicit prior-wave deps the packer verifies). Persists <repoRoot>/.crg-ralph/plan.json (tool-validated by exit code) and, for feature-mode, emits <repoRoot>/.crg-ralph/prd/ in standard Army format runnable by the ralph CLI. Returns {status:"planned"} for the /crg-ralph skill\'s GATE-PLAN. build:true requires fromPlan (absolute path to that plan.json) + approvedStoryIds: runs ONLY the build waves over approved stories on a crg-ralph/build-* branch. profile carries {project, offLimits[], toolchain?, maxTier?, runtime?{devUrl}}. maxPerWave (default 8, max 16) caps stories per wave; fence-disjointness and deps usually bind first, so raise it for wide PRDs and lower it to shrink what one red wave-regression gate holds back. Invoked by the /crg-ralph skill, which owns gates, the crg-debug sweep composition, and the campaign loop.',
   phases: [
     { title: 'Graph', detail: 'graph freshness + toolchain discovery + baseline build/typecheck (code failures surfaced for GATE-PLAN, never silently built upon)' },
     { title: 'Plan', detail: 'stories (decomposed or ingested) -> per-story adversarial prediction critic -> graph map (hubs, communities) -> JS wave packer (fence-disjoint, hub-first, community lanes) -> plan.json + Army PRD dir' },
@@ -184,6 +184,9 @@ const planToolPath = capText(a && a.planToolPath, 1000)
 const fromPlan = capText(a && a.fromPlan, 1000)
 const approvedStoryIds = Array.isArray(a && a.approvedStoryIds) ? a.approvedStoryIds : []
 const maxWaves = clampInt(a && a.maxWaves, 1, 64, 8)
+// Stories per wave. Fence-disjointness and deps are the real limiters; this only bounds
+// how much one red wave-regression gate can hold back, since that failure stops the build.
+const maxPerWave = clampInt(a && a.maxPerWave, 1, 16, 8)
 const profile = (a && a.profile) || {}
 const offLimits = Array.isArray(profile.offLimits) ? profile.offLimits.map(normPath).filter(Boolean) : []
 const maxTier = TIERS.includes(a && a.maxTier) ? a.maxTier : TIERS.includes(profile.maxTier) ? profile.maxTier : 'opus'
@@ -458,7 +461,7 @@ Return the corrected sets (or the originals if the prediction holds). ${UNTRUSTE
   const blockedIds = new Set(blocked.map(s => s.id))
   const packable = rankStories(stories.filter(s => !blockedIds.has(s.id)), graphMap.hubs)
   for (const s of packable) s.lane = laneOf(s, communityByFile)
-  const packed = packStories(packable, { maxPerWave: 4, maxWaves })
+  const packed = packStories(packable, { maxPerWave, maxWaves })
   const waveIdx = new Map()
   packed.waves.forEach((w, i) => w.forEach(s => waveIdx.set(s.id, i)))
   for (const s of packable) s.wave = waveIdx.get(s.id)
@@ -750,7 +753,7 @@ const markUnbuilt = (s, reason, { cascade = true } = {}) => {
 
 while (open.length && waveNum < maxWaves && !dirtyStop) {
   waveNum++
-  const packed = packStories(open, { maxPerWave: 4, maxWaves: 1 })
+  const packed = packStories(open, { maxPerWave, maxWaves: 1 })
   const wave = packed.waves[0] || []
   if (!wave.length) {
     for (const s of [...open]) { open = open.filter(o => o.id !== s.id); markUnbuilt(s, 'unplaceable: dependency never built') }

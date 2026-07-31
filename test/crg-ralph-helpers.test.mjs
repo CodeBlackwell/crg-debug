@@ -118,6 +118,20 @@ test('packStories: dependsOn is rewritten to the graph actually used', () => {
   assert.ok(!survivors.includes(cycleBroken[0].droppedDep) || c.dependsOn.length + d.dependsOn.length === 1)
 })
 
+test('maxPerWave is configurable, and fence-disjointness still bounds a wide wave', () => {
+  const ceiling = Number(src.match(/clampInt\(a && a\.maxPerWave, 1, (\d+), (\d+)\)/)[1])
+  const dflt = Number(src.match(/clampInt\(a && a\.maxPerWave, 1, \d+, (\d+)\)/)[1])
+  assert.ok(ceiling >= dflt && dflt >= 4, `maxPerWave default ${dflt} / ceiling ${ceiling}`)
+
+  const wide = Array.from({ length: 10 }, (_, i) => story(`s${i}`, { files: [`src/${i}.py`] }))
+  assert.equal(H.packStories(wide, { maxPerWave: 10 }).waves[0].length, 10, 'disjoint stories fill a wide wave')
+  assert.equal(H.packStories(wide, { maxPerWave: 2 }).waves[0].length, 2, 'the cap still binds when set low')
+
+  // A shared file serializes regardless of how wide the cap is — the justfile case.
+  const shared = Array.from({ length: 3 }, (_, i) => story(`j${i}`, { files: ['justfile'] }))
+  assert.deepEqual(H.packStories(shared, { maxPerWave: 16 }).waves.map(w => w.length), [1, 1, 1])
+})
+
 test('maxWaves ceiling admits Army-scale PRDs', () => {
   // A 54-story PRD at 4 stories/wave needs well over 12 waves; a low ceiling silently
   // strands the overflow in deferredByCap.
