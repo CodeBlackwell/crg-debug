@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -182,4 +182,67 @@ test('waveCommitMessage uses only file names, dedupes, and stays within 72 chars
   assert.equal(H.commitMessageOk(msg), true)
   const many = Array.from({ length: 30 }, (_, i) => ({ file: `dir/file-${i}-long-name.py` }))
   assert.ok(H.waveCommitMessage(many).length <= 72)
+})
+
+// ---- waveAllowlist --------------------------------------------------------------
+// The file set a validated wave may commit. Regression cover for 2026-08-13: the
+// allowlist was [bugFile, testFile] only, so a fix's supporting edits were dropped and
+// the committed wave failed to compile on its own (TS2339 on a field the fix reads).
+
+test('waveAllowlist includes the bug file, its test, and declared supporting files', () => {
+  const closed = [{ bugId: 'b0', file: 'src/pages/SessionReviewPage.tsx:229' }]
+  const fixById = new Map([['b0', { testFile: 'src/pages/SessionReviewPage.test.tsx' }]])
+  const supportById = new Map([['b0', ['src/api/types.ts']]])
+  assert.deepEqual(H.waveAllowlist(closed, fixById, supportById, '/repo'), [
+    'src/pages/SessionReviewPage.tsx',
+    'src/pages/SessionReviewPage.test.tsx',
+    'src/api/types.ts',
+  ])
+})
+
+test('waveAllowlist widens ONLY for bugs that closed', () => {
+  // b1 was attempted but did not close, so its agent's edits must not ride along.
+  const closed = [{ bugId: 'b0', file: 'a.ts' }]
+  const supportById = new Map([['b0', ['shared.ts']], ['b1', ['sneaky.ts']]])
+  const allow = H.waveAllowlist(closed, new Map(), supportById, '/repo')
+  assert.ok(allow.includes('shared.ts'))
+  assert.ok(!allow.includes('sneaky.ts'), 'an unclosed bug must not widen the allowlist')
+})
+
+test('waveAllowlist strips line suffixes, absolutises to repo-relative, and dedupes', () => {
+  const closed = [
+    { bugId: 'b0', file: '/repo/src/a.ts:12' },
+    { bugId: 'b1', file: 'src/a.ts:40' }, // same file, second bug
+  ]
+  const supportById = new Map([['b0', ['/repo/src/shared.ts']], ['b1', ['src/shared.ts']]])
+  assert.deepEqual(H.waveAllowlist(closed, new Map(), supportById, '/repo'), ['src/a.ts', 'src/shared.ts'])
+})
+
+test('waveAllowlist degrades safely on missing maps and empty input', () => {
+  assert.deepEqual(H.waveAllowlist([], new Map(), new Map(), '/repo'), [])
+  assert.deepEqual(H.waveAllowlist(null, null, null, '/repo'), [])
+  assert.deepEqual(H.waveAllowlist([{ bugId: 'b0', file: 'a.ts' }], null, null, '/repo'), ['a.ts'])
+})
+
+test('waveAllowlist output still satisfies commitFilesOk for what it permits', () => {
+  // The allowlist and the post-commit verifier must agree, or a legal commit gets
+  // un-committed as "stray files".
+  const closed = [{ bugId: 'b0', file: 'src/a.ts:9' }]
+  const fixById = new Map([['b0', { testFile: 'src/a.test.ts' }]])
+  const supportById = new Map([['b0', ['src/types.ts']]])
+  const allow = H.waveAllowlist(closed, fixById, supportById, '/repo')
+  assert.ok(H.commitFilesOk(['src/a.ts', 'src/types.ts', 'src/a.test.ts'], allow))
+  assert.ok(!H.commitFilesOk(['src/a.ts', 'src/unrelated.ts'], allow))
+})
+
+test('every commitWave call site passes a supportById map', () => {
+  // The helper is only as good as its wiring: a call site that omits the 4th argument
+  // silently reverts to the [bugFile, testFile] allowlist that shipped a broken commit.
+  const calls = [...src.matchAll(/await commitWave\(([^\n]*)\)/g)].map(m => m[1])
+  assert.equal(calls.length, 2, 'expected the per-wave and coupled commit sites')
+  // Nested commas (new Map(...)) make arity-by-split unreliable; the load-bearing check
+  // is that a support map is threaded through at all, as the LAST argument.
+  for (const args of calls) {
+    assert.match(args.trim(), /[sS]upport[A-Za-z]*$/, `commitWave call passes no support map: ${args}`)
+  }
 })

@@ -64,6 +64,20 @@ const allGreen = (res, pick) => {
 const waveKey = b => `${bugFile(b)}::${norm(b && b.rootCause)}`
 // The no-attribution rule as an enforced gate, not a prompt hope.
 const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// The exact file set a wave is allowed to commit: for each bug that CLOSED, its own
+// file, its test, and the supporting files that bug's fix agent declared in filesTouched.
+// The support term is load-bearing — a fix legitimately edits a shared type or helper,
+// and the gate compiled and ran GREEN with those edits present. Omitting them commits a
+// "validated" wave that does not build (observed 2026-08-13: a retention fix landed
+// without the `retention_days` field it reads, leaving TS2339 on the committed branch).
+// Still an allowlist: bounded by what the agent DECLARED, never by what it left in the tree.
+const waveAllowlist = (closedNow, fixById, supportById, root) => [...new Set(
+  (closedNow || []).flatMap(b => {
+    const fx = (fixById && fixById.get(b && b.bugId)) || {}
+    const support = (supportById && supportById.get(b && b.bugId)) || []
+    return [bugFile(b), fx.testFile, ...support].filter(Boolean).map(f => relPath(f, root))
+  }),
+)]
 // Committed files must be a non-empty subset of the wave's closed-bug allowlist.
 const commitFilesOk = (committed, allowlist) => {
   const allow = new Set((allowlist || []).map(normPath))
@@ -899,12 +913,9 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   // Commit one validated wave: only the closed bugs' own files (source + test) by
   // explicit path, then verify what landed against that allowlist and the
   // no-attribution message gate — a bad commit is un-committed, the work stays in tree.
-  const commitWave = async (closedNow, fixById, tag) => {
+  const commitWave = async (closedNow, fixById, tag, supportById) => {
     if (!commitEnabled || !closedNow.length) return
-    const allow = [...new Set(closedNow.flatMap(b => {
-      const fx = fixById.get(b.bugId) || {}
-      return [bugFile(b), fx.testFile].filter(Boolean).map(f => relPath(f, repoRoot))
-    }))]
+    const allow = waveAllowlist(closedNow, fixById, supportById, repoRoot)
     const message = waveCommitMessage(closedNow)
     if (!allow.length || !commitMessageOk(message)) return
     const c = await commitAgent(allow, message)
@@ -962,6 +973,14 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
     // file-owning agent may also touch them, but they're closed when their own wave runs).
     const fixById = new Map()
     for (const { r } of results) for (const fx of (r && r.fixes) || []) fixById.set(fx.bugId, fx)
+    // filesTouched is reported per fix agent (i.e. per file-chunk), so every bug in a
+    // chunk shares its agent's supporting edits. Keyed by bugId so commitWave widens the
+    // allowlist only for the bugs that actually closed.
+    const supportById = new Map()
+    for (const { bugs, r } of results) {
+      const touched = ((r && r.filesTouched) || []).filter(Boolean)
+      for (const b of bugs) supportById.set(b.bugId, touched)
+    }
     const gateable = attempted.filter(b => {
       const fx = fixById.get(b.bugId)
       return fx && fx.redObserved && fx.greenObserved && fx.testCommand
@@ -990,7 +1009,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
 
     waveLog.push({ wave: waveNum, files: groups.length, attempted: attempted.length, closed })
     log(`Fix wave ${waveNum}: ${groups.length} files, attempted ${attempted.length}, closed ${closed}`)
-    await commitWave(fixedBugs.filter(b => b.wave === waveNum), fixById, `wave ${waveNum}`)
+    await commitWave(fixedBugs.filter(b => b.wave === waveNum), fixById, `wave ${waveNum}`, supportById)
 
     const nextRaw = [...deferredChunks, ...requeued]
     // Fixed-point guard: a wave that closes nothing means the open bugs resist per-bug
@@ -1023,7 +1042,10 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
       else unfixedBugs.push({ ...b, reason: 'per-bug waves + holistic prose attempt both failed — needs human', wave: waveNum })
     }
     log(`Fix: prose fallback ${green ? 'closed' : 'could not close'} ${stillOpen.length} coupled bug(s)`)
-    if (green) await commitWave(stillOpen, new Map(((pr && pr.fixes) || []).map(f => [f.bugId, f])), 'coupled')
+    if (green) {
+      const coupledSupport = new Map(stillOpen.map(b => [b.bugId, ((pr && pr.filesTouched) || []).filter(Boolean)]))
+      await commitWave(stillOpen, new Map(((pr && pr.fixes) || []).map(f => [f.bugId, f])), 'coupled', coupledSupport)
+    }
   }
 
   // Final gate over the cumulative diff — the regression detector: with bugs closed

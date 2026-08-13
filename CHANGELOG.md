@@ -6,6 +6,38 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-13
+
+A validated fix wave could be committed in a state that does not build. Found by
+inspecting a real wave this harness had just committed, not by reasoning about the code.
+
+### Fixed
+- **The wave commit allowlist dropped the supporting files a fix depended on.** `commitWave`
+  built its allowlist from `[bugFile(bug), fix.testFile]` only. But a fix legitimately edits
+  more than the bug's own file — a shared type, a helper, a barrel export — and the gate
+  compiles and runs GREEN with those edits present in the working tree. The commit then
+  excluded them, so the branch carried a fix referencing a declaration that never landed:
+  ```
+  src/pages/SessionReview/SessionReviewPage.tsx(227,34): error TS2339:
+    Property 'retention_days' does not exist on type 'PersonalSessionItem'
+  ```
+  The wave was reported closed, gated, and committed. It did not typecheck. The workflow
+  already had what it needed — fix agents return `filesTouched`, and it was being collected
+  for the final gate's blast radius (`touchedFiles`) — it simply never reached the commit.
+  `filesTouched` is now keyed per bug and threaded into `commitWave`, so a wave commits the
+  same file set the gate validated. This stays an allowlist: it widens only for bugs that
+  actually **closed**, and only to files the agent **declared**, never to whatever it left
+  in the tree. An attempted-but-unclosed bug's edits cannot ride along.
+- The allowlist is now the pure helper `waveAllowlist`, inside the tested block per the
+  repo's own rule, rather than logic buried in a closure no test could reach.
+
+### Added
+- 6 tests: allowlist composition, closed-only widening, line-suffix/absolute-path
+  normalisation and dedup, safe degradation on missing maps, agreement with
+  `commitFilesOk` (allowlist and post-commit verifier must not disagree, or a legal commit
+  gets un-committed as "stray files"), and a structural check that **both** `commitWave`
+  call sites thread a support map — mutation-verified to fail when either is dropped.
+
 ## [0.28.0] - 2026-08-13
 
 0.27.0 fixed the prose leak where it was first seen, in Phase 1. The very next run hit the
