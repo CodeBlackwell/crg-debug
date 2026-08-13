@@ -150,6 +150,13 @@ for the app root itself. It is **never a package NAME**: `@acme/web` matches no 
 the wave regression gate decides which files a wave must gate by testing them against these
 prefixes. A name-shaped entry silently covers nothing.
 
+The gate defends itself partway: a `@scope/name` entry is discarded outright, and a toolchain left
+with no usable package holds every wave. A **bare** name (`web` where the directory is `apps/web`)
+is indistinguishable from a real prefix, so nothing can reject it — it will pass waves on "nothing
+in scope". The run log names the packages it consulted at build entry and on every such pass; if
+that list does not look like paths into this repo, the toolchain is wrong and the campaign is not
+being gated.
+
 Report the toolchain even when it is empty, and prefer a partial row to none. An empty toolchain
 means no wave can be gated at all, so every build wave is held for the human rather than committed.
 

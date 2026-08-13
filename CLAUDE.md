@@ -14,7 +14,7 @@ pass/fail verdict. See README.md for the full user-facing picture.
 ## Commands
 
 ```
-node --test                 # full suite (392 tests, ~15s); run before any commit
+node --test                 # full suite (395 tests, ~15s); run before any commit
 bin/crg-deterministic       # installs Workflows + tools into ~/.claude/workflows/
 ```
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const src = readFileSync(fileURLToPath(new URL('../workflows/crg-build.js', import.meta.url)), 'utf8')
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
-const H = new Function(`${block}\nreturn { waveGateClean }`)()
+const H = new Function(`${block}\nreturn { waveGateClean, gatePackages }`)()
 
 const TOOLCHAIN = [{ package: 'apps/web', typecheck: 'tsc' }, { package: 'services/api', test: 'pytest' }]
 
@@ -54,6 +54,33 @@ test('the wave gate calls the helper only when the gate agent actually reported'
   assert.equal(src.includes('waveClean = !!(wg && (wg.results || []).length &&'), false, 'the collapsed verdict must be gone')
   assert.equal(src.includes('waveGateClean(wg && wg.results'), false,
     'a dead gate agent must not reach the helper — null rows are indistinguishable from a scope-less gate there')
+})
+
+// A package is a path prefix. An npm-scope name matches no file on disk, so a toolchain of
+// nothing but those looks populated and gates exactly nothing.
+test('an npm-scope package name is not a gate package', () => {
+  assert.deepEqual(H.gatePackages([{ package: '@acme/web' }, { package: 'apps/web' }]), ['apps/web'])
+  assert.deepEqual(H.gatePackages([{ package: '@acme/web' }]), [])
+  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], [{ package: '@acme/web' }]), false,
+    'a scope-named toolchain cannot gate, so its silence is not a pass')
+  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], [{ package: '@acme/api' }, { package: 'apps/web' }]), false,
+    'the one real package still covers the file')
+})
+
+// Bare names ('web' vs the directory 'web') are indistinguishable from a path prefix, so
+// the code cannot reject them — the log has to make them visible instead.
+test('a wave passed on "nothing in scope" logs the packages it consulted', () => {
+  const at = src.indexOf('const wg = await waveGateAgent')
+  const section = src.slice(at, at + 1400)
+  assert.match(section, /if \(waveClean && !\(\(wg\.results \|\| \[\]\)\.length\)\)/,
+    'the vacuous-pass branch must be identified')
+  assert.match(section, /gatePackages\(toolchain\)\.join/,
+    'a misconfigured toolchain is only visible if the packages are named in the log')
+})
+
+test('build-mode entry names the gate packages before any work is done', () => {
+  assert.match(src, /no usable toolchain package/, 'an ungateable toolchain must announce itself up front')
+  assert.match(src, /Wave gate packages \(app-root-relative path prefixes\)/)
 })
 
 test('the ledger schema requires the toolchain the gate is built on', () => {

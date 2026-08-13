@@ -6,6 +6,24 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.31.2] - 2026-08-13
+
+Closes the last vacuous shape of the crg-build wave gate that 0.31.1 left open.
+
+### Fixed
+- **An npm-scope package name no longer counts as a gate package** (`crg-build.js`). A
+  toolchain row's `package` is a path prefix relative to the app root, so `@acme/web`
+  matches no file on disk — it gated nothing while making the toolchain look populated, and
+  the wave passed on "nothing in scope". Scope-named rows are discarded, and a toolchain
+  left with no usable package holds every wave exactly as an empty one does.
+
+### Added
+- **The wave gate says which packages it consulted.** A bare name (`web` where the directory
+  is `apps/web`) is indistinguishable from a real prefix — no check can reject it — so build
+  mode now logs the gate packages at entry, and every wave that passes on "no package covers
+  these files" logs the touched set alongside the packages consulted. A misconfigured
+  toolchain reads as a misconfigured toolchain instead of a suspiciously effortless campaign.
+
 ## [0.31.1] - 2026-08-13
 
 0.31.0 swept "a dead agent is not a passing verdict" through crg-debug, crg-ralph,

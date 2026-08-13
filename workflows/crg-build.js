@@ -164,12 +164,19 @@ const straysOutside = (touched, allowed) =>
 // package of '.' is the app root covering every touched file, which underFence cannot
 // express (normPath('.') is '.', prefix-matching nothing), so the common single-package
 // repo would take the same vacuous path. Both are unable-to-gate, not gated-and-green.
+//
+// A package is a PATH PREFIX relative to the app root, so an npm-scope name (@acme/web)
+// can never be one — it matches no file on disk, gates nothing, and still makes the
+// toolchain look populated. A toolchain of nothing but those is no toolchain. Bare names
+// (`web` vs the directory `web`) are indistinguishable here and stay the log's job.
+const isPackagePath = p => !!p && !String(p).trim().startsWith('@')
+const gatePackages = toolchain => (toolchain || []).map(t => t && t.package).filter(isPackagePath)
 const inGatePackage = (file, toolchain) =>
-  (toolchain || []).some(t => t.package && (normPath(t.package) === '.' || underFence(file, [t.package])))
+  gatePackages(toolchain).some(p => normPath(p) === '.' || underFence(file, [p]))
 const waveGateClean = (rows, touched, toolchain) =>
   (rows || []).length
     ? rows.every(x => x && x.exitCode === 0)
-    : (toolchain || []).length > 0 && !(touched || []).some(f => inGatePackage(f, toolchain))
+    : gatePackages(toolchain).length > 0 && !(touched || []).some(f => inGatePackage(f, toolchain))
 
 // Committed files must be a subset of the wave's declared touch set.
 const commitFilesOk = (committed, allowlist) => {
@@ -738,9 +745,14 @@ Apply the verification rules in ${SKILL}. Classify per its evidence bar: already
 // commitMessageOk/commitFilesOk for the per-subrepo commits.
 
 log(`crg-build build mode: ingesting ${fromLedger} · ${approvedGapIds.length} approved gap(s) · maxWaves ${maxWaves}`)
-// An empty toolchain now holds every wave rather than passing it. Say so once, up front —
-// a campaign that halts on wave 1 should not need a code read to explain itself.
-if (!toolchain.length) log('WARNING: the ledger carries no toolchain — nothing can gate a wave, so every wave will be held for the human')
+// A toolchain that cannot gate now holds every wave rather than passing it. Say so once, up
+// front — a campaign that halts on wave 1 should not need a code read to explain itself,
+// and printing the packages makes a name-shaped entry obvious before any work is done.
+if (!gatePackages(toolchain).length) {
+  log(`WARNING: the ledger carries no usable toolchain package — nothing can gate a wave, so every wave will be held for the human. Rows: ${JSON.stringify((toolchain || []).map(t => t && t.package))}`)
+} else {
+  log(`Wave gate packages (app-root-relative path prefixes): ${gatePackages(toolchain).join(', ')}`)
+}
 const loaded = await tryAgent(
   `Read the JSON file at ${fromLedger} (under the app at ${appRoot}) and return its parsed contents. Do NOT edit any file. It is a crg-build readiness ledger: an object with gaps[] and toolchain[]. Return both fields EXACTLY as parsed, unmodified.`,
   { label: 'ingest-ledger', phase: 'Build', schema: BUILD_LEDGER_SCHEMA, model },
@@ -949,6 +961,13 @@ while (open.length && waveNum < maxWaves && !appDown) {
     // A dead gate agent reported no rows for the same reason a scope-less gate does —
     // silence. Only one of them is evidence, so the null case never reaches the helper.
     waveClean = !!wg && waveGateClean(wg.results, [...waveTouched], toolchain)
+    // The one vacuous shape no check can catch: a package that is a bare NAME reads as a
+    // path prefix, matches nothing, and passes the wave on "nothing in scope". Say out loud
+    // which packages were consulted so a misconfigured toolchain is visible in the log
+    // rather than showing up as a suspiciously effortless campaign.
+    if (waveClean && !((wg.results || []).length)) {
+      log(`Wave gate: no rows, and no toolchain package covers ${[...waveTouched].join(', ') || '(nothing)'} — treating as out of scope. Packages: ${gatePackages(toolchain).join(', ')}`)
+    }
   }
 
   // Commit step: per subrepo, allowlisted paths, script-verified.
