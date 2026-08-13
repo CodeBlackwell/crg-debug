@@ -82,7 +82,13 @@ The enabler copies these into `~/.claude/workflows/` under dotted names
 - **Version source of truth is `.claude-plugin/plugin.json`.**
   `package.json` is test-runner metadata only. CHANGELOG follows Keep a Changelog; new
   work goes under `[Unreleased]` until released.
-- After pushing this repo, `git pull` the marketplace clone at
-  `~/.claude/plugins/marketplaces/crg-debug`, and re-run `bin/crg-deterministic` if
-  workflows/libs/methodologies changed — installed copies do not update themselves.
-- Always make changes in THIS source repo, never directly in `~/.claude/` installs.
+- After pushing this repo, run `claude plugin marketplace update crg-debug`, then re-run
+  `bin/crg-deterministic` if workflows/libs/methodologies changed — installed copies do
+  not update themselves. **Do not just `git pull` the clone at
+  `~/.claude/plugins/marketplaces/crg-debug`.** The clone and Claude Code's registry are
+  separate state: pulling by hand moves the checkout but leaves `lastUpdated` in
+  `~/.claude/plugins/known_marketplaces.json` stale and the catalog cache unrefreshed.
+  The `marketplace update` command does both.
+- Always make changes in THIS source repo, never directly in `~/.claude/` installs. A
+  stray edit in the clone silently blocks the next update — `git pull` refuses to merge
+  over a dirty tree, and the failure surfaces as a release that appears to have shipped.
