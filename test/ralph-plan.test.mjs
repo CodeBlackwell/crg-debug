@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validatePlan, validateProfile, renderPrd } from '../lib/ralph-plan.mjs'
+import { validatePlan, validateRalphProfile } from '../lib/crg-ralph.plan.mjs'
+import { renderPrd } from '../lib/crg-ralph.prd.mjs'
 
 // A minimal plan shaped like the FOREX dogfood: directory fences, declared lanes,
 // two waves with the foundation story alone in wave 0.
@@ -48,15 +49,15 @@ test('validatePlan rejects missing fences, bad criteria, unknown deps, and doubl
   assert.ok(validatePlan(dupId).errors.some(e => e.includes('duplicate')))
 })
 
-// ---- validateProfile ------------------------------------------------------------
+// ---- validateRalphProfile ------------------------------------------------------------
 
-test('validateProfile: minimal valid profile, and each failure mode', () => {
-  assert.equal(validateProfile({ project: 'spice', offLimits: [] }).ok, true)
-  assert.equal(validateProfile({ project: '', offLimits: [] }).ok, false)
-  assert.equal(validateProfile({ project: 'x' }).ok, false, 'offLimits required (may be empty)')
-  assert.equal(validateProfile({ project: 'x', offLimits: [], maxTier: 'gpt4' }).ok, false)
-  assert.equal(validateProfile({ project: 'x', offLimits: [], runtime: { devUrl: 'not-a-url' } }).ok, false)
-  assert.equal(validateProfile({ project: 'x', offLimits: [], runtime: { devUrl: 'http://localhost:3000' }, maxTier: 'sonnet', toolchain: [{ package: 'root' }] }).ok, true)
+test('validateRalphProfile: minimal valid profile, and each failure mode', () => {
+  assert.equal(validateRalphProfile({ project: 'spice', offLimits: [] }).ok, true)
+  assert.equal(validateRalphProfile({ project: '', offLimits: [] }).ok, false)
+  assert.equal(validateRalphProfile({ project: 'x' }).ok, false, 'offLimits required (may be empty)')
+  assert.equal(validateRalphProfile({ project: 'x', offLimits: [], maxTier: 'gpt4' }).ok, false)
+  assert.equal(validateRalphProfile({ project: 'x', offLimits: [], runtime: { devUrl: 'not-a-url' } }).ok, false)
+  assert.equal(validateRalphProfile({ project: 'x', offLimits: [], runtime: { devUrl: 'http://localhost:3000' }, maxTier: 'sonnet', toolchain: [{ package: 'root' }] }).ok, true)
 })
 
 // ---- renderPrd ------------------------------------------------------------------

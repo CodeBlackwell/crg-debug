@@ -13,7 +13,7 @@ after(() => rmSync(dir, { recursive: true, force: true }))
 
 // Imported AFTER the env var is set so dbPath() resolves to the temp file.
 const { append, query, queryAll, dbPath, closeRun, backfillRunEnds, gateWaits, compact, reconcile, advisoryPath, advisoryRoot } =
-  await import('../lib/farm-db.mjs')
+  await import('../lib/crg-debug.farm-db.mjs')
 
 test('append round-trips and stamps ts', () => {
   const r = append({ type: 'run', repo: 'numpy', farmRunId: 'f1' })

@@ -37,7 +37,7 @@ Two runners, one contract:
 
 **Tool resolution** (once, in Phase 0): prefer the enabler install
 `$HOME/.claude/workflows/crg-ui.{measure,map}.mjs` + `crg-ui.collect.js`; absent that,
-the plugin's `lib/ui-measure.mjs`, `lib/ui-map.mjs`, `lib/ui-collect.js` relative to
+the plugin's `lib/crg-ui.measure.mjs`, `lib/crg-ui.map.mjs`, `lib/crg-ui.collect.js` relative to
 this file (`skills/crg-ui/../../lib/`). The measure tool is REQUIRED in both modes —
 no tool, no run.
 
@@ -45,16 +45,16 @@ no tool, no run.
 
 | Command | Owns |
 |---|---|
-| `ui-map.mjs validate <profile>` | profile contract (exit code) |
-| `ui-map.mjs pair <frames> <profile>` | `<Screen> / <Breakpoint>` frame pairing |
-| `ui-map.mjs waitup <url> --timeout <sec>` | dev-server readiness (exit code) |
-| `ui-map.mjs bless <profile> --entry '<json>' --allowlist <path>` | intentional deviations — profile + allowlist in one atomic step |
-| `ui-measure.mjs normalize-vars <raw> --out <variables.json>` | raw `get_variable_defs` dump → flat token map |
-| `ui-measure.mjs normalize-figma <raw> --frame <id> --variables <vars> --out <figma.json>` | ALL figma math: depth≤2 walk, named-node filter, absolute → frame-relative coords |
-| `ui-measure.mjs normalize-dom <raw> --route <r> --width <w> --height <h> --out <dom.json>` | canonical DOM shape: coerced numbers, stable order |
-| `ui-measure.mjs measure <figma> <dom> --tolerance <px> --screen <s> --breakpoint <b> [--allowlist <p>] --out <measure.json>` | the numeric oracle; prints `{keyCount, seal, discrepancies, …}` |
-| `ui-measure.mjs assemble <capturesDir> --profile <p> --repo-root <r> --out <ledger.json>` | the ledger: cell-qualified ids, sealed allKeys |
-| `ui-measure.mjs slice <ledger> --keys <k,…> / --ids <id,…>` | repair entry from a prior ledger — never transcribed by an agent |
+| `crg-ui.map.mjs validate <profile>` | profile contract (exit code) |
+| `crg-ui.map.mjs pair <frames> <profile>` | `<Screen> / <Breakpoint>` frame pairing |
+| `crg-ui.map.mjs waitup <url> --timeout <sec>` | dev-server readiness (exit code) |
+| `crg-ui.map.mjs bless <profile> --entry '<json>' --allowlist <path>` | intentional deviations — profile + allowlist in one atomic step |
+| `crg-ui.measure.mjs normalize-vars <raw> --out <variables.json>` | raw `get_variable_defs` dump → flat token map |
+| `crg-ui.measure.mjs normalize-figma <raw> --frame <id> --variables <vars> --out <figma.json>` | ALL figma math: depth≤2 walk, named-node filter, absolute → frame-relative coords |
+| `crg-ui.measure.mjs normalize-dom <raw> --route <r> --width <w> --height <h> --out <dom.json>` | canonical DOM shape: coerced numbers, stable order |
+| `crg-ui.measure.mjs measure <figma> <dom> --tolerance <px> --screen <s> --breakpoint <b> [--allowlist <p>] --out <measure.json>` | the numeric oracle; prints `{keyCount, seal, discrepancies, …}` |
+| `crg-ui.measure.mjs assemble <capturesDir> --profile <p> --repo-root <r> --out <ledger.json>` | the ledger: cell-qualified ids, sealed allKeys |
+| `crg-ui.measure.mjs slice <ledger> --keys <k,…> / --ids <id,…>` | repair entry from a prior ledger — never transcribed by an agent |
 
 **Key contract:** a discrepancy key is `<screen>::<breakpoint>::<class>::<figmaNodeId|token|component>`
 — stable across re-measure, collision-free across breakpoints. Ledger ids are
@@ -91,7 +91,7 @@ Layers run cheapest-first; each is deterministic until the last:
 - **responsive-breakage** *(reserved — v0.2)* — an invariant violation (overflow,
   overlap, clipping) at a width where no oracle exists.
 - **intentional-deviation** — not a class agents assign: a human verdict at
-  GATE-LEDGER, persisted via `ui-map.mjs bless` (one command writes the profile AND
+  GATE-LEDGER, persisted via `crg-ui.map.mjs bless` (one command writes the profile AND
   the allowlist — they are never edited separately), filtered by the measure tool on
   every later run. Never auto-accepted, never re-litigated.
 
@@ -108,7 +108,7 @@ not louder heuristics.
 
 Measurement is only as good as its reproducibility. Every capture MUST: use the frame's
 exact viewport; wait for network idle AND `document.fonts.ready`; use the shipped
-collector script VERBATIM (read `ui-collect.js` and pass its exact contents to
+collector script VERBATIM (read `crg-ui.collect.js` and pass its exact contents to
 `browser_evaluate` — never re-derive a collector); disable animations when the profile
 says so (inject `*{animation:none!important;transition:none!important}`); run against a
 dev-mode build (owner resolution and unminified output need it); and run DOM captures
@@ -136,7 +136,7 @@ is every screen × breakpoint that has a frame; its slug is
 
 ### Phase 0 — Preflight
 
-1. `node ui-map.mjs validate <profile.json>` — non-zero halts the run.
+1. `node crg-ui.map.mjs validate <profile.json>` — non-zero halts the run.
 2. `code-review-graph status`; missing/0-files → `build`, else `update`. Non-zero halts.
 3. `git rev-parse HEAD` vs the graph's indexed HEAD → record `graphFresh`.
 4. Probe the dev URL (`curl --max-time 10`, any status < 500). Down → the skill owns
@@ -147,7 +147,7 @@ is every screen × breakpoint that has a frame; its slug is
 ### Phase 1 — Variables (once per file)
 
 Dump `get_variable_defs` output VERBATIM to `.crg-ui/variables.raw.json`, then
-`node ui-measure.mjs normalize-vars variables.raw.json --out .crg-ui/variables.json`.
+`node crg-ui.measure.mjs normalize-vars variables.raw.json --out .crg-ui/variables.json`.
 An empty map is a valid outcome, not an error; a failed dump means figma access is
 broken (`whoami`) — stop with `figma-unreachable`.
 
@@ -155,22 +155,22 @@ broken (`whoami`) — stop with `figma-unreachable`.
 
 - **Figma side**: dump the frame's `get_metadata` subtree VERBATIM (no reshaping, no
   math) to `capture/<slug>.figma.raw.json`, then
-  `node ui-measure.mjs normalize-figma <raw> --frame <frameId> --variables .crg-ui/variables.json --out capture/<slug>.figma.json`.
+  `node crg-ui.measure.mjs normalize-figma <raw> --frame <frameId> --variables .crg-ui/variables.json --out capture/<slug>.figma.json`.
 - **DOM side (one cell at a time)**: resize to the cell's exact viewport, navigate to
   the route, wait for network idle + `document.fonts.ready`, apply the animation
   override if profiled, evaluate the shipped collector verbatim, dump its raw return to
   `capture/<slug>.dom.raw.json`, then
-  `node ui-measure.mjs normalize-dom <raw> --route <route> --width <w> --height <h> --out capture/<slug>.dom.json`.
+  `node crg-ui.measure.mjs normalize-dom <raw> --route <route> --width <w> --height <h> --out capture/<slug>.dom.json`.
 
 A cell whose capture fails is recorded in `failedCells` and skipped — never guessed.
 
 ### Phase 3 — Measure + assemble → STOP
 
-Per cell: `node ui-measure.mjs measure capture/<slug>.figma.json capture/<slug>.dom.json
+Per cell: `node crg-ui.measure.mjs measure capture/<slug>.figma.json capture/<slug>.dom.json
 --tolerance <px> --screen <s> --breakpoint <b> [--allowlist .crg-ui/allowlist.json]
 --out capture/<slug>.measure.json`. Relay/read the output COMPLETE AND UNMODIFIED.
 
-Then: `node ui-measure.mjs assemble .crg-ui/capture --profile <profile> --repo-root
+Then: `node crg-ui.measure.mjs assemble .crg-ui/capture --profile <profile> --repo-root
 <repoRoot> --out .crg-ui/ledger.json [--failed <slugs>]`. The ledger on disk is
 tool-written — never hand-assembled. In deterministic mode the script cross-checks the
 assemble seal against the seal of its own relayed keys; the two independent paths must
@@ -182,7 +182,7 @@ into repair without an approval.
 ### Phase 4 — Repair (approved discrepancies only, sequential units)
 
 Entry: the approved discrepancy objects verbatim (same session), or
-`ui-measure.mjs slice <ledger> --keys/--ids` (cross-session) — never an agent's
+`crg-ui.measure.mjs slice <ledger> --keys/--ids` (cross-session) — never an agent's
 re-reading of the ledger.
 
 Setup: record the current branch, `git checkout -B crg-ui/fix-<project-slug>`.
@@ -258,7 +258,7 @@ Per the Report layout below, to the human at GATE-DONE.
   *supply it / let me propose it for your approval / descope it explicitly* — and every
   answer persists to the profile so no run re-asks it.
 - **GATE-LEDGER** (hard) — the ranked ledger by class and screen. Options per the
-  skill; marking an item intentional runs `ui-map.mjs bless` and never re-flags. An
+  skill; marking an item intentional runs `crg-ui.map.mjs bless` and never re-flags. An
   empty approval ends the run with the ledger as the deliverable.
 - **GATE-DONE** — the convergence report; residual discrepancies are either approved
   scope for a next run, blessed deviations, or explicitly deferred.

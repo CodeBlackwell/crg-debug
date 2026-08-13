@@ -14,7 +14,7 @@ pass/fail verdict. See README.md for the full user-facing picture.
 ## Commands
 
 ```
-node --test                 # full suite (293 tests, ~3s); run before any commit
+node --test                 # full suite (294 tests, ~15s); run before any commit
 bin/crg-deterministic       # installs Workflows + tools into ~/.claude/workflows/
 ```
 
@@ -27,13 +27,17 @@ One command = up to five pieces, wired by naming convention:
 | Skill | `skills/<name>/SKILL.md` | flag parsing, prose-vs-workflow routing, ALL human gates, daemon ownership |
 | Methodology | `skills/<name>/methodology.md` | judgment rules both modes execute — the source of truth |
 | Workflow | `workflows/<name>.js` | deterministic orchestration: phases, fences, exit-code gates, commits |
-| Tool core | `lib/*.mjs` / `lib/ui-collect.js` | deterministic CLIs that compute every number/status |
+| Tool core | `lib/*.mjs` / `lib/crg-ui.collect.js` | deterministic CLIs that compute every number/status |
 | Agent | `agents/*.md` | sequential single-context variants (crg-debugger, crg-ui-converger) |
 
-The enabler copies these into `~/.claude/workflows/` under dotted names
-(`lib/ui-measure.mjs` → `crg-ui.measure.mjs`, `skills/crg-farm/methodology.md` →
-`crg-debug.farm-methodology.md`, etc.) and rewrites some relative imports with `sed`.
-**If you add a lib file or change an import path, update `bin/crg-deterministic` to match.**
+The enabler flattens all of these into `~/.claude/workflows/`. Methodologies and
+checklists get a dotted, command-scoped name (`skills/crg-farm/methodology.md` →
+`crg-debug.farm-methodology.md`), but **every `lib/` filename already IS its installed
+filename** — `lib/crg-ui.measure.mjs` installs as `crg-ui.measure.mjs`. That is why
+`bin/crg-deterministic` can copy `lib/` with a single glob and no `sed` import rewriting,
+and why adding or splitting a lib file needs no enabler change at all. Keep it that way:
+a lib file whose name does not survive the flattening reintroduces the rewrite step and
+the stale-install bug class it used to cause.
 
 ## Invariants — do not break
 
@@ -45,14 +49,32 @@ The enabler copies these into `~/.claude/workflows/` under dotted names
   `// >>> pure-helpers` and `// <<< pure-helpers` markers; tests eval-extract that block
   directly, so the tested code IS the shipped code. Keep the block dependency-free and the
   markers intact; add a test for any helper you add.
+- **`agent()` failures must be contained, not assumed away.** `agent()` returns `null` for
+  some failures but **throws** for others — notably a schema-gated call that exhausts its
+  StructuredOutput retry cap. Guards written for the null shape (`if (!x) throw`,
+  `.filter(Boolean)`) are silently bypassed by a throw, which then destroys phases that
+  already succeeded. `crg-debug.js` routes every top-level call through `tryAgent`, and
+  `test/agent-resilience.test.mjs` enforces that no bare `await agent(` survives outside it.
+  Calls inside `parallel()`/`pipeline()` thunks are already safe — the runtime resolves a
+  throwing thunk to `null`. Relatedly: **prefer single-property submit schemas for any agent
+  whose output is load-bearing.** A model that mis-serializes a multi-parameter tool call
+  leaks the raw `<parameter name="…">` wire format into the first property's string value,
+  and the validator's "missing property X" feedback never tells it so — it repeats the same
+  shape until the cap. One property means there is no second tag to leak.
 - **Agents claim, the script decides.** Never move a verdict (exit-code judgment, seal
   check, fence check, commit validation) from JS into an agent prompt. Agents transcribe
   verbatim and relay tool output; every relay that matters is schema-shaped and, where
   mangling would lie silently, checksum-sealed.
-- **Byte-identical twins.** `sealOf` (FNV-1a) is defined in both `lib/ui-measure.mjs` and
-  `workflows/crg-ui.js`; `itemsSeal` in `lib/ui-prep.mjs` and `workflows/crg-ui-prep.js`;
-  `keyOf` in `lib/ledger-slice.mjs` must match `workflows/crg-debug.js`. Parity tests
-  exist — change one copy, change all.
+- **Byte-identical twins.** Both crg-ui seals live in one module, `lib/crg-ui.seal.mjs`:
+  `sealOf` (FNV-1a) must match `workflows/crg-ui.js`, and `itemsSeal` must match
+  `workflows/crg-ui-prep.js`. `bugKeyOf` in `lib/crg-debug.ledger-slice.mjs` must match
+  `workflows/crg-debug.js`. Parity tests exist — change one copy, change all. A twin's two
+  halves also keep the same NAME: rename both together or neither, so the pair stays greppable.
+- **One exported name, one meaning.** `lib/` is flat and its files are read by grep as often
+  as by import. Two different functions must never share an exported name across it — hence
+  `validateAppProfile` / `validateMatrixProfile` / `validateRalphProfile` / `validateUiProfile`,
+  `bugKeyOf` vs `cellKeyOf`, and `assembleRulesLedger` vs `assembleUiLedger`.
+  This is the same rule the workflow prelude already follows; it binds `lib/` too.
 - **Cross-workflow structure is tested, not assumed** (`test/workflow-structure.test.mjs`).
   The shared prelude (`fence`, `capText`, `norm`, `normPath`, `isSafeAbs`,
   `commitMessageOk`, `TIERS`) and `GATE_SCHEMA` must stay byte-identical across every
@@ -89,6 +111,14 @@ The enabler copies these into `~/.claude/workflows/` under dotted names
   separate state: pulling by hand moves the checkout but leaves `lastUpdated` in
   `~/.claude/plugins/known_marketplaces.json` stale and the catalog cache unrefreshed.
   The `marketplace update` command does both.
+- **`Workflow({name: "crg-debug"})` resolves from the PLUGIN CACHE**
+  (`~/.claude/plugins/cache/crg-debug/crg-debug/<version>/workflows/`), *not* from
+  `~/.claude/workflows/`. Verified 2026-08-13 by diffing a launched run's persisted script
+  against all three copies. So `bin/crg-deterministic` alone does **not** make a workflow fix
+  live — a run launched by name will silently execute the last released version. To exercise
+  an unreleased fix, launch with `{scriptPath: "~/.claude/workflows/crg-debug.js"}`; to make
+  it the default, it has to be committed, pushed, and pulled through
+  `claude plugin marketplace update`.
 - Always make changes in THIS source repo, never directly in `~/.claude/` installs. A
   stray edit in the clone silently blocks the next update — `git pull` refuses to merge
   over a dirty tree, and the failure surfaces as a release that appears to have shipped.

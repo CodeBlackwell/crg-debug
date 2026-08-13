@@ -21,8 +21,8 @@ directly via Bash and reading its output (no agent relays, so no seals needed) �
 status still comes out of the tool, never out of you.
 
 **Tooling:** the prep tool is `$HOME/.claude/workflows/crg-ui.prep.mjs` if the enabler
-installed it, else `lib/ui-prep.mjs` two levels up from this skill's directory (the
-pairer/validator `ui-map.mjs` sits beside it). Before ANY `use_figma` call, load the
+installed it, else `lib/crg-ui.prep.mjs` two levels up from this skill's directory (the
+pairer/validator `crg-ui.map.mjs` sits beside it). Before ANY `use_figma` call, load the
 `figma-use` skill (mandatory prerequisite); for variable/component creation also load
 `figma-generate-library`.
 
@@ -129,7 +129,7 @@ For everything else, deterministic mode runs in waves:
    column and record the result yourself.
 
 Prose mode runs the same beats inline: propose → gate → apply exactly what was shown →
-`ui-prep.mjs verify <id>` → `ui-prep.mjs record`. In BOTH modes `record` is prep.json's
+`crg-ui.prep.mjs verify <id>` → `crg-ui.prep.mjs record`. In BOTH modes `record` is prep.json's
 only writer — never hand-edit it.
 
 Paired step 1.2+2.6 is a single iteration: build the routes manifest and the frame
@@ -145,14 +145,14 @@ resume prep afterward.
    `stack {framework, devCommand, devUrl, readyTimeoutSec}`, `mode`, `breakpoints[]`,
    `screens[{name, route, frames}]` (from the pairer's output), `tolerance.geometryPx: 1`,
    `fences {allow, forbid}`, `intentionalDeviations[]` (the queued descopes), plus `dpr`
-   (E5). Validate with `ui-map.mjs validate` — fix-or-stop on errors. Write it to
+   (E5). Validate with `crg-ui.map.mjs validate` — fix-or-stop on errors. Write it to
    `<repoRoot>/.crg-ui/profile.json` ONLY on the user's approval (prep pre-fills it, the
    human still blesses it). Mirror `intentionalDeviations` into `allowlist.json`.
 3. **GATE-PACKET**: state the exit test plainly — with this profile, `/crg-ui`'s
    GATE-PROFILE has zero open questions (or list exactly which remain and why). On
    approval, assemble the ready packet:
    `Workflow({..., args: {..., packet: true}})` (prose:
-   `ui-prep.mjs packet <repoRoot>` then `verify-packet`). The tool writes
+   `crg-ui.prep.mjs packet <repoRoot>` then `verify-packet`). The tool writes
    `.crg-ui/prep-packet.json` — profile + attestations + pairing under ONE seal — and
    `verify-packet` must exit 0. Profile-critical items still open block the packet;
    cosmetic gaps (1.6, 1.7, …) ride along as `openGaps`, visible to /crg-ui.

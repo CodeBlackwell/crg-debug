@@ -21,9 +21,9 @@ const fence = s =>
 const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
 // Findings cite "path:line"; everything that identifies a FILE drops the line suffix.
 const stripLine = s => String(s || '').split(':')[0]
-// Identity of a finding across the ledger, the Workflow return, and lib/ledger-slice.mjs
+// Identity of a finding across the ledger, the Workflow return, and lib/crg-debug.ledger-slice.mjs
 // — the twin there MUST stay byte-identical (parity-tested in test/helpers.test.mjs).
-const keyOf = f => `${norm(f && f.file)}::${norm(f && f.rootCause)}`
+const bugKeyOf = f => `${norm(f && f.file)}::${norm(f && f.rootCause)}`
 const shortFile = f => stripLine(f).split('/').pop()
 const bugFile = b => stripLine(b && b.file)
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
@@ -59,7 +59,7 @@ const allGreen = (res, pick) => {
   const rows = ((res && res.results) || []).filter(r => (pick ? pick(r) : true))
   return rows.length > 0 && rows.every(r => r.exitCode === 0)
 }
-// Thrash-guard identity, deliberately NOT keyOf: it ignores the line number so a bug
+// Thrash-guard identity, deliberately NOT bugKeyOf: it ignores the line number so a bug
 // re-reported at a line the last wave's edit shifted still counts as the same attempt.
 const waveKey = b => `${bugFile(b)}::${norm(b && b.rootCause)}`
 // The no-attribution rule as an enforced gate, not a prompt hope.
@@ -134,25 +134,39 @@ const SETUP_SCHEMA = {
   },
 }
 
+// The target row, shared by both map schemas below so the fallback cannot drift from
+// the primary — the partition code downstream reads one shape either way.
+const TARGET_ITEM = {
+  type: 'object',
+  required: ['file', 'concern'],
+  properties: {
+    file: { type: 'string', description: 'repo-relative path' },
+    functions: { type: 'array', items: { type: 'string' } },
+    concern: { type: 'string', enum: CONCERN_KEYS },
+    untested: { type: 'boolean', description: 'true if CRG tests_for found no coverage' },
+  },
+}
+
 const TARGETMAP_SCHEMA = {
   type: 'object',
   required: ['overview', 'targets'],
   properties: {
     overview: { type: 'string', description: 'Stack / Shape / Hotspots / Coverage gaps / Risks, terse' },
-    targets: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['file', 'concern'],
-        properties: {
-          file: { type: 'string', description: 'repo-relative path' },
-          functions: { type: 'array', items: { type: 'string' } },
-          concern: { type: 'string', enum: CONCERN_KEYS },
-          untested: { type: 'boolean', description: 'true if CRG tests_for found no coverage' },
-        },
-      },
-    },
+    targets: { type: 'array', items: TARGET_ITEM },
   },
+}
+
+// Single-property fallback for the Map retry. The observed failure was a model-side
+// serialization glitch that CANNOT occur with one property: the model JSON-encoded
+// `overview` and then appended the raw `</overview><parameter name="targets">[...]`
+// wire format INSIDE that string, so `targets` arrived as prose. It repeated verbatim
+// for all five retries because the validator only reports "missing targets" — never
+// "you mis-serialized the call" — so the model had no signal to change shape. Dropping
+// to one property removes the second parameter tag there is to leak.
+const TARGETS_SCHEMA = {
+  type: 'object',
+  required: ['targets'],
+  properties: { targets: { type: 'array', items: TARGET_ITEM } },
 }
 
 const FINDINGS_SCHEMA = {
@@ -366,6 +380,23 @@ source file; shell only for read-only inspection (git, grep, build/typecheck, CR
 
 const SEV_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 }
 
+// ---- agent failure containment --------------------------------------------------
+// `agent()` returns null for some failures but THROWS for others — notably when a
+// schema-gated call exhausts its StructuredOutput retry cap. Every guard below was
+// written for the null shape (`if (!x) throw`, `.filter(Boolean)`), so a throw walked
+// straight past all of them and discarded a whole run — including phases that had
+// already succeeded — over one agent's serialization glitch. Normalizing both failure
+// modes to null puts the cost of a failure back where it belongs: at the call site,
+// which knows whether this agent was load-bearing or just producing a hint.
+const tryAgent = async (prompt, opts) => {
+  try {
+    return await agent(prompt, opts)
+  } catch (err) {
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" failed: ${capText(err && err.message, 200)}`)
+    return null
+  }
+}
+
 // ---- Phases 0-3, OR ingest a prior ledger (fix-from-ledger hand-off) -----------
 // Cross-phase vars the fix phase + return need, hoisted so either branch fills them.
 let setup, baselineFailures, rawFindings = [], deduped = [], merged = [], confirmedBugs = [], deferred = [], rejected = []
@@ -375,7 +406,7 @@ if (fromLedger) {
   // Skip Map/Discover/Verify: load what a prior read-only run already confirmed and
   // jump to the fix phase. The sandbox can't read files, so one agent deserializes it.
   log(`crg-debug fix-from-ledger: ingesting ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}`)
-  const loaded = await agent(
+  const loaded = await tryAgent(
     `Read the JSON file at ${fromLedger} (in the repo at ${repoRoot}) and return its parsed contents. Do NOT edit any file. It is a crg-debug ledger: an object with confirmedBugs[], deferred[], rejected[], toolchain[], baselineFailures[]. Return every field EXACTLY as parsed, unmodified.`,
     { label: 'ingest-ledger', phase: 'Graph', schema: LEDGER_SCHEMA, model },
   )
@@ -402,7 +433,7 @@ const provisionStep = env === 'container'
    d. CONTAINERIZE THE TOOLCHAIN: return every toolchain row's build/typecheck/test command in its runnable containerized form — \`docker run --rm --cpus=4 --memory=6g -v ${repoRoot}:/work -v crg-deps-${repoSlug}:/work/<depDir> -w /work crg-env-${repoSlug} sh -lc '<raw cmd>'\`. The \`--cpus=4 --memory=6g\` caps are MANDATORY on EVERY \`docker run\` (install and toolchain alike): the farm fans gate containers out concurrently and a heavy build oversubscribes the host — bound each container so worst-case load stays ~CANDIDATE_CAP×cpus. The \`-v crg-deps-${repoSlug}:/work/<depDir>\` mount is equally MANDATORY on EVERY command — the same volume and path you installed into in (c). Drop it and the installed binaries (tsc, pytest, eslint, cargo) are invisible: the command fails "not found" spuriously and the broken env gets misread as a broken build. The bind-mount means host edits are visible inside instantly, so later fix/gate steps just re-run these strings. Set containerImage="crg-env-${repoSlug}"; describe what you built/installed (or reused) in provisioned.`
   : 'Do NOT provision. Run the baseline against the host environment exactly as-is (set provisioned="skipped (env=none)", containerImage="").'
 
-setup = await agent(
+setup = await tryAgent(
   `Bootstrap a graph-driven debug session for the repo at ${repoRoot}. Work entirely inside that directory.
 
 1. GRAPH FRESHNESS. Run \`code-review-graph status\`. If the graph is missing or reports 0 files, run \`code-review-graph build\` — and if build reports 0 files on a non-empty repo, the dir likely has no .git (check \`git rev-parse --show-toplevel\`); run \`git init\` in ${repoRoot} then rebuild (CRG only sees git-tracked files; no commit needed). If the graph already exists, run \`code-review-graph update\` to absorb working-tree state. Report the final files/nodes/edges line as graphStats.
@@ -438,15 +469,26 @@ if (envFailures.length) {
 }
 
 // ---- Phase 1: Map -------------------------------------------------------------
-const map = await agent(
-  `Map the repo at ${repoRoot} for a bug sweep. Scope: ${setup.resolvedScope || 'full repo'}.
+const mapBrief = `Map the repo at ${repoRoot} for a bug sweep. Scope: ${setup.resolvedScope || 'full repo'}.
 
 Run these CRG tools at detail_level="minimal": list_graph_stats_tool, get_hub_nodes_tool, find_large_functions_tool(min_lines=50), query_graph_tool(pattern="importers_of") on the top hubs, get_knowledge_gaps_tool, query_graph_tool(pattern="tests_for") on high-impact functions, get_architecture_overview_tool.
 
-Produce: (a) a terse overview — Stack / Shape / Hotspots / Coverage gaps / Risks; (b) a TARGET MAP — rank in-scope files+functions and tag EACH to exactly one concern from: ${CONCERN_KEYS.join(', ')}. Enumerate every in-scope source file (not just hubs — planted bugs cluster in non-hub leaf files), and mark untested=true where tests_for found no coverage. ${UNTRUSTED}`,
-  { label: 'map', phase: 'Map', schema: TARGETMAP_SCHEMA, model },
-)
-if (!map) throw new Error('Phase 1 (Map) agent failed — no target map to partition.')
+Produce: (a) a terse overview — Stack / Shape / Hotspots / Coverage gaps / Risks; (b) a TARGET MAP — rank in-scope files+functions and tag EACH to exactly one concern from: ${CONCERN_KEYS.join(', ')}. Enumerate every in-scope source file (not just hubs — planted bugs cluster in non-hub leaf files), and mark untested=true where tests_for found no coverage. ${UNTRUSTED}`
+
+let map = await tryAgent(mapBrief, { label: 'map', phase: 'Map', schema: TARGETMAP_SCHEMA, model })
+// The overview is a hint; the targets are the phase's actual product. If the two-field
+// submit failed (or came back with an empty map), re-ask for the targets alone — see
+// TARGETS_SCHEMA for why one property survives where two did not. The CRG work is
+// already in the agent's context, so the retry is cheap.
+if (!map || !(map.targets || []).length) {
+  map = await tryAgent(
+    `${mapBrief}\n\nRETRY — return ONLY the target map (b). Do NOT produce the overview: the schema has no field for it, and a previous attempt failed by serializing both at once.`,
+    { label: 'map-retry', phase: 'Map', schema: TARGETS_SCHEMA, model },
+  )
+}
+if (!map || !(map.targets || []).length) {
+  throw new Error('Phase 1 (Map) produced no targets — nothing to partition across the finders.')
+}
 
 // Partition by concern (deterministic). A target tagged with a concern outside
 // CONCERN_KEYS is dropped — nobody would be assigned it.
@@ -514,7 +556,7 @@ for (let round = 1; round <= discoveryRounds; round++) {
     .filter(Boolean)
     .flatMap(r => r.findings || [])
     .filter(f => {
-      const k = keyOf(f)
+      const k = bugKeyOf(f)
       if (seenFindingKeys.has(k)) return false
       seenFindingKeys.add(k)
       return true
@@ -539,7 +581,7 @@ for (const bf of baselineFailures) {
 
 // Dedup by (file, rootCause) — deterministic, in code. Folds baseline seeds in with the
 // loop-deduped findings; finder findings are already unique by this key across rounds.
-deduped = dedupBy(rawFindings, keyOf)
+deduped = dedupBy(rawFindings, bugKeyOf)
 
 // Exact-string dedup misses the SAME bug phrased two ways (different agents,
 // different wording). That equivalence is judgment, so one agent CLUSTERS dups by
@@ -547,7 +589,7 @@ deduped = dedupBy(rawFindings, keyOf)
 merged = deduped
 if (deduped.length > 1) {
   const list = deduped.map((f, i) => `${i} :: ${f.file} :: ${f.rootCause}`).join('\n')
-  const clusters = await agent(
+  const clusters = await tryAgent(
     `You are a dedup pass in a bug-finding pipeline. Parallel discovery agents found the same underlying bug and worded it differently. Cluster findings that share the same root cause: two findings are the SAME bug ONLY if fixing one fixes the other (same defect, same fix site). Two DIFFERENT bugs at the same line are NOT duplicates.
 
 Findings (index :: file :: rootCause):
@@ -643,11 +685,15 @@ const ledger = {
   toolchain: setup.toolchain || [], baselineFailures,
   confirmedBugs, deferred, rejected,
 }
-await agent(
+const persisted = await tryAgent(
   `Create the directory ${repoRoot}/.crg-debug if it does not exist, then write the following JSON to ${ledgerPath}, overwriting any existing file. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap in markdown, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(ledger, null, 2)}`,
   { label: 'persist', phase: 'Verify', model },
 )
-log(`Verify: ledger persisted -> ${ledgerPath}`)
+// A failed write leaves a STALE ledger on disk, which the fix-from-ledger hand-off would
+// silently re-fix. Say so rather than claiming a persist that did not happen.
+log(persisted === null
+  ? `Verify: ledger persist FAILED — ${ledgerPath} was not written and may hold a prior run`
+  : `Verify: ledger persisted -> ${ledgerPath}`)
 } // end else — fix-from-ledger skipped this whole discover+verify path
 
 // ---- Phase 4: Fix waves (opt-in via fix=true) --------------------------------
@@ -783,7 +829,7 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   // Test-harness bootstrap (once, before any wave — avoids parallel fix agents
   // racing to scaffold the same config). TDD's RED step needs a runner first.
   if (!(setup.toolchain || []).some(t => t.test)) {
-    const boot = await agent(
+    const boot = await tryAgent(
       `The repo at ${repoRoot} has confirmed bugs to fix via TDD but NO test runner was discovered. Scaffold a MINIMAL runner ONLY (Vitest for TS/JS, pytest for Python, etc.) per the "Test-harness bootstrap" rule in ${SKILL}: add the dev dependency, a test script, and a minimal config. Confirm the runner works with a THROWAWAY sample test, then DELETE that sample — do NOT author any tests for the actual bugs (the per-bug fix agents write those). Leave the test directory empty. If the repo is genuinely untestable, return testCommand="". Return the exact test command and runner.`,
       { label: 'bootstrap', phase: 'Fix', schema: BOOT_SCHEMA, model },
     )

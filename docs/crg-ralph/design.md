@@ -1,8 +1,8 @@
 # /crg-ralph — design sketch
 
-*Status: built 2026-07-18 — `workflows/crg-ralph.js`, `lib/ralph-plan.mjs`, `skills/crg-ralph/`.
+*Status: built 2026-07-18 — `workflows/crg-ralph.js`, `lib/crg-ralph.plan.mjs`, `skills/crg-ralph/`.
 Deviations from this sketch: the wave packer lives inline in the workflow's pure-helpers block
-(the crg-build `packWaves` precedent — tested by extraction), while `lib/ralph-plan.mjs` owns plan/
+(the crg-build `packWaves` precedent — tested by extraction), while `lib/crg-ralph.plan.mjs` owns plan/
 profile validation + Army-PRD emission; fences are prefix-aware (Army owned paths are directories);
 ingested PRDs keep their declared waves as implicit prior-wave deps the packer verifies; the sweep
 is composed by the skill, not the workflow. First dogfood target: SPICE `PRDs/32-forex-phase1`.*
@@ -67,7 +67,7 @@ ladder. Drafted by one profiler agent, approved by the human, persisted. Re-runs
    shared scaffolding is forced into wave 0).
 4. An adversarial critic per story attacks the prediction (files exist, symbols real, radius not
    understated).
-5. **`lib/ralph-plan.mjs` — the deterministic wave packer** (the heart, and the only genuinely new
+5. **`lib/crg-ralph.plan.mjs` — the deterministic wave packer** (the heart, and the only genuinely new
    machine): takes `{story → predicted file set}` and the graph's community/hub data, computes wave
    packing (overlapping sets or radii ⇒ serialize), lane assignment (communities ⇒ lanes), and
    per-agent fence allowlists. Pure JS, testable, no model in the loop. Agents predict; the tool
@@ -129,7 +129,7 @@ explicit nothing-was-pushed line. Campaign records via the farm-db machinery
 
 | Reused | New |
 |---|---|
-| graph MCP, `crg-deterministic` enabler, farm-db, ledger-slice | `lib/ralph-plan.mjs` — deterministic wave packer |
+| graph MCP, `crg-deterministic` enabler, farm-db, ledger-slice | `lib/crg-ralph.plan.mjs` — deterministic wave packer |
 | fence enforcement via diff-tree (crg-ui), porcelain restore | `skills/crg-ralph/SKILL.md` + `methodology.md` |
 | wave commit + re-ingest machinery (crg-debug / crg-build) | `workflows/crg-ralph.js` |
 | crg-debug composition for the sweep (`fix:false` → `fromLedger`) | Army-PRD ingester (existing-PRD entry point) |

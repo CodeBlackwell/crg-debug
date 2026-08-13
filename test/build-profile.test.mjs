@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateProfile, autoApprove, scoreUx } from '../lib/build-profile.mjs'
+import { validateAppProfile, autoApprove } from '../lib/crg-build.profile.mjs'
+import { scoreUx } from '../lib/crg-build.scoreux.mjs'
 
 const goodProfile = () => ({
   app: 'methodproof',
@@ -21,40 +22,40 @@ const goodProfile = () => ({
   ],
 })
 
-test('validateProfile accepts a complete profile', () => {
-  assert.deepEqual(validateProfile(goodProfile()), { ok: true, errors: [] })
+test('validateAppProfile accepts a complete profile', () => {
+  assert.deepEqual(validateAppProfile(goodProfile()), { ok: true, errors: [] })
 })
 
-test('validateProfile rejects missing sections with named errors', () => {
-  const { ok, errors } = validateProfile({})
+test('validateAppProfile rejects missing sections with named errors', () => {
+  const { ok, errors } = validateAppProfile({})
   assert.equal(ok, false)
   for (const want of ['app:', 'subrepos:', 'boot.up:', 'health:', 'frontends:']) {
     assert.ok(errors.some(e => e.includes(want)), `expected an error mentioning ${want}`)
   }
 })
 
-test('validateProfile enforces auth-kind-specific fields', () => {
+test('validateAppProfile enforces auth-kind-specific fields', () => {
   const p = goodProfile()
   delete p.frontends[0].auth.key
   p.frontends[1].auth.routeTemplate = '/assess/fixed' // no {token}
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateAppProfile(p)
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('auth.key')))
   assert.ok(errors.some(e => e.includes('routeTemplate')))
 })
 
-test('validateProfile rejects duplicate frontend ports', () => {
+test('validateAppProfile rejects duplicate frontend ports', () => {
   const p = goodProfile()
   p.frontends[1].url = 'http://localhost:5173'
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateAppProfile(p)
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('port 5173 collides')))
 })
 
-test('validateProfile requires tokenCmd, never stored tokens', () => {
+test('validateAppProfile requires tokenCmd, never stored tokens', () => {
   const p = goodProfile()
   p.frontends[0].auth.tokenCmd = ''
-  assert.equal(validateProfile(p).ok, false)
+  assert.equal(validateAppProfile(p).ok, false)
 })
 
 const g = (gapId, over = {}) => ({ gapId, dimension: 'completeness', impact: 'High', effort: 'S', ...over })

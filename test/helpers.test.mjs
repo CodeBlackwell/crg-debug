@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { keyOf as ledgerKeyOf } from '../lib/ledger-slice.mjs'
+import { bugKeyOf as ledgerKeyOf } from '../lib/crg-debug.ledger-slice.mjs'
 
 // Test the REAL shipped helpers: extract the dependency-free block from
 // workflows/crg-debug.js (which can't be imported — the workflow runtime evals it
@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, keyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -26,14 +26,14 @@ test('norm lowercases, trims, and collapses whitespace', () => {
   assert.equal(H.norm(null), '')
 })
 
-test('keyOf builds a file::rootCause dedup key from normalized parts', () => {
-  assert.equal(H.keyOf({ file: 'Src/A.ts:12', rootCause: 'Off  by ONE' }), 'src/a.ts:12::off by one')
-  assert.equal(H.keyOf(null), '::')
+test('bugKeyOf builds a file::rootCause dedup key from normalized parts', () => {
+  assert.equal(H.bugKeyOf({ file: 'Src/A.ts:12', rootCause: 'Off  by ONE' }), 'src/a.ts:12::off by one')
+  assert.equal(H.bugKeyOf(null), '::')
 })
 
-// CLAUDE.md invariant: lib/ledger-slice.mjs slices ledgers by this exact identity, so
+// CLAUDE.md invariant: lib/crg-debug.ledger-slice.mjs slices ledgers by this exact identity, so
 // any drift silently drops bugs from an escalation or gate-triage re-fix run.
-test('keyOf stays in parity with the lib/ledger-slice.mjs twin', () => {
+test('bugKeyOf stays in parity with the lib/crg-debug.ledger-slice.mjs twin', () => {
   const cases = [
     { file: 'Src/A.ts:12', rootCause: 'Off  by ONE' },
     { file: 'a.py', rootCause: '' },
@@ -42,7 +42,7 @@ test('keyOf stays in parity with the lib/ledger-slice.mjs twin', () => {
     null,
     undefined,
   ]
-  for (const c of cases) assert.equal(H.keyOf(c), ledgerKeyOf(c), `drift on ${JSON.stringify(c)}`)
+  for (const c of cases) assert.equal(H.bugKeyOf(c), ledgerKeyOf(c), `drift on ${JSON.stringify(c)}`)
 })
 
 test('stripLine drops the :line suffix and nothing else', () => {
@@ -64,11 +64,11 @@ test('bugFile strips the line suffix only', () => {
 
 // The thrash guard must ignore line drift: wave 1's edit shifts wave 2's reported line,
 // and a line-sensitive key would read the same failed bug as a brand new one forever.
-test('waveKey is line-insensitive, unlike keyOf', () => {
+test('waveKey is line-insensitive, unlike bugKeyOf', () => {
   const b1 = { file: 'src/a.py:10', rootCause: 'Inverted  guard' }
   const b2 = { file: 'src/a.py:37', rootCause: 'inverted guard' }
   assert.equal(H.waveKey(b1), H.waveKey(b2))
-  assert.notEqual(H.keyOf(b1), H.keyOf(b2))
+  assert.notEqual(H.bugKeyOf(b1), H.bugKeyOf(b2))
   assert.equal(H.waveKey(null), '::')
 })
 

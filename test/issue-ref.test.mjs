@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseIssueRef, parseRemote } from '../lib/issue-ref.mjs'
+import { parseIssueRef, parseRemote } from '../lib/crg-debug.issue-ref.mjs'
 
 const SSH = 'git@github.com:CodeBlackwell/crg-debug.git'
 const HTTPS = 'https://github.com/CodeBlackwell/crg-debug.git'

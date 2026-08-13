@@ -215,7 +215,7 @@ test('priorAttemptText carries the failed verdict and the dirty-tree disclosure'
 // ---- seal parity + git-gate readers -------------------------------------------------------
 
 test('sealOf is byte-identical to the tool implementation (parity)', async () => {
-  const { sealOf: toolSealOf } = await import('../lib/ui-measure.mjs')
+  const { sealOf: toolSealOf } = await import('../lib/crg-ui.seal.mjs')
   const fixtures = [
     [],
     ['Home::Desktop::layout::1:1'],

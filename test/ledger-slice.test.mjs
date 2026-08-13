@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { keyOf, sliceLedger } from '../lib/ledger-slice.mjs'
+import { bugKeyOf, sliceLedger } from '../lib/crg-debug.ledger-slice.mjs'
 
 const bug = (file, rootCause, extra = {}) => ({ file, rootCause, severity: 'High', ...extra })
 const LEDGER = {
@@ -15,8 +15,8 @@ const LEDGER = {
   baselineFailures: [{ file: 'x.py', rootCause: 'typecheck' }],
 }
 
-test('keyOf matches the workflow: normalized file::rootCause', () => {
-  assert.equal(keyOf({ file: 'A.py:10', rootCause: 'Off-By-One  in   Loop' }), 'a.py:10::off-by-one in loop')
+test('bugKeyOf matches the workflow: normalized file::rootCause', () => {
+  assert.equal(bugKeyOf({ file: 'A.py:10', rootCause: 'Off-By-One  in   Loop' }), 'a.py:10::off-by-one in loop')
 })
 
 test('slice by bug objects keeps only the matching confirmedBugs', () => {
@@ -25,8 +25,8 @@ test('slice by bug objects keeps only the matching confirmedBugs', () => {
   assert.equal(out.confirmedBugs[0].file, 'b.py:3')
 })
 
-test('slice by keyOf strings works the same', () => {
-  const out = sliceLedger(LEDGER, [keyOf(bug('a.py:10', 'off-by-one in loop'))])
+test('slice by bugKeyOf strings works the same', () => {
+  const out = sliceLedger(LEDGER, [bugKeyOf(bug('a.py:10', 'off-by-one in loop'))])
   assert.deepEqual(out.confirmedBugs.map(b => b.file), ['a.py:10'])
 })
 
@@ -44,7 +44,7 @@ test('preserves toolchain and other metadata, only narrows confirmedBugs', () =>
 })
 
 test('accepts a Set of keys', () => {
-  const keys = new Set([keyOf(LEDGER.confirmedBugs[0]), keyOf(LEDGER.confirmedBugs[2])])
+  const keys = new Set([bugKeyOf(LEDGER.confirmedBugs[0]), bugKeyOf(LEDGER.confirmedBugs[2])])
   const out = sliceLedger(LEDGER, keys)
   assert.deepEqual(out.confirmedBugs.map(b => b.file), ['a.py:10', 'c.py'])
 })

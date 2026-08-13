@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { validateProfile } from '../lib/integrations-profile.mjs'
+import { validateMatrixProfile } from '../lib/crg-integrations.profile.mjs'
 
 // Test the REAL shipped helpers: extract the dependency-free block from
 // workflows/crg-integrations.js (evaled whole by the workflow runtime, not
@@ -167,49 +167,49 @@ test('classifyDrift is a veto only: never declares drift, only rules it out', ()
 
 const goodProfile = () => JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/integrations-profile.good.json', import.meta.url)), 'utf8'))
 
-test('validateProfile accepts the dogfood fixture', () => {
-  assert.deepEqual(validateProfile(goodProfile()), { ok: true, errors: [] })
+test('validateMatrixProfile accepts the dogfood fixture', () => {
+  assert.deepEqual(validateMatrixProfile(goodProfile()), { ok: true, errors: [] })
 })
 
-test('validateProfile rejects a wrong schemaVersion', () => {
+test('validateMatrixProfile rejects a wrong schemaVersion', () => {
   const p = goodProfile(); p.schemaVersion = 2
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateMatrixProfile(p)
   assert.equal(ok, false); assert.ok(errors.some(e => e.includes('schemaVersion')))
 })
 
-test('validateProfile enforces placeholder presence per command', () => {
+test('validateMatrixProfile enforces placeholder presence per command', () => {
   const p = goodProfile(); p.commands.singleCell = 'npx playwright test --project=x'
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateMatrixProfile(p)
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('singleCell') && e.includes('{host}')))
   assert.ok(errors.some(e => e.includes('singleCell') && e.includes('{grep}')))
 })
 
-test('validateProfile requires {scenario} and {test} in grepTemplate', () => {
+test('validateMatrixProfile requires {scenario} and {test} in grepTemplate', () => {
   const p = goodProfile(); p.grepTemplate = '{test}'
-  assert.equal(validateProfile(p).ok, false)
+  assert.equal(validateMatrixProfile(p).ok, false)
 })
 
-test('validateProfile requires non-empty fences.allow', () => {
+test('validateMatrixProfile requires non-empty fences.allow', () => {
   const p = goodProfile(); p.fences.allow = []
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateMatrixProfile(p)
   assert.equal(ok, false); assert.ok(errors.some(e => e.includes('fences.allow')))
 })
 
-test('validateProfile requires convert when matrixAdapter.kind is command', () => {
+test('validateMatrixProfile requires convert when matrixAdapter.kind is command', () => {
   const p = goodProfile(); p.matrixAdapter = { kind: 'command' }
-  const { ok, errors } = validateProfile(p)
+  const { ok, errors } = validateMatrixProfile(p)
   assert.equal(ok, false); assert.ok(errors.some(e => e.includes('matrixAdapter.convert')))
 })
 
-test('validateProfile requires the two veto knobs', () => {
+test('validateMatrixProfile requires the two veto knobs', () => {
   const p = goodProfile(); p.drift.pixelAsymmetryBar = { maxDiffPct: 10 } // uniformityMin missing
-  assert.equal(validateProfile(p).ok, false)
+  assert.equal(validateMatrixProfile(p).ok, false)
 })
 
 // ---- deterministic matrix ingest (lib) ------------------------------------------
 
-const { ingestMatrix } = await import('../lib/integrations-ingest.mjs')
+const { ingestMatrix } = await import('../lib/crg-integrations.ingest.mjs')
 
 test('ingestMatrix groups failing cells by (host, test, error prefix) and counts hosts', () => {
   const matrix = {

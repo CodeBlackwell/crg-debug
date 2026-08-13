@@ -534,7 +534,7 @@ what it needs. What happens after that gate is a genuine fork, not two flavors o
    at "potential" when the PoC came back `inconclusive`. Downgrading a claim (or upgrading one an
    agent under-called) is a normal, expected outcome of this step, not a failure of it.
 6. **COMPILE-REPORT (short, by default; advisory-report branch only).** Write one report per bug (or
-   coupled cluster) at `node lib/farm-db.mjs advisory-path '<owner/repo>' '<keyOf>'` — outside any
+   coupled cluster) at `node lib/crg-debug.farm-db.mjs advisory-path '<owner/repo>' '<keyOf>'` — outside any
    cloned repo's working tree so PR-PREP can never sweep it into a commit. **Keep it short —
    quick PoC, one-paragraph summary, the fix, the conservative severity line — full stop.** This
    report is exactly the artifact a real maintainer called "reams of text... a huge distraction," so
@@ -570,7 +570,7 @@ database) either way.
 
 `crg-debug --from-ledger` re-fixes **every** `confirmedBugs` entry in the ingested ledger and
 does not know which already closed. So escalation **narrows the ledger to just the unfixed set**
-(`lib/ledger-slice.mjs`) before re-invoking at a higher tier — which automatically scopes the
+(`lib/crg-debug.ledger-slice.mjs`) before re-invoking at a higher tier — which automatically scopes the
 expensive model to the hard bugs only. Never re-run a closed bug: re-attempting a green bug can't
 fail RED and gets mislabeled `"RED not observed"`.
 
@@ -605,7 +605,7 @@ Each fix pass is logged as an `attempt` record (tier, fixed/unfixed keys, `final
 Only reached after GATE-DIFF approves the diff. Honors crg-debug's git policy (named files only,
 never `git add -A`, never push without the human crossing GATE-SUBMIT).
 
-1. `parseRemote(git -C <repo> remote get-url origin)` → `{owner, repo}` (reuse `lib/issue-ref.mjs`).
+1. `parseRemote(git -C <repo> remote get-url origin)` → `{owner, repo}` (reuse `lib/crg-debug.issue-ref.mjs`).
 2. Push access? If not, `gh repo fork --clone=false` and target the fork.
 3. `git checkout -b crg-farm/<issue-or-slug>` (branch off the default branch).
 4. Stage **only** the files crg-debug changed — `ret.fix.fixed[].testFile` + the touched source,
@@ -627,7 +627,7 @@ never `git add -A`, never push without the human crossing GATE-SUBMIT).
 
 ## Farm database (cross-run persistence)
 
-Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.mjs`
+Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/crg-debug.farm-db.mjs`
 (`append`/`query`; `CRG_FARM_DB` overrides the path). This is durable memory the per-run
 `.crg-debug/ledger.json` is not. One `type`-tagged object per line:
 
@@ -644,26 +644,26 @@ Global append-only JSONL at `~/.claude/crg-farm/history.jsonl` via `lib/farm-db.
 | `stage` | each coarse state change in the `--auto-bypass` harness (`recon-done`, `triaging`, `triage-done`, `fixing`, `escalating`, terminal) — the live progress stream | `repo`, `stage`, `detail`, `why`. Take the latest per `repo` (`query '{"type":"stage"}'`) as that candidate's current state; every transition also narrates to the live `/workflows` view for free |
 | `run-end` | loop finishes — TRACK, or any abort | `farmRunId`, `startedAt`, `endedAt`, `durationMs` (+ `backfilled:true` if reconstructed) |
 
-`keyOf` (`norm(file)::norm(rootCause)`, from `ledger-slice.mjs`) is the cross-run identity. The
+`keyOf` (`norm(file)::norm(rootCause)`, from `crg-debug.ledger-slice.mjs`) is the cross-run identity. The
 farm-DB dedup pass (§RECON pass 1) uses it so the farm never re-works a bug we already shipped or
 exhausted; the upstream duplicate-fix check (§RECON pass 2) is the complementary guard against
 duplicating *someone else's* in-flight or merged fix.
 
 `run-end` closes the run started by its matching `run` record: `startedAt` is that record's `ts`,
-`endedAt`/`durationMs` are computed by `node lib/farm-db.mjs close-run <farmRunId>` (defaults
+`endedAt`/`durationMs` are computed by `node lib/crg-debug.farm-db.mjs close-run <farmRunId>` (defaults
 `endedAt` to now). Call it exactly once per `farmRunId` — at TRACK on the happy path, or
 immediately after logging an `abort` gate decision. Historical runs from before `run-end` existed
-can be reconstructed with `node lib/farm-db.mjs backfill-run-ends`, which derives `endedAt` as the
+can be reconstructed with `node lib/crg-debug.farm-db.mjs backfill-run-ends`, which derives `endedAt` as the
 latest `ts` among that `farmRunId`'s existing records and marks the result `backfilled:true`; it
 skips any `farmRunId` that already has a `run-end`, so it's safe to re-run.
 
-`node lib/farm-db.mjs gate-waits '<filter>'` pairs each `gate` decision with its `gate-asked` and
+`node lib/crg-debug.farm-db.mjs gate-waits '<filter>'` pairs each `gate` decision with its `gate-asked` and
 returns `waitMs` — the real time a question sat in front of the human, not a gap inferred from
 neighboring records. Runs predating `gate-asked` get `waitMs: null` for those gates (nothing to
 pair); there is no backfill for this one — unlike `run-end`, there's no proxy timestamp for when an
 already-answered question was first shown.
 
-`node lib/farm-db.mjs advisory-path '<owner/repo>' '<keyOf>'` prints the deterministic report path
+`node lib/crg-debug.farm-db.mjs advisory-path '<owner/repo>' '<keyOf>'` prints the deterministic report path
 for a bug on the advisory track (§Security classification & the advisory track) — always under
 `~/.claude/crg-farm/advisories/` (`CRG_FARM_ADVISORIES` overrides the root) and never inside a
 cloned repo's working tree, so a compiled report can't be accidentally staged by PR-PREP.

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateProfile, parseFrameName, inferBreakpoint, pairFrames, pollUntilUp, blessEntry } from '../lib/ui-map.mjs'
+import { validateUiProfile, parseFrameName, inferBreakpoint, pairFrames, blessEntry } from '../lib/crg-ui.map.mjs'
+import { pollUntilUp } from '../lib/crg-ui.waitup.mjs'
 
 const goodProfile = () => ({
   schemaVersion: 1,
@@ -15,11 +16,11 @@ const goodProfile = () => ({
   intentionalDeviations: [],
 })
 
-test('validateProfile accepts the reference shape', () => {
-  assert.deepEqual(validateProfile(goodProfile()), { ok: true, errors: [] })
+test('validateUiProfile accepts the reference shape', () => {
+  assert.deepEqual(validateUiProfile(goodProfile()), { ok: true, errors: [] })
 })
 
-test('validateProfile rejects the contracts the workflow cannot recover from', () => {
+test('validateUiProfile rejects the contracts the workflow cannot recover from', () => {
   const cases = [
     [p => delete p.figma.fileKey, /figma\.fileKey/],
     [p => (p.mode = 'kiosk'), /mode/],
@@ -33,7 +34,7 @@ test('validateProfile rejects the contracts the workflow cannot recover from', (
   for (const [mutate, rx] of cases) {
     const p = goodProfile()
     mutate(p)
-    const res = validateProfile(p)
+    const res = validateUiProfile(p)
     assert.equal(res.ok, false)
     assert.ok(res.errors.some(e => rx.test(e)), `expected an error matching ${rx}: ${res.errors.join(' | ')}`)
   }

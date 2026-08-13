@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  changedTokens, diffSimilarity, lengthParity, computeLift, aggregateLift,
-  contaminationClean, parseShas, selectIssues,
-} from '../lib/agentsmd-ab.mjs'
+  changedTokens, diffSimilarity, lengthParity, aggregateLift,
+  contaminationClean, selectIssues,
+} from '../lib/crg-agentsmd.ab.mjs'
 
-const CLI = fileURLToPath(new URL('../lib/agentsmd-ab.mjs', import.meta.url))
+const CLI = fileURLToPath(new URL('../lib/crg-agentsmd.ab.mjs', import.meta.url))
 const git = (root, ...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' })
 
 const diffFor = (path, minus, plus) =>
@@ -56,8 +56,9 @@ test('seeded-sham: placebo-as-mined yields ~zero lift (pure math, no agents)', (
   const placeboArm = diffFor('src/a.py', 'old', 'different attempt')
   const sim = diffSimilarity(placeboArm, merged)
   const rows = [{ pr: 1, mined: sim, placebo: sim }, { pr: 2, mined: sim, placebo: sim }]
-  assert.equal(aggregateLift(rows).lift, 0)
-  assert.equal(computeLift(sim, sim), 0)
+  const agg = aggregateLift(rows)
+  assert.equal(agg.lift, 0)
+  assert.equal(agg.meanMined, agg.meanPlacebo) // identical arms -> lift is exactly the difference
 })
 
 // --- contamination (pure) -----------------------------------------------------------------------
@@ -67,7 +68,10 @@ test('contaminationClean detects mergeSha present/absent, incl short-sha prefix'
   assert.equal(contaminationClean(log, 'cccccccccccc'), true)
   assert.equal(contaminationClean(log, 'aaaaaaaaaaaa'), false)
   assert.equal(contaminationClean(log, 'aaaaaa'), false) // short sha prefixes a full log sha
-  assert.deepEqual(parseShas(' a \n\n b \n'), ['a', 'b'])
+  // git log output is trimmed line by line and blank lines dropped before matching.
+  assert.equal(contaminationClean(' aaaa \n\n bbbb \n', 'bbbb'), false)
+  assert.equal(contaminationClean(' aaaa \n\n bbbb \n', 'cccc'), true)
+  assert.equal(contaminationClean('', 'aaaa'), true)
 })
 
 // --- selectIssues (pure) ------------------------------------------------------------------------

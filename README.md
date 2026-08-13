@@ -342,7 +342,7 @@ the fence, and restores the tree to its porcelain baseline after red units. Comm
 
 Walks you gap-by-gap to the "Story 9" user in `docs/crg-ui/perfect-user.md` — the one whose
 `/crg-ui` run opens with **zero questions**. It audits the Figma file, repo, and environment
-against the full checklist (every status computed by `lib/ui-prep.mjs`, sealed), then closes gaps
+against the full checklist (every status computed by `lib/crg-ui.prep.mjs`, sealed), then closes gaps
 in dependency-sorted leverage order: Figma-side assets via the figma MCP (frame renames, variable
 binding, componentization), repo-side assets as approved diffs (`data-component` codemod, render
 seams), environment items as verified guide steps. Every item gets the same three-door gate —
@@ -433,29 +433,46 @@ skills/<name>/SKILL.md    each command's entry point — flags, gates, prose-vs-
 skills/<name>/methodology.md   the single source of truth both modes execute
 workflows/*.js            the deterministic JS Workflows (one per command, + farm-bypass harness)
 agents/                   crg-debugger + crg-ui-converger (sequential single-context variants)
-lib/                      deterministic tool cores, all unit-tested:
-  ui-measure.mjs            the crg-ui numeric oracle (normalize / measure / assemble / slice)
-  ui-collect.js             browser-side DOM collector (evaluated verbatim, never re-derived)
-  ui-map.mjs                crg-ui profile validator + Figma frame pairing + waitup + bless
-  ui-prep.mjs               crg-ui-prep audits, sealed scorecard, item verify, ready packet
-  ralph-plan.mjs            crg-ralph plan/profile validator + Army PRD renderer
-  build-profile.mjs         crg-build profile validator + autoApprove + UX scoring
-  integrations-profile.mjs  matrix-profile validator (placeholders, fences, drift knobs)
-  integrations-ingest.mjs   deterministic matrix ingest (red-cell grouping, anti-truncation)
-  corpus.mjs                crg-agentsmd review-corpus fetcher + stratified holdout splitter
-  agentsmd-score.mjs        retrodictive holdout scorer
-  agentsmd-ab.mjs           contamination-clean three-arm A/B harness
-  ledger-slice.mjs          narrow a bug ledger to a subset (triage + escalation)
-  issue-ref.mjs             GitHub issue-ref + remote parsing
-  farm-db.mjs               append-only farm/campaign history with lossless compaction
+lib/                      deterministic tool cores, all unit-tested. Every filename here IS
+                          its installed filename, so the enabler copies the directory with one
+                          glob and no import rewriting:
+  crg-ui.measure.mjs            crg-ui tool front door: ledger assemble/slice + the CLI
+  crg-ui.oracle.mjs             pairing + the geometry/typography/token comparison layers
+  crg-ui.normalize.mjs          raw Figma/DOM dumps -> the canonical shapes measure accepts
+  crg-ui.seal.mjs               sealOf + itemsSeal — both byte-identical workflow twins
+  crg-ui.collect.js             browser-side DOM collector (evaluated verbatim, never re-derived)
+  crg-ui.map.mjs                crg-ui profile validator + Figma frame pairing + bless
+  crg-ui.waitup.mjs             dev-server readiness poll (injected probe, testable offline)
+  crg-ui.prep.mjs               crg-ui-prep front door: scorecard merge, item verify, CLI
+  crg-ui.prep-audit.mjs         repo + env audit facts
+  crg-ui.prep-figma.mjs         figma audit facts (metadata census, variable mirroring)
+  crg-ui.prep-packet.mjs        ready-packet build + verify (the /crg-ui Stage 0 handshake)
+  crg-ralph.plan.mjs            crg-ralph plan/profile validators + CLI
+  crg-ralph.prd.mjs             Army PRD renderer (pure: plan -> {path: contents})
+  crg-build.profile.mjs         crg-build profile validator + autoApprove
+  crg-build.scoreux.mjs         two-scorer UX rubric merge (see note below)
+  crg-integrations.profile.mjs  matrix-profile validator (placeholders, fences, drift knobs)
+  crg-integrations.ingest.mjs   deterministic matrix ingest (red-cell grouping, anti-truncation)
+  crg-agentsmd.corpus.mjs       crg-agentsmd review-corpus fetcher + CLI
+  crg-agentsmd.inventory.mjs    stratified holdout split + corpus inventory (dependency-free leaf)
+  crg-agentsmd.score.mjs        retrodictive holdout scorer
+  crg-agentsmd.ab.mjs           contamination-clean three-arm A/B harness
+  crg-debug.ledger-slice.mjs    narrow a bug ledger to a subset (triage + escalation)
+  crg-debug.issue-ref.mjs       GitHub issue-ref + remote parsing
+  crg-debug.farm-db.mjs         append-only farm/campaign history with lossless compaction
 docs/crg-ui/, docs/crg-ralph/   design docs (perfect-user stories, army-compilation design)
 test/                     node --test suite over every pure helper and tool CLI
 ```
 
+> **Note on `crg-build.scoreux.mjs`.** It implements exactly the merge `/crg-build` Stage 6
+> describes (mean; disagreement > 2 → min; threshold 4), but the skill currently performs that
+> arithmetic in prose rather than invoking the tool, so the module has no production caller yet.
+> It ships anyway — wiring Stage 6 to it is the open follow-up.
+
 ## 🧪 Testing
 
 ```
-node --test        # 293 tests across 21 files, ~3s
+node --test        # 294 tests across 22 files, ~15s
 ```
 
 Every Workflow keeps its pure logic in a marked `pure-helpers` block that tests eval-extract and

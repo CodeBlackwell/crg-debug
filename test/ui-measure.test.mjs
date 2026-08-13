@@ -1,11 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  normalizeName, figmaVarToCssVar, normalizeColor, pairNodes,
-  geometryDiscrepancies, typographyDiscrepancies, tokenDiscrepancies,
-  keyOf, applyAllowlist, measure, sealOf,
-  normalizeVars, normalizeFigma, normalizeDom, assembleLedger, sliceUiLedger,
-} from '../lib/ui-measure.mjs'
+  normalizeName, figmaVarToCssVar, normalizeColor,
+  normalizeVars, normalizeFigma, normalizeDom,
+} from '../lib/crg-ui.normalize.mjs'
+import {
+  pairNodes, geometryDiscrepancies, typographyDiscrepancies, tokenDiscrepancies,
+  cellKeyOf, applyAllowlist, measure,
+} from '../lib/crg-ui.oracle.mjs'
+import { sealOf } from '../lib/crg-ui.seal.mjs'
+import { assembleUiLedger, sliceUiLedger } from '../lib/crg-ui.measure.mjs'
 
 // ---- normalization -------------------------------------------------------------
 
@@ -100,7 +104,7 @@ test('applyAllowlist drops blessed items scoped by screen', () => {
     { screen: 'Other', class: 'token', token: 'color/primary' },
   ])
   assert.deepEqual(kept.map(d => d.class), ['token'], 'other-screen entries do not apply')
-  assert.deepEqual(allowlisted, [keyOf('Home', 'Desktop', ds[0])])
+  assert.deepEqual(allowlisted, [cellKeyOf('Home', 'Desktop', ds[0])])
 })
 
 test('measure assembles a ranked, keyed, stable ledger slice', () => {
@@ -276,8 +280,8 @@ const disc = (id, screen, breakpoint, cls, subject) => ({
   ...(cls === 'token' ? { token: subject } : { figmaNodeId: subject, component: 'X' }), severity: 'high',
 })
 
-test('assembleLedger qualifies ids per cell and seals allKeys', () => {
-  const ledger = assembleLedger([
+test('assembleUiLedger qualifies ids per cell and seals allKeys', () => {
+  const ledger = assembleUiLedger([
     { slug: 'home-desktop', out: measureOut('Home', 'Desktop', [disc('d-001', 'Home', 'Desktop', 'layout', '1:1')]) },
     { slug: 'pricing-desktop', out: measureOut('Pricing', 'Desktop', [disc('d-001', 'Pricing', 'Desktop', 'token', 'color/primary')]) },
   ], PROFILE, { repoRoot: '/repo', failed: ['home-mobile'] })
@@ -291,7 +295,7 @@ test('assembleLedger qualifies ids per cell and seals allKeys', () => {
 })
 
 test('sliceUiLedger selects by key or qualified id and double-seals', () => {
-  const ledger = assembleLedger([
+  const ledger = assembleUiLedger([
     { slug: 'home-desktop', out: measureOut('Home', 'Desktop', [
       disc('d-001', 'Home', 'Desktop', 'layout', '1:1'), disc('d-002', 'Home', 'Desktop', 'token', 'color/primary'),
     ]) },

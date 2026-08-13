@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  auditRepo, auditEnv, auditFigma, parseMetadataNodes, scorecard, itemsSeal,
-  buildPacket, verifyPacket, packetSealLines, verifyItem, ITEM_ORDER, PROFILE_CRITICAL,
-} from '../lib/ui-prep.mjs'
-import { sealOf } from '../lib/ui-measure.mjs'
+import { scorecard, verifyItem, ITEM_ORDER } from '../lib/crg-ui.prep.mjs'
+import { auditRepo, auditEnv } from '../lib/crg-ui.prep-audit.mjs'
+import { auditFigma, parseMetadataNodes } from '../lib/crg-ui.prep-figma.mjs'
+import { buildPacket, verifyPacket, packetSealLines, PROFILE_CRITICAL } from '../lib/crg-ui.prep-packet.mjs'
+import { sealOf, itemsSeal } from '../lib/crg-ui.seal.mjs'
 
 // ---- repo audit ---------------------------------------------------------------------
 

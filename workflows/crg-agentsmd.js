@@ -33,7 +33,7 @@ const chunk = (arr, n) => {
   return out
 }
 // Env-false-kill detector: missing tool/runtime/file failures are environment gaps, never
-// disproofs of a rule. MUST match agentsmd-score.mjs RESCUE_RE so the workflow's judged-rule
+// disproofs of a rule. MUST match crg-agentsmd.score.mjs RESCUE_RE so the workflow's judged-rule
 // indices align byte-for-byte with what the scorer reconstructs.
 const RESCUE_RE = /command not found|not installed|No such file/
 // Classify an executability gate result: 'pass' (all zero exits), 'env' (failed for a reason
@@ -446,14 +446,14 @@ if (fromLedger && (!/^\/[^\0]*$/.test(fromLedger) || /\.\.(\/|$)/.test(fromLedge
   throw new Error(`Unsafe fromLedger ${JSON.stringify(fromLedger)} — must be an absolute path with no '..' segments`)
 }
 if (score && (!scoreToolPath || !/^\/[^\0]*$/.test(scoreToolPath) || /\.\.(\/|$)/.test(scoreToolPath))) {
-  throw new Error('the Score phase requires args: {scoreToolPath: "<absolute path to lib/agentsmd-score.mjs>"}')
+  throw new Error('the Score phase requires args: {scoreToolPath: "<absolute path to lib/crg-agentsmd.score.mjs>"}')
 }
 if (abEval) {
   if (!fromLedger && !score) {
     throw new Error('abEval runs on the Score/Compress path only — pass fromLedger (or score:true); it needs the synthesized AGENTS.md')
   }
   if (!abToolPath || !/^\/[^\0]*$/.test(abToolPath) || /\.\.(\/|$)/.test(abToolPath)) {
-    throw new Error('abEval requires args: {abToolPath: "<absolute path to lib/agentsmd-ab.mjs>"}')
+    throw new Error('abEval requires args: {abToolPath: "<absolute path to lib/crg-agentsmd.ab.mjs>"}')
   }
 }
 

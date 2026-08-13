@@ -5,9 +5,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { holdoutComments, judgedRules, scorePanel, cutZeroPredictive } from '../lib/agentsmd-score.mjs'
+import { holdoutComments, judgedRules, scorePanel, cutZeroPredictive } from '../lib/crg-agentsmd.score.mjs'
 
-const CLI = fileURLToPath(new URL('../lib/agentsmd-score.mjs', import.meta.url))
+const CLI = fileURLToPath(new URL('../lib/crg-agentsmd.score.mjs', import.meta.url))
 
 const comment = (pr, author, body = 'x') => ({ pr, author, path: 'a.py', body, url: `u/${pr}/${author}` })
 

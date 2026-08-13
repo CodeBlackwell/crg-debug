@@ -4,6 +4,99 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.27.0] - 2026-08-13
+
+Two unrelated tracks. A structural pass over `lib/` — judged on DRYness, logical order, and
+lean factor — where the duplication turned out to be small (~12 lines) and the real debt was
+collided names, misfiled functions, and four files over the 200-line rule. No behavior change
+there, and the two riskiest transforms were proven byte-identical rather than argued.
+
+Then a real defect, found the hard way: a `/crg-debug` sweep died at Phase 1 and threw away a
+Graph phase that had already succeeded, because one agent could not serialize a two-property
+tool call and nothing in the script was written to survive an agent that *throws* rather than
+returns `null`. Suite is now 307 tests, all green.
+
+### Added
+- **`test/agent-resilience.test.mjs`** — 13 tests pinning the containment contract: both agent
+  failure shapes collapse to `null`, a thrown non-`Error` and an absent label are handled, the
+  failure is logged rather than swallowed, no bare `await agent(` survives outside the wrapper,
+  and the Map fallback's schemas stay single-property and drift-free.
+
+### Changed
+- **Every `lib/` filename is now its installed filename.** `ui-measure.mjs` →
+  `crg-ui.measure.mjs`, `corpus.mjs` → `crg-agentsmd.corpus.mjs`, and so on for all 24. The
+  directory self-sorts by owning command, and because source specifiers already match the
+  flattened install, **`bin/crg-deterministic` no longer rewrites a single import with `sed`** —
+  it copies `lib/` with one glob. Adding or splitting a lib file no longer requires an enabler
+  change, which retires a standing stale-install bug class.
+- **One exported name, one meaning across `lib/`.** Four different `validateProfile`
+  functions became `validateAppProfile` / `validateMatrixProfile` / `validateRalphProfile` /
+  `validateUiProfile`; two unrelated `keyOf`s became `bugKeyOf` / `cellKeyOf`; two unrelated
+  `assembleLedger`s became `assembleRulesLedger` / `assembleUiLedger`. `bugKeyOf` was renamed
+  on **both** halves of its byte-identical twin with `workflows/crg-debug.js` so the pair stays
+  greppable. Zero exported names are now defined in two files.
+- **Four oversized files split; every file is under 200 lines.** `ui-measure.mjs` 494 → 134
+  (+ `crg-ui.oracle.mjs`, `crg-ui.normalize.mjs`, `crg-ui.seal.mjs`); `ui-prep.mjs` 432 → 175
+  (+ `crg-ui.prep-audit.mjs`, `crg-ui.prep-figma.mjs`, `crg-ui.prep-packet.mjs`);
+  `ralph-plan.mjs` 224 → 100 (+ `crg-ralph.prd.mjs`, with the 90-line `renderPrd` decomposed
+  into three renderers); `corpus.mjs` 217 → 157 (+ `crg-agentsmd.inventory.mjs`). Every CLI
+  contract — subcommand names, flags, positional order, stdout shape, exit codes — is unchanged;
+  each tool keeps its single dispatcher so no workflow tool path moved.
+- **Both crg-ui seals now live in one module, `crg-ui.seal.mjs`.** `sealOf` and `itemsSeal` are
+  the two byte-identical workflow twins, so co-locating them puts the parity surface in one file.
+  Both bodies verified byte-identical to their pre-split originals.
+- **Misfiled functions rehomed.** `pollUntilUp` out of the Figma-pairing file into
+  `crg-ui.waitup.mjs`; `scoreUx` out of the profile validator into `crg-build.scoreux.mjs`. The
+  `waitup` CLI subcommand stays reachable at the same tool path.
+- **`corpus.mjs write-file` no longer overloads its `repoRoot` positional** to mean "target
+  path". Same subcommand, same guards, honest variable name.
+
+### Removed
+- `computeLift` (an exported, separately-tested name for one subtraction) and `parseShas`
+  (exported only to feed the line below it) are inlined. Their coverage was folded into the
+  `aggregateLift` and `contaminationClean` tests rather than dropped — the subtraction is now
+  pinned on a non-zero case it never had before.
+
+### Fixed
+- **A single agent's malformed tool call no longer discards a whole `/crg-debug` run.**
+  Observed on a 201-file dashboard sweep: the Map agent JSON-encoded `overview` and then
+  appended the raw wire format — `</overview>\n<parameter name="targets">[…]` — *inside that
+  string*, so `targets` arrived as prose. Validation rejected it, and the retry feedback
+  ("must have required property 'targets'") reported the missing field but never the
+  mis-serialization, so the model reproduced the identical shape all five attempts. `agent()`
+  then **threw** on the retry cap — and `crg-debug.js` was written throughout as if `agent()`
+  only ever returns `null` (`if (!x) throw`, `.filter(Boolean)`), so the throw walked past
+  every guard and destroyed a Graph phase that had already succeeded. Three changes:
+  - `tryAgent` normalizes both failure shapes to `null` and logs the label + cause. Every
+    top-level `agent()` call in `crg-debug.js` routes through it, which makes the guards that
+    were already written actually reachable. A structure test enforces that no bare
+    `await agent(` survives outside the wrapper.
+  - The Map phase falls back to `TARGETS_SCHEMA`, a **single-property** submit. The glitch
+    structurally requires two or more properties — there has to be a second `<parameter>` tag
+    to leak. Both schemas share one `TARGET_ITEM` row so the fallback cannot drift.
+  - Both the fallback trigger and the abort test `targets.length`, not truthiness: a submit
+    that validates with `targets: []` is as useless to the finders as a failed one, and
+    `if (!map)` alone let it through.
+- Ledger persistence reports honestly. It was a fire-and-forget `agent()` whose failure both
+  killed the run and, had it not, would have logged a persist that never happened — leaving
+  `fix-from-ledger` to silently re-fix a stale ledger.
+
+### Known
+- The containment fix is scoped to `workflows/crg-debug.js`. The other seven workflows still
+  carry 63 unguarded `await agent(` calls between them (`crg-debug.farm-bypass.js` 15,
+  `crg-agentsmd.js` 12, `crg-integrations.js` 11, `crg-ui-prep.js` 9, `crg-ralph.js` 8,
+  `crg-build.js` 5, `crg-ui.js` 3) and are exposed to the same class of failure. Calls inside
+  `parallel()`/`pipeline()` thunks are already safe — the runtime resolves a throwing thunk to
+  `null` — so the exposure is the top-level calls only.
+- `crg-build.scoreux.mjs` has no production caller. `/crg-build` Stage 6 describes exactly the
+  merge it implements but does the arithmetic in prose instead of invoking it — an inversion of
+  the "agents claim, the script decides" rule. Left as a flagged follow-up, not silently fixed.
+- `workflows/crg-agentsmd.js` declares an `estTokens` field in its inventory schema that
+  `buildInventory` never populates (it returns `trainCommentTokens`). Pre-existing; unrelated to
+  the identically-named helper that moved.
+
 ## [0.26.0] - 2026-08-12
 
 Structural cleanup across the eight workflow scripts, plus a DRY pass over

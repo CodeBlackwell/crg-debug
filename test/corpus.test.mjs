@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { splitHoldout, detectEras, eraOf, buildInventory, estTokens, assembleLedger } from '../lib/corpus.mjs'
+import { assembleRulesLedger } from '../lib/crg-agentsmd.corpus.mjs'
+import { splitHoldout, detectEras, eraOf, buildInventory, estTokens, isBot } from '../lib/crg-agentsmd.inventory.mjs'
 
 const pr = (number, reviewer, mergedAt, state = 'merged') => ({
   number, state, author: 'contrib', createdAt: mergedAt, mergedAt,
@@ -39,6 +40,15 @@ test('detectEras + eraOf bucket the timeline into thirds', () => {
   assert.equal(eraOf(pr(2, 'x', '2025-12-01'), eras), 'recent')
 })
 
+// The one bot-author predicate every corpus consumer filters on: a missing login counts as a bot.
+test('isBot flags bot logins and missing logins', () => {
+  assert.equal(isBot('dependabot[bot]'), true)
+  assert.equal(isBot('alice'), false)
+  assert.equal(isBot(null), true)
+  assert.equal(isBot(undefined), true)
+  assert.equal(isBot(''), true)
+})
+
 test('buildInventory math and thin-corpus gate', () => {
   const comments = [
     { pr: 1, author: 'alice', body: 'use the model manager here' },
@@ -59,7 +69,7 @@ test('buildInventory math and thin-corpus gate', () => {
   assert.equal(rich.thinCorpus, false)
 })
 
-test('assembleLedger builds ledger.json from fragments and resets scoring', () => {
+test('assembleRulesLedger builds ledger.json from fragments and resets scoring', () => {
   const root = mkdtempSync(join(tmpdir(), 'corpus-assemble-'))
   mkdirSync(join(root, '.crg-agentsmd', 'corpus'), { recursive: true })
   writeFileSync(join(root, '.crg-agentsmd', 'corpus', 'inventory.json'), JSON.stringify({ reviewedPRs: 40 }))
@@ -67,7 +77,7 @@ test('assembleLedger builds ledger.json from fragments and resets scoring', () =
     generatedBy: 'crg-agentsmd', model: 'sonnet', minersPlanned: 5,
     rules: [{ rule: 'a' }, { rule: 'b' }], cut: [{ rule: 'c' }],
   }))
-  const out = assembleLedger(root)
+  const out = assembleRulesLedger(root)
   assert.deepEqual(out, { ok: true, rules: 2, cut: 1 })
   const ledger = JSON.parse(readFileSync(join(root, '.crg-agentsmd', 'ledger.json'), 'utf8'))
   assert.equal(ledger.inventory.reviewedPRs, 40)

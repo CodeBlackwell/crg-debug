@@ -26,7 +26,7 @@ const normPath = p => String(p || '').trim().replace(/^\.\//, '').replace(/\/+$/
 const slugOf = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
 // FNV-1a 32-bit over the sorted keys — MUST stay byte-identical to sealOf in
-// lib/ui-measure.mjs (parity-tested). Detects a mangled agent relay of tool output:
+// lib/crg-ui.measure.mjs (parity-tested). Detects a mangled agent relay of tool output:
 // the tool prints its seal, the script recomputes it from the relayed keys.
 const sealOf = keys => {
   const s = [...(keys || [])].sort().join('\n')

@@ -85,9 +85,9 @@ skills/crg-ui/methodology.md      judgment contract: layered oracle, class defin
 workflows/crg-ui.js               deterministic Workflow: MAP → MEASURE → (ledger out) /
                                   REPAIR waves in file-disjoint sets, close gates on
                                   re-measured numbers, commits per green wave
-lib/ui-measure.mjs                the numeric oracle: geometry join, token diff,
+lib/crg-ui.measure.mjs                the numeric oracle: geometry join, token diff,
                                   invariant checks — plain node, no model, unit-tested
-lib/ui-map.mjs                    sidecar ui-map.json build/refresh (Figma tree ↔ DOM ↔
+lib/crg-ui.map.mjs                    sidecar ui-map.json build/refresh (Figma tree ↔ DOM ↔
                                   component ↔ file), adapter ladder for ownerOf
 bin/crg-deterministic             += install crg-ui.js + crg-ui.methodology.md + libs
 ```

@@ -2,8 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { sealOf as toolSealOf } from '../lib/ui-measure.mjs'
-import { itemsSeal as toolItemsSeal } from '../lib/ui-prep.mjs'
+import { sealOf as toolSealOf, itemsSeal as toolItemsSeal } from '../lib/crg-ui.seal.mjs'
 
 // Test the REAL shipped helpers: extract the dependency-free block from
 // workflows/crg-ui-prep.js (evaled whole by the workflow runtime, not importable)
@@ -15,7 +14,7 @@ const H = new Function(
   `${block}\nreturn { fence, capText, resolveModel, normPath, sealOf, itemsSeal, isSubset, GAP_KINDS, kindOf }`,
 )()
 
-test('sealOf parity: workflow helper === ui-measure.mjs (and so ui-prep.mjs)', () => {
+test('sealOf parity: workflow helper === lib/crg-ui.seal.mjs', () => {
   const keys = ['Home::desktop::layout::1:1', 'Home::desktop::token::--color-primary', '']
   assert.equal(H.sealOf(keys), toolSealOf(keys))
   assert.equal(H.sealOf([]), toolSealOf([]))

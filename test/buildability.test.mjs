@@ -16,15 +16,20 @@ const runWorkflow = ({ args = {}, agent, parallel, log = () => {}, workflow, pha
 const baseArgs = { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md' }
 
 // setup agent returning a canned SETUP_SCHEMA object with the given baseline failures.
-const setupReturning = failures => async (_p, opts = {}) => {
+// The Map agent returns null so the run stops there deterministically — the sentinel is
+// the recorded label trace, NOT a thrown error: tryAgent contains throws by design, so a
+// thrown sentinel would be swallowed and prove nothing.
+const setupReturning = (failures, trace = []) => async (_p, opts = {}) => {
+  trace.push(opts.label)
   if (opts.label === 'setup') return {
     graphStats: '10 files', resolvedScope: 'full repo',
     provisioned: 'built crg-env-tmp-crg-fixture', containerImage: 'crg-env-tmp-crg-fixture',
     toolchain: [{ package: 'app' }], baselineFailures: failures,
   }
-  if (opts.label === 'map') throw new Error('REACHED_MAP') // sentinel: proves we passed the early-return
+  if (opts.label === 'map' || opts.label === 'map-retry') return null
   return {}
 }
+const NO_TARGETS = /Phase 1 \(Map\) produced no targets/
 
 test('env=container + env-kind baseline failure → unfarmable, seeds nothing, calls setup once', async () => {
   let calls = 0
@@ -44,15 +49,32 @@ test('env=container + env-kind baseline failure → unfarmable, seeds nothing, c
 })
 
 test('code-kind baseline failure does NOT trigger unfarmable — proceeds into Map', async () => {
+  const trace = []
   await assert.rejects(
     runWorkflow({
       args: { ...baseArgs, env: 'container' },
-      agent: setupReturning([{ command: 'tsc', error: 'src/x.ts:3 TS2322 type error', kind: 'code' }]),
+      agent: setupReturning([{ command: 'tsc', error: 'src/x.ts:3 TS2322 type error', kind: 'code' }], trace),
       parallel: async thunks => Promise.all(thunks.map(t => t())),
     }),
-    /REACHED_MAP/,
-    'a real source error must flow into discovery, not be discarded as env',
+    NO_TARGETS,
   )
+  assert.ok(trace.includes('map'), 'a real source error must flow into discovery, not be discarded as env')
+})
+
+test('a failed Map falls back to the single-property retry before giving up', async () => {
+  // The 2026-08-13 regression: a two-property StructuredOutput submit the model could not
+  // serialize killed the whole run. Now the phase re-asks for targets alone, and only a
+  // second empty result aborts — with a message about targets, not a raw harness error.
+  const trace = []
+  await assert.rejects(
+    runWorkflow({
+      args: baseArgs,
+      agent: setupReturning([], trace),
+      parallel: async thunks => Promise.all(thunks.map(t => t())),
+    }),
+    NO_TARGETS,
+  )
+  assert.deepEqual(trace.filter(l => l.startsWith('map')), ['map', 'map-retry'])
 })
 
 test('env=none (standalone default) still classifies — an env-kind failure is unfarmable, not a bug', async () => {
@@ -65,12 +87,14 @@ test('env=none (standalone default) still classifies — an env-kind failure is 
 })
 
 test('clean baseline (no failures) proceeds normally', async () => {
+  const trace = []
   await assert.rejects(
     runWorkflow({
       args: { ...baseArgs, env: 'container' },
-      agent: setupReturning([]),
+      agent: setupReturning([], trace),
       parallel: async thunks => Promise.all(thunks.map(t => t())),
     }),
-    /REACHED_MAP/,
+    NO_TARGETS,
   )
+  assert.ok(trace.includes('map'))
 })

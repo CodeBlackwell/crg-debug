@@ -21,14 +21,14 @@ const capText = (s, n) => String(s == null ? '' : s).trim().slice(0, n)
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
 const normPath = p => String(p || '').trim().replace(/^\.\//, '').replace(/\/+$/, '')
 
-// FNV-1a 32-bit — byte-identical to sealOf in lib/ui-measure.mjs (parity-tested).
+// FNV-1a 32-bit — byte-identical to sealOf in lib/crg-ui.measure.mjs (parity-tested).
 const sealOf = keys => {
   const s = [...(keys || [])].sort().join('\n')
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0
   return h.toString(16).padStart(8, '0')
 }
-// Mirrors itemsSeal in lib/ui-prep.mjs: seal over "id=status" of the scorecard items.
+// Mirrors itemsSeal in lib/crg-ui.prep.mjs: seal over "id=status" of the scorecard items.
 const itemsSeal = items => sealOf(Object.entries(items || {}).map(([id, it]) => `${id}=${(it && it.status) || 'unknown'}`))
 
 // The commit-allowlist rule, applied to proposals: what an apply touched must be
