@@ -6,6 +6,43 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-13
+
+0.27.0 fixed the prose leak where it was first seen, in Phase 1. The very next run hit the
+identical defect in Phase 0 and died again — so the diagnosis was right but the fix was
+scoped to the symptom rather than the shape. This generalizes it. Suite is 315 tests.
+
+### Fixed
+- **The prose leak is now named and mitigated at both load-bearing submits.** The trigger is
+  not "two or more properties" as 0.27.0 assumed — it is a **long free-text string property
+  immediately followed by an array-of-objects property**. At that boundary the model closes
+  the JSON string and reverts to the raw tool-call wire format for the next field, inside the
+  string's own value. Observed twice on Haiku 4.5, same day, same shape:
+  ```
+  {"overview":      "…Risks: …</overview>\n<parameter name=\"targets\">[{…}]"}
+  {"resolvedScope": "…1388 nodes.</resolvedScope>\n<parameter name=\"toolchain\">[{…}]"}
+  ```
+  Phase 0 cannot drop to one property — `graphStats`, `toolchain` and `baselineFailures` are
+  all required — so **`SETUP_LEAN_SCHEMA` drops the prose instead**: `resolvedScope`,
+  `provisioned` and `containerImage` go, leaving no prose/array boundary to leak at. Scope
+  degrades to a full-repo sweep; the other two are reporting, not control flow. Both setup
+  schemas share `TOOLCHAIN_ROW` / `BASELINE_ROW`, so a recovered submit is a strict subset of
+  the full contract rather than a divergent one.
+- **Retries escalate off the model that leaked.** `setup-retry` and `map-retry` now pass
+  `model: undefined` to inherit the session model instead of repeating on the cheap default.
+  A second attempt at the same shape on the same model that just failed it five times is a
+  coin flip. Both retries also carry a shared `PROSE_LEAK` directive naming the actual
+  mis-serialization — the harness feedback only ever says "missing property X", which is
+  what let the model repeat the identical shape to the cap.
+- The Phase 0 retry tells the agent the graph build and baseline are already done, so the
+  recovery re-reports rather than re-running a container provision and a full build.
+
+### Added
+- 8 more regression tests: `SETUP_LEAN_SCHEMA` is a strict prose-free subset with identical
+  `required`, both setup schemas share row identity, both retries escalate the model and
+  carry the directive, and two end-to-end cases drive a failing Phase 0 through recovery and
+  through double-failure abort against the real workflow body.
+
 ## [0.27.0] - 2026-08-13
 
 Two unrelated tracks. A structural pass over `lib/` — judged on DRYness, logical order, and

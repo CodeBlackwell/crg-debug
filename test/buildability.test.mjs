@@ -61,6 +61,43 @@ test('code-kind baseline failure does NOT trigger unfarmable — proceeds into M
   assert.ok(trace.includes('map'), 'a real source error must flow into discovery, not be discarded as env')
 })
 
+test('a failed Phase 0 recovers through the prose-free schema and keeps going', async () => {
+  // The 2026-08-13 platform run died here: the setup agent leaked `toolchain` into
+  // `resolvedScope`'s string and the run threw away a completed graph build. Now the full
+  // submit failing is survivable — the lean retry re-reports the required fields.
+  const trace = []
+  await assert.rejects(
+    runWorkflow({
+      args: baseArgs,
+      agent: async (_p, opts = {}) => {
+        trace.push(opts.label)
+        if (opts.label === 'setup') return null // the leak: full submit never validates
+        if (opts.label === 'setup-retry') return {
+          graphStats: '10 files', toolchain: [{ package: 'app' }], baselineFailures: [],
+        }
+        if (opts.label === 'map' || opts.label === 'map-retry') return null
+        return {}
+      },
+      parallel: async thunks => Promise.all(thunks.map(t => t())),
+    }),
+    NO_TARGETS, // reached Phase 1 — so Phase 0 recovered rather than aborting
+  )
+  assert.deepEqual(trace.slice(0, 2), ['setup', 'setup-retry'])
+})
+
+test('both setup attempts failing still aborts with the Phase 0 message', async () => {
+  const trace = []
+  await assert.rejects(
+    runWorkflow({
+      args: baseArgs,
+      agent: async (_p, opts = {}) => { trace.push(opts.label); return null },
+      parallel: async thunks => Promise.all(thunks.map(t => t())),
+    }),
+    /Phase 0 \(Graph\) setup agent failed/,
+  )
+  assert.deepEqual(trace, ['setup', 'setup-retry'])
+})
+
 test('a failed Map falls back to the single-property retry before giving up', async () => {
   // The 2026-08-13 regression: a two-property StructuredOutput submit the model could not
   // serialize killed the whole run. Now the phase re-asks for targets alone, and only a

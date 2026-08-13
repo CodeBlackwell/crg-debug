@@ -18,7 +18,9 @@ import { fileURLToPath } from 'node:url'
 
 const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
-const S = new Function(`${block}\nreturn { TARGETMAP_SCHEMA, TARGETS_SCHEMA, TARGET_ITEM, CONCERN_KEYS }`)()
+const S = new Function(
+  `${block}\nreturn { TARGETMAP_SCHEMA, TARGETS_SCHEMA, TARGET_ITEM, CONCERN_KEYS, SETUP_SCHEMA, SETUP_LEAN_SCHEMA, TOOLCHAIN_ROW, BASELINE_ROW, PROSE_LEAK }`,
+)()
 
 // A declaration's full text, from `const NAME` to where its brackets balance.
 const declOf = (text, name) => {
@@ -118,6 +120,57 @@ test('the Map phase wires the fallback and reuses one brief for both attempts', 
   assert.match(src, /label: 'map-retry', phase: 'Map', schema: TARGETS_SCHEMA/)
   // Ordering: primary first, then the retry.
   assert.ok(src.indexOf("label: 'map',") < src.indexOf("label: 'map-retry'"))
+})
+
+// ---- the Phase 0 fallback -------------------------------------------------------
+// The same leak hit SETUP_SCHEMA (`resolvedScope` prose → `toolchain` array). Phase 0 is
+// load-bearing and cannot drop to one property, so the fallback drops the PROSE instead.
+
+test('SETUP_LEAN_SCHEMA keeps every required field of the full schema', () => {
+  assert.deepEqual(S.SETUP_LEAN_SCHEMA.required, S.SETUP_SCHEMA.required)
+})
+
+test('SETUP_LEAN_SCHEMA is a strict, prose-free subset of SETUP_SCHEMA', () => {
+  const lean = Object.keys(S.SETUP_LEAN_SCHEMA.properties)
+  const full = Object.keys(S.SETUP_SCHEMA.properties)
+  assert.ok(lean.every(k => full.includes(k)), 'lean must not invent fields the full schema lacks')
+  assert.ok(lean.length < full.length, 'lean must actually drop something')
+  // The dropped fields are exactly the free-text ones; what remains is graphStats (a short
+  // fixed-format line) plus the two arrays. No prose → no prose/array boundary to leak at.
+  assert.deepEqual(full.filter(k => !lean.includes(k)), ['resolvedScope', 'provisioned', 'containerImage'])
+})
+
+test('both setup schemas share their row definitions, so the fallback cannot drift', () => {
+  assert.equal(S.SETUP_SCHEMA.properties.toolchain.items, S.TOOLCHAIN_ROW)
+  assert.equal(S.SETUP_LEAN_SCHEMA.properties.toolchain.items, S.TOOLCHAIN_ROW)
+  assert.equal(S.SETUP_SCHEMA.properties.baselineFailures.items, S.BASELINE_ROW)
+  assert.equal(S.SETUP_LEAN_SCHEMA.properties.baselineFailures.items, S.BASELINE_ROW)
+})
+
+test('the Graph phase wires the fallback and reuses one brief for both attempts', () => {
+  assert.match(src, /const setupBrief = /)
+  assert.match(src, /label: 'setup', phase: 'Graph', schema: SETUP_SCHEMA/)
+  assert.match(src, /label: 'setup-retry', phase: 'Graph', schema: SETUP_LEAN_SCHEMA/)
+  assert.ok(src.indexOf("label: 'setup',") < src.indexOf("label: 'setup-retry'"))
+})
+
+// ---- retries escalate off the model that leaks ----------------------------------
+
+test('every retry drops to the session model instead of repeating on the cheap one', () => {
+  // `model: undefined` inherits the session model. Retrying the same shape on the same
+  // model that just failed it five times is a coin flip, so neither retry passes `model`.
+  for (const label of ["'setup-retry'", "'map-retry'"]) {
+    const at = src.indexOf(`label: ${label}`)
+    assert.notEqual(at, -1, `${label} call site missing`)
+    const opts = src.slice(at, src.indexOf('\n', at))
+    assert.match(opts, /model: undefined/, `${label} must escalate off the leaking model`)
+  }
+})
+
+test('both retries carry the shared shape-correction directive', () => {
+  assert.match(S.PROSE_LEAK, /<parameter>/)
+  assert.match(S.PROSE_LEAK, /well-formed JSON/)
+  assert.equal([...src.matchAll(/RETRY — \$\{PROSE_LEAK\}/g)].length, 2)
 })
 
 test('an empty-but-valid target map takes the fallback, then aborts', () => {
