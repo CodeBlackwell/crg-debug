@@ -157,10 +157,19 @@ const straysOutside = (touched, allowed) =>
 // Zero wave-gate rows means one of two very different things. If nothing touched lives
 // under a toolchain package, there was genuinely nothing to run and the wave is clean.
 // If something did, the gate failed to run and silence must stay red.
+//
+// "Nothing to run" is only a real answer when there is a toolchain to be outside of. An
+// EMPTY toolchain means no command exists to gate anything, so every wave would read clean
+// — the gate would be vacuous for the whole campaign and nothing would say so. And a
+// package of '.' is the app root covering every touched file, which underFence cannot
+// express (normPath('.') is '.', prefix-matching nothing), so the common single-package
+// repo would take the same vacuous path. Both are unable-to-gate, not gated-and-green.
+const inGatePackage = (file, toolchain) =>
+  (toolchain || []).some(t => t.package && (normPath(t.package) === '.' || underFence(file, [t.package])))
 const waveGateClean = (rows, touched, toolchain) =>
   (rows || []).length
     ? rows.every(x => x && x.exitCode === 0)
-    : !(touched || []).some(f => (toolchain || []).some(t => t.package && underFence(f, [t.package])))
+    : (toolchain || []).length > 0 && !(touched || []).some(f => inGatePackage(f, toolchain))
 
 // Committed files must be a subset of the wave's declared touch set.
 const commitFilesOk = (committed, allowlist) => {
@@ -319,10 +328,16 @@ const DEDUP_SCHEMA = {
 
 const BUILD_LEDGER_SCHEMA = {
   type: 'object',
-  required: ['gaps'],
+  // toolchain is required, not optional: it is the wave gate's entire notion of what can
+  // be gated, and an absent one silently made every gate in the run vacuous.
+  required: ['gaps', 'toolchain'],
   properties: {
     gaps: { type: 'array', items: { type: 'object' } },
-    toolchain: { type: 'array', items: { type: 'object' } },
+    toolchain: {
+      type: 'array',
+      items: { type: 'object' },
+      description: 'one row per package with a build/typecheck/test command; `package` MUST be a path prefix relative to the app root ("." for the app root itself), never a package NAME',
+    },
   },
 }
 
@@ -686,10 +701,15 @@ Apply the verification rules in ${SKILL}. Classify per its evidence bar: already
     toolchain: (setup && setup.toolchain) || [],
     gaps, deferred, rejected, unsurveyable,
   }
-  await tryAgent(
+  const persisted = await tryAgent(
     `Create the directory ${appRoot}/.crg-build if it does not exist, then write the following JSON to ${ledgerPath}, overwriting any existing file. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(ledger, null, 2)}`,
     { label: 'persist', phase: 'Verify', model },
   )
+  // The write is the whole survey->gate hand-off: GATE-SPEC shows the human this file and
+  // auto-approve reads it off disk. A dead write agent leaves a PRIOR run's ledger sitting
+  // at the same path, so logging "persisted" would send someone to approve another survey's
+  // gaps. Fail like Phase 0 does — loudly, before the gate.
+  if (!persisted) throw new Error(`Survey ledger write failed — ${ledgerPath} may still hold a prior run's ledger; re-run the survey rather than gating on it.`)
   log(`Survey complete: ledger persisted -> ${ledgerPath}`)
 
   return {
@@ -718,6 +738,9 @@ Apply the verification rules in ${SKILL}. Classify per its evidence bar: already
 // commitMessageOk/commitFilesOk for the per-subrepo commits.
 
 log(`crg-build build mode: ingesting ${fromLedger} · ${approvedGapIds.length} approved gap(s) · maxWaves ${maxWaves}`)
+// An empty toolchain now holds every wave rather than passing it. Say so once, up front —
+// a campaign that halts on wave 1 should not need a code read to explain itself.
+if (!toolchain.length) log('WARNING: the ledger carries no toolchain — nothing can gate a wave, so every wave will be held for the human')
 const loaded = await tryAgent(
   `Read the JSON file at ${fromLedger} (under the app at ${appRoot}) and return its parsed contents. Do NOT edit any file. It is a crg-build readiness ledger: an object with gaps[] and toolchain[]. Return both fields EXACTLY as parsed, unmodified.`,
   { label: 'ingest-ledger', phase: 'Build', schema: BUILD_LEDGER_SCHEMA, model },
@@ -923,7 +946,9 @@ while (open.length && waveNum < maxWaves && !appDown) {
   let waveClean = true
   if (closedGaps.length) {
     const wg = await waveGateAgent([...waveTouched])
-    waveClean = waveGateClean(wg && wg.results, [...waveTouched], toolchain)
+    // A dead gate agent reported no rows for the same reason a scope-less gate does —
+    // silence. Only one of them is evidence, so the null case never reaches the helper.
+    waveClean = !!wg && waveGateClean(wg.results, [...waveTouched], toolchain)
   }
 
   // Commit step: per subrepo, allowlisted paths, script-verified.

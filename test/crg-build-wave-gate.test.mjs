@@ -31,14 +31,36 @@ test('with rows present, every real exit code still decides the verdict', () => 
   assert.equal(H.waveGateClean([{ command: 'ls', exitCode: 0 }], ['README.md'], TOOLCHAIN), true)
 })
 
-test('an empty toolchain means no package covers anything, so silence is clean', () => {
-  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], []), true)
-  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], undefined), true)
+// "Nothing to run" is only an answer when there is a toolchain to be outside of. With an
+// empty one the gate is vacuous for the WHOLE campaign, and reading that as clean commits
+// every wave unverified — the loudest possible failure, reported as the quietest.
+test('an empty toolchain cannot gate anything, so silence is NOT clean', () => {
+  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], []), false)
+  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], undefined), false)
+  assert.equal(H.waveGateClean([], ['README.md'], []), false, 'even a docs-only wave has no gate to have passed')
 })
 
-test('the wave gate calls the helper with the touched set and the toolchain', () => {
-  assert.match(src, /waveClean = waveGateClean\(wg && wg\.results, \[\.\.\.waveTouched\], toolchain\)/)
+// underFence(f, ['.']) is false — normPath('.') is '.', which prefix-matches nothing — so
+// the single-package repo, the common case, took the vacuous path for every file.
+test("a package of '.' covers every touched file", () => {
+  const root = [{ package: '.', test: 'npm test' }]
+  assert.equal(H.waveGateClean([], ['apps/web/src/Page.tsx'], root), false)
+  assert.equal(H.waveGateClean([], ['README.md'], root), false)
+  assert.equal(H.waveGateClean([{ command: 'npm test', exitCode: 0 }], ['README.md'], root), true)
+})
+
+test('the wave gate calls the helper only when the gate agent actually reported', () => {
+  assert.match(src, /waveClean = !!wg && waveGateClean\(wg\.results, \[\.\.\.waveTouched\], toolchain\)/)
   assert.equal(src.includes('waveClean = !!(wg && (wg.results || []).length &&'), false, 'the collapsed verdict must be gone')
+  assert.equal(src.includes('waveGateClean(wg && wg.results'), false,
+    'a dead gate agent must not reach the helper — null rows are indistinguishable from a scope-less gate there')
+})
+
+test('the ledger schema requires the toolchain the gate is built on', () => {
+  const at = src.indexOf('const BUILD_LEDGER_SCHEMA')
+  const schema = src.slice(at, src.indexOf('\n}', at))
+  assert.match(schema, /required: \['gaps', 'toolchain'\]/,
+    'an optional toolchain let an ingest agent make every wave gate in the run vacuous')
 })
 
 test('the wave-gate brief tells the agent zero rows is the honest no-package answer', () => {

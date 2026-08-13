@@ -108,7 +108,7 @@ const declOf = (text, name) => {
 }
 
 // resolveModel is checked separately — crg-agentsmd.js has one documented variant.
-const SHARED_PRELUDE = ['fence', 'capText', 'norm', 'normPath', 'isSafeAbs', 'commitMessageOk', 'TIERS', 'tryAgent', 'uncommitOk']
+const SHARED_PRELUDE = ['fence', 'capText', 'norm', 'normPath', 'isSafeAbs', 'commitMessageOk', 'TIERS', 'tryAgent', 'uncommitOk', 'underFence']
 
 // Prelude parity searches the WHOLE workflow, not just the helpers block: only *_SCHEMA
 // declarations are required to sit inside the markers, and several prelude copies

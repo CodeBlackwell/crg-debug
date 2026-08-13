@@ -6,6 +6,40 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-08-13
+
+0.31.0 swept "a dead agent is not a passing verdict" through crg-debug, crg-ralph,
+crg-integrations and crg-ui — and missed `crg-build.js`, which had the same defect in the
+same place. Found by a review that landed after the release.
+
+### Fixed
+- **A dead wave gate no longer commits the wave** (`crg-build.js`). Routing `waveGateAgent`
+  through `tryAgent` turned an abort into `wg === null`, and `waveGateClean(wg && wg.results, …)`
+  fed that `null` into the branch written for the honest "no package covers these files"
+  case. The two are both silence and only one is evidence, so the null case no longer
+  reaches the helper.
+- **An empty toolchain is unable-to-gate, not gated-and-green** (`crg-build.js`). With no
+  toolchain rows, no file is under any package, so *every* wave in the campaign read clean
+  and nothing said so. `toolchain` is now `required` in `BUILD_LEDGER_SCHEMA` — an ingest
+  agent returning only `gaps` could previously make the whole run's gating vacuous — and an
+  empty one is logged once, up front, as the reason waves will be held.
+- **A toolchain package of `.` covers every touched file** (`crg-build.js`). Same
+  `underFence(f, ['.'])` blind spot fixed in `crg-ralph.js` in 0.31.0: `normPath('.')` is
+  `'.'`, which prefix-matches nothing, so the single-package repo — the common case — took
+  the vacuous path for every file.
+- **A survey whose ledger never persisted now fails loudly** (`crg-build.js`). The write
+  agent's result was discarded and `Survey complete: ledger persisted` logged regardless.
+  GATE-SPEC shows the human that file and `auto-approve` reads it off disk, so a dead write
+  left someone approving a *prior* run's gaps. It now throws, like Phase 0 already does.
+
+### Changed
+- `underFence` joins the shared-prelude parity set — it became a byte-identical twin across
+  `crg-build.js` and `crg-ralph.js` in 0.31.0 with nothing pinning it.
+- The survey brief pointed at a "Toolchain discovery" section of the crg-build methodology
+  that did not exist. It exists now, and specifies the contract the wave gate depends on:
+  `package` is a path prefix relative to the app root (`.` for the root itself), never a
+  package name — `@acme/web` matches nothing on disk and silently gates nothing.
+
 ## [0.31.0] - 2026-08-13
 
 One defect class, found in `crg-debug.js` in 0.29.0 and swept through the rest of the

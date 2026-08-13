@@ -14,7 +14,7 @@ pass/fail verdict. See README.md for the full user-facing picture.
 ## Commands
 
 ```
-node --test                 # full suite (389 tests, ~15s); run before any commit
+node --test                 # full suite (392 tests, ~15s); run before any commit
 bin/crg-deterministic       # installs Workflows + tools into ~/.claude/workflows/
 ```
 
@@ -53,14 +53,25 @@ the stale-install bug class it used to cause.
   some failures but **throws** for others — notably a schema-gated call that exhausts its
   StructuredOutput retry cap. Guards written for the null shape (`if (!x) throw`,
   `.filter(Boolean)`) are silently bypassed by a throw, which then destroys phases that
-  already succeeded. `crg-debug.js` routes every top-level call through `tryAgent`, and
-  `test/agent-resilience.test.mjs` enforces that no bare `await agent(` survives outside it.
-  Calls inside `parallel()`/`pipeline()` thunks are already safe — the runtime resolves a
-  throwing thunk to `null`. Relatedly: **prefer single-property submit schemas for any agent
+  already succeeded. Every workflow routes its top-level calls through `tryAgent`, and
+  per-workflow guard tests enforce that no bare call survives outside it. **Match the call,
+  not the `await`:** a probe for `await agent(` cannot see `const diagnose = cl => agent(`,
+  and three unguarded arrow-thunk calls hid behind exactly that regex while the test
+  reported clean. Calls inside `parallel()`/`pipeline()` thunks are already safe — the
+  runtime resolves a throwing thunk to `null`. Relatedly: **prefer single-property submit schemas for any agent
   whose output is load-bearing.** A model that mis-serializes a multi-parameter tool call
   leaks the raw `<parameter name="…">` wire format into the first property's string value,
   and the validator's "missing property X" feedback never tells it so — it repeats the same
   shape until the cap. One property means there is no second tag to leak.
+- **A null verdict is not a passing verdict.** `tryAgent` converts a dead agent into `null`,
+  which then flows into code that reads it as "no problems reported". A dead gate is not a
+  green gate; a dead commit relay is not a failed commit (the agent runs `add`/`commit`/
+  `rev-parse` *before* it reports, so the likely shape is a commit that landed unverified);
+  an un-commit that never reported is not an un-commit; a write agent that never reported
+  leaves a *prior* run's file at the path. Every one of these shipped at least once. When a
+  fallback exists for "nothing to do" — zero gate rows, an empty scope — the dead case must
+  be split out **before** it reaches that fallback, because both look like silence and only
+  one is evidence. Stop the run and name the branch or path to inspect.
 - **Agents claim, the script decides.** Never move a verdict (exit-code judgment, seal
   check, fence check, commit validation) from JS into an agent prompt. Agents transcribe
   verbatim and relay tool output; every relay that matters is schema-shaped and, where
@@ -77,7 +88,8 @@ the stale-install bug class it used to cause.
   This is the same rule the workflow prelude already follows; it binds `lib/` too.
 - **Cross-workflow structure is tested, not assumed** (`test/workflow-structure.test.mjs`).
   The shared prelude (`fence`, `capText`, `norm`, `normPath`, `isSafeAbs`,
-  `commitMessageOk`, `TIERS`) and `GATE_SCHEMA` must stay byte-identical across every
+  `commitMessageOk`, `TIERS`, `tryAgent`, `uncommitOk`, `underFence`) and `GATE_SCHEMA`
+  must stay byte-identical across every
   workflow that declares them; the sandbox forbids imports, so copies are the mechanism
   and the parity test is what keeps them honest. Two divergences are deliberate and
   named in the test: `crg-agentsmd`'s `resolveModel` (falls through to the session model,

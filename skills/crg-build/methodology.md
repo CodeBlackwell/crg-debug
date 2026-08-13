@@ -140,6 +140,19 @@ abort. Only infra-kind liveness failures (connection refused, Docker down) abort
 `app-down` to the skill, which owns restarts. kind:env baseline failures on non-core subrepos are
 recorded `unsurveyable` and surveyed around.
 
+**Toolchain discovery** (Phase 0's other output, and the one the build waves depend on). Emit one
+`toolchain[]` row per package that has a build, typecheck, or test command — read them off the
+package manifest (`package.json` scripts, `pyproject.toml`, `Makefile`, `justfile`), never invent
+one. Each row is `{package, build?, typecheck?, test?}` with at least one command.
+
+`package` **must be a path prefix relative to the app root** — `apps/web`, `services/api`, or `.`
+for the app root itself. It is **never a package NAME**: `@acme/web` matches no file on disk, and
+the wave regression gate decides which files a wave must gate by testing them against these
+prefixes. A name-shaped entry silently covers nothing.
+
+Report the toolchain even when it is empty, and prefer a partial row to none. An empty toolchain
+means no wave can be gated at all, so every build wave is held for the human rather than committed.
+
 **Phase 1 — Map.** Produce the SURFACE MAP: per frontend, the full route inventory (routesManifest
 + router source) × the identities that may see each route; the backend router inventory; the spec
 sources read. This map is the partition input and the browser-coverage checklist.
