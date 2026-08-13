@@ -14,7 +14,7 @@ pass/fail verdict. See README.md for the full user-facing picture.
 ## Commands
 
 ```
-node --test                 # full suite (225 tests, ~3s); run before any commit
+node --test                 # full suite (293 tests, ~3s); run before any commit
 bin/crg-deterministic       # installs Workflows + tools into ~/.claude/workflows/
 ```
 
@@ -53,6 +53,21 @@ The enabler copies these into `~/.claude/workflows/` under dotted names
   `workflows/crg-ui.js`; `itemsSeal` in `lib/ui-prep.mjs` and `workflows/crg-ui-prep.js`;
   `keyOf` in `lib/ledger-slice.mjs` must match `workflows/crg-debug.js`. Parity tests
   exist — change one copy, change all.
+- **Cross-workflow structure is tested, not assumed** (`test/workflow-structure.test.mjs`).
+  The shared prelude (`fence`, `capText`, `norm`, `normPath`, `isSafeAbs`,
+  `commitMessageOk`, `TIERS`) and `GATE_SCHEMA` must stay byte-identical across every
+  workflow that declares them; the sandbox forbids imports, so copies are the mechanism
+  and the parity test is what keeps them honest. Two divergences are deliberate and
+  named in the test: `crg-agentsmd`'s `resolveModel` (falls through to the session model,
+  never `haiku`) and its `GATE_KIND_SCHEMA` (a superset carrying a code-vs-env
+  discriminator). If a copy genuinely must differ, give it a different name rather than
+  hiding a second meaning behind a shared one.
+- **`meta.phases` titles must match `phase()` calls exactly.** The runtime matches on the
+  string; a mismatch silently orphans the progress group instead of erroring. Tested.
+- **Schemas live inside the `pure-helpers` block.** They are static literals, so they
+  belong where the structure tests can reach them — along with any constant they
+  reference (`CONCERN_KEYS`, `GAP_ROW`, `CRITERION`, …). The block must still evaluate
+  standalone; that test is what catches a schema reaching outside it.
 - **`fence()` everything untrusted.** Any repo source, issue body, PRD text, or Figma
   payload interpolated into an agent brief goes through `fence()`. Never interpolate raw.
 - **No AI attribution.** Commit messages and PR bodies must read human — no

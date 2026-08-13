@@ -4,6 +4,51 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.26.0] - 2026-08-12
+
+Structural cleanup across the eight workflow scripts, plus a DRY pass over
+`crg-debug.js`. No behavior change was intended; the one real defect found is under
+Fixed.
+
+### Added
+- **`test/workflow-structure.test.mjs`** — cross-workflow invariants that were previously
+  only conventions: `meta.phases` titles match `phase()` calls exactly, the shared prelude
+  and `GATE_SCHEMA` stay byte-identical everywhere they are declared, every `*_SCHEMA` is
+  declared inside the `pure-helpers` block, that block evaluates standalone, and the
+  section spine is present with no duplicate headers. Suite is now 293 tests.
+
+### Fixed
+- **Eight phase titles never grouped in the progress display.** `crg-integrations` and
+  `crg-ui` declared repair-mode phases as `'Fix (repair)'`, `'Verify (repair)'` and so on
+  in `meta.phases` while the code called `phase: 'Fix'`. The runtime matches titles
+  exactly, so each ran as an orphan group and the declared entries never lit up. Code now
+  uses the declared titles, and the mismatch is a test failure rather than a silent one.
+
+### Changed
+- **`normPath` unified on the prefix-safe form.** Three variants existed; the one in
+  `crg-ralph` also stripped trailing slashes, which is load-bearing there — Army fences
+  name directories (`shared/src/trader_shared/`), and without the strip the containment
+  check compares against a doubled separator and quietly matches nothing. That form is
+  now canonical everywhere.
+- **Same-name-different-contract schemas renamed.** `crg-agentsmd`'s `GATE_SCHEMA` carries
+  an extra code-vs-env discriminator and is now `GATE_KIND_SCHEMA`; the function-local
+  `GATE_SCHEMA` in `crg-integrations` reports merged clusters and regressions and is now
+  `REGRESSION_GATE_SCHEMA`, hoisted alongside the other schemas. `isSafeAbsPath` in
+  `crg-debug` is now `isSafeAbs`, matching the other three workflows.
+- **Schemas consolidated into the `pure-helpers` block** in all eight workflows (60
+  declarations plus the constants they reference), and the section-header spine
+  standardized — `crg-ui` and `crg-ui-prep` previously had one header apiece.
+- **`crg-debug.js` de-duplicated.** Three ad-hoc groupers collapsed into generic
+  `groupBy`/`dedupBy`; `claimedFiles` renamed `assignedFiles` to match the vocabulary
+  the finder briefs already use; the residual-pass brief, ledger pointer, prior-failure
+  note and containerized-test note extracted to named constants instead of being pasted
+  into two briefs apiece; the residual brief's file cap named
+  (`RESIDUAL_CLAIMED_CAP`) rather than left as a bare 120. `allGreen` centralizes the
+  gate read and keeps the empty-result guard — zero rows is not a pass.
+- **`keyOf` parity with `lib/ledger-slice.mjs` is now tested**, not just documented. The
+  two are the ledger-slicing identity; drift silently drops bugs from an escalation or
+  gate-triage re-fix run.
+
 ## [0.25.0] - 2026-07-31
 
 Wave-shape control and honest stop reporting, both earned by the first BUILD run over

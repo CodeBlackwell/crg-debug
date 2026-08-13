@@ -455,7 +455,7 @@ test/                     node --test suite over every pure helper and tool CLI
 ## 🧪 Testing
 
 ```
-node --test        # 225 tests across 20 files, ~3s
+node --test        # 293 tests across 21 files, ~3s
 ```
 
 Every Workflow keeps its pure logic in a marked `pure-helpers` block that tests eval-extract and

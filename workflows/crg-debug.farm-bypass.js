@@ -25,6 +25,76 @@ const nextTier = (tier, maxTier) => {
   return idx < cap ? TIERS[idx + 1] : null
 }
 const slug = s => String(s || '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+
+// ---- schemas ------------------------------------------------------------------
+// Static literals, declared inside this block so the structure and parity tests in
+// test/workflow-structure.test.mjs can reach them. Order matters where one refers
+// to another; it is the original declaration order.
+
+const RECON_SCHEMA = {
+  type: 'object',
+  required: ['fresh', 'dropped'],
+  properties: {
+    fresh: {
+      type: 'array',
+      description: 'Sorted impact-first, review-likelihood as tiebreaker — index 0 is the top pick.',
+      items: {
+        type: 'object',
+        required: ['repo', 'issueRef', 'title', 'url'],
+        properties: {
+          repo: { type: 'string', description: 'owner/repo' },
+          issueRef: { type: 'string', description: 'e.g. "#123"' },
+          title: { type: 'string' },
+          url: { type: 'string' },
+          severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
+          impactRationale: { type: 'string', description: 'one line: why this ranks where it does' },
+          stars: { type: 'number' },
+          recentMergeSpanDays: { type: 'number' },
+          daysSinceLastMerge: { type: 'number' },
+          farmabilityPrior: { type: 'string', enum: ['high', 'medium', 'low'], description: 'cheap-metadata guess at whether the env is buildable in the current --env mode (no clone)' },
+          farmabilitySignals: { type: 'string', description: 'one line: language, build manifests, size, and any prior verdict behind the prior' },
+          priorUnfarmable: { type: 'boolean', description: 'true if the farm DB already recorded this repo unfarmable in this env mode' },
+        },
+      },
+    },
+    dropped: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['repo', 'issueRef', 'status'],
+        properties: {
+          repo: { type: 'string' },
+          issueRef: { type: 'string' },
+          status: { type: 'string', enum: ['in-flight', 'already-fixed', 'security-excluded'] },
+          competingPr: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+
+// SECURITY_ASSESS returns raw signals only — the channel decision itself is computed in JS below
+// (isDispatchSafe), never left to the model. Keeps the one place that decides "does this touch a
+// third party's repo unattended" auditable and impossible for a prompt to talk itself past.
+const SECURITY_ASSESS_SCHEMA = {
+  type: 'object',
+  required: ['pocVerdict', 'reachability', 'marginalRiskSmall', 'fixMechanical', 'contribPolicyForbidsDirectPR'],
+  properties: {
+    pocVerdict: { type: 'string', enum: ['confirmed-exploitable', 'confirmed-not-exploitable', 'inconclusive-could-not-execute'] },
+    pocCode: { type: 'string' },
+    pocCommand: { type: 'string' },
+    pocOutput: { type: 'string' },
+    reachability: { type: 'string', description: 'remote-unauthenticated / remote-authenticated / local-only / operator-only-not-exploitable' },
+    marginalRiskSmall: { type: 'boolean', description: 'true only if exploiting this needs a precondition that already implies far more compromise than this bug itself grants' },
+    marginalRiskRationale: { type: 'string' },
+    fixMechanical: { type: 'boolean', description: 'true only for a small, obviously-safe diff — no design decisions, no new API surface' },
+    fixRationale: { type: 'string' },
+    contribPolicyForbidsDirectPR: { type: 'boolean', description: 'true if CONTRIBUTING.md/SECURITY.md says to report security issues privately rather than via a public PR' },
+    contribRequirements: { type: 'string', description: 'any PR requirements found (signed commits/DCO, template, issue-first) — empty if none' },
+    severity: { type: 'string', description: 'conservative — pair with marginalRiskRationale, do not overstate' },
+  },
+}
+
 // <<< pure-helpers
 
 // ---- args ---------------------------------------------------------------------
@@ -89,48 +159,6 @@ const logRunEnd = () =>
 
 // ---- Phase 1: RECON + dedup + rank ---------------------------------------------
 phase('Recon')
-
-const RECON_SCHEMA = {
-  type: 'object',
-  required: ['fresh', 'dropped'],
-  properties: {
-    fresh: {
-      type: 'array',
-      description: 'Sorted impact-first, review-likelihood as tiebreaker — index 0 is the top pick.',
-      items: {
-        type: 'object',
-        required: ['repo', 'issueRef', 'title', 'url'],
-        properties: {
-          repo: { type: 'string', description: 'owner/repo' },
-          issueRef: { type: 'string', description: 'e.g. "#123"' },
-          title: { type: 'string' },
-          url: { type: 'string' },
-          severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
-          impactRationale: { type: 'string', description: 'one line: why this ranks where it does' },
-          stars: { type: 'number' },
-          recentMergeSpanDays: { type: 'number' },
-          daysSinceLastMerge: { type: 'number' },
-          farmabilityPrior: { type: 'string', enum: ['high', 'medium', 'low'], description: 'cheap-metadata guess at whether the env is buildable in the current --env mode (no clone)' },
-          farmabilitySignals: { type: 'string', description: 'one line: language, build manifests, size, and any prior verdict behind the prior' },
-          priorUnfarmable: { type: 'boolean', description: 'true if the farm DB already recorded this repo unfarmable in this env mode' },
-        },
-      },
-    },
-    dropped: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['repo', 'issueRef', 'status'],
-        properties: {
-          repo: { type: 'string' },
-          issueRef: { type: 'string' },
-          status: { type: 'string', enum: ['in-flight', 'already-fixed', 'security-excluded'] },
-          competingPr: { type: 'string' },
-        },
-      },
-    },
-  },
-}
 
 const reconPrompt =
   direction === 'scoped'
@@ -203,28 +231,6 @@ if (!capped.length) {
   log('Recon found no fresh, unclaimed candidates — nothing to fix or ship this run.')
   await logRunEnd()
   return { farmRunId, direction, candidatesConsidered: rankedFresh.length, candidatesRun: 0, droppedByCap: [], shipped: [], handedOff: [] }
-}
-
-// SECURITY_ASSESS returns raw signals only — the channel decision itself is computed in JS below
-// (isDispatchSafe), never left to the model. Keeps the one place that decides "does this touch a
-// third party's repo unattended" auditable and impossible for a prompt to talk itself past.
-const SECURITY_ASSESS_SCHEMA = {
-  type: 'object',
-  required: ['pocVerdict', 'reachability', 'marginalRiskSmall', 'fixMechanical', 'contribPolicyForbidsDirectPR'],
-  properties: {
-    pocVerdict: { type: 'string', enum: ['confirmed-exploitable', 'confirmed-not-exploitable', 'inconclusive-could-not-execute'] },
-    pocCode: { type: 'string' },
-    pocCommand: { type: 'string' },
-    pocOutput: { type: 'string' },
-    reachability: { type: 'string', description: 'remote-unauthenticated / remote-authenticated / local-only / operator-only-not-exploitable' },
-    marginalRiskSmall: { type: 'boolean', description: 'true only if exploiting this needs a precondition that already implies far more compromise than this bug itself grants' },
-    marginalRiskRationale: { type: 'string' },
-    fixMechanical: { type: 'boolean', description: 'true only for a small, obviously-safe diff — no design decisions, no new API surface' },
-    fixRationale: { type: 'string' },
-    contribPolicyForbidsDirectPR: { type: 'boolean', description: 'true if CONTRIBUTING.md/SECURITY.md says to report security issues privately rather than via a public PR' },
-    contribRequirements: { type: 'string', description: 'any PR requirements found (signed commits/DCO, template, issue-first) — empty if none' },
-    severity: { type: 'string', description: 'conservative — pair with marginalRiskRationale, do not overstate' },
-  },
 }
 
 // Isolated so the channel logic is one auditable expression, not scattered through the pipeline.
