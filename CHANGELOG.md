@@ -6,6 +6,33 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-08-13
+
+`/crg-debug` could not sweep a repo that has no build step — including this one. Found by
+pointing it at itself and watching it refuse.
+
+### Fixed
+- **An absent build step is no longer read as a broken environment.** The unfarmable bail
+  fired on `if (envFailures.length)` — *any* env-kind baseline failure aborted the run. But
+  `SETUP_SCHEMA`'s own `kind` description instructs the agent to classify "a build command
+  not applicable to this project type (e.g. a plugin/integration never meant to be
+  packaged)" as `env`. So the bail was contradicting the schema that produced its input, and
+  any repo whose build/typecheck steps are absent *by design* was unsweepable. This repo is
+  one: `npm run build` and `npm run typecheck` do not exist, `npm test` is green over 321
+  tests, and the run bailed anyway.
+  The bail now asks the question that actually matters — **is there still a way to gate a
+  fix?** `gateUnusable(toolchain, envFailures)` returns true only when no test command
+  exists at all, or when every test command is itself among the env failures. One working
+  gate keeps the run alive; the env failures are logged as absent-or-not-applicable steps.
+  This does not weaken the tuya-local `uv build` protection it was written for: env-kind
+  failures were already excluded from the bug queue upstream (`baselineFailures` is
+  code-only), so nothing environmental can be seeded as a bug either way.
+
+### Added
+- 5 tests: a missing build step with tests present is survivable, no test command anywhere
+  is fatal, a test command that itself failed on env is fatal, one working gate among
+  several broken ones suffices, and an empty test string is not a gate.
+
 ## [0.29.0] - 2026-08-13
 
 A validated fix wave could be committed in a state that does not build. Found by

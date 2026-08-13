@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -245,4 +245,46 @@ test('every commitWave call site passes a supportById map', () => {
   for (const args of calls) {
     assert.match(args.trim(), /[sS]upport[A-Za-z]*$/, `commitWave call passes no support map: ${args}`)
   }
+})
+
+// ---- gateUnusable ---------------------------------------------------------------
+// Regression cover for 2026-08-13: any env-kind baseline failure aborted the run, so a
+// repo whose build/typecheck steps are absent BY DESIGN was unsweepable — including
+// crg-debug itself (npm test green over 321 tests, run bailed anyway). SETUP_SCHEMA's
+// own `kind` description tells the agent to call a not-applicable build step "env", so
+// the bail was contradicting the schema that produced its input.
+
+test('gateUnusable: a missing build step is survivable when tests exist', () => {
+  const toolchain = [{ package: 'crg-debug', test: 'npm test' }]
+  const env = [
+    { command: 'npm run build', error: 'Missing script: "build"', kind: 'env' },
+    { command: 'npm run typecheck', error: 'Missing script: "typecheck"', kind: 'env' },
+  ]
+  assert.equal(H.gateUnusable(toolchain, env), false, 'a working test gate must keep the run alive')
+})
+
+test('gateUnusable: no test command anywhere is fatal', () => {
+  assert.equal(H.gateUnusable([{ package: 'a', build: 'make' }], [{ command: 'make' }]), true)
+  assert.equal(H.gateUnusable([], [{ command: 'x' }]), true)
+  assert.equal(H.gateUnusable(null, null), true)
+})
+
+test('gateUnusable: a test command that ITSELF failed on env is fatal', () => {
+  const toolchain = [{ package: 'a', test: 'uv run pytest' }]
+  const env = [{ command: 'uv run pytest', error: 'ModuleNotFoundError: numpy', kind: 'env' }]
+  assert.equal(H.gateUnusable(toolchain, env), true, 'the only gate is broken — nothing can verify a fix')
+})
+
+test('gateUnusable: one working gate among several broken ones is enough', () => {
+  const toolchain = [
+    { package: 'api', test: 'uv run pytest' },
+    { package: 'web', test: 'npm test' },
+  ]
+  const env = [{ command: 'uv run pytest', error: 'missing system lib', kind: 'env' }]
+  assert.equal(H.gateUnusable(toolchain, env), false)
+})
+
+test('gateUnusable: rows without a test command are ignored, not counted as gates', () => {
+  const toolchain = [{ package: 'a', build: 'make' }, { package: 'b', test: '' }]
+  assert.equal(H.gateUnusable(toolchain, []), true, 'an empty test string is not a gate')
 })

@@ -64,6 +64,19 @@ const allGreen = (res, pick) => {
 const waveKey = b => `${bugFile(b)}::${norm(b && b.rootCause)}`
 // The no-attribution rule as an enforced gate, not a prompt hope.
 const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// Is an env-kind baseline failure actually FATAL? Only when it leaves no way to gate a
+// fix. A build or typecheck step that is MISSING or NOT APPLICABLE to the project type —
+// SETUP_SCHEMA's own `kind` description names "a plugin/integration never meant to be
+// packaged" as env — is an absent step, not a broken environment, and the fix waves gate
+// on tests. Treating every env failure as unfarmable made any repo without a build script
+// unsweepable, including this one (observed 2026-08-13: `npm run build`/`npm run typecheck`
+// absent by design, `npm test` green over 321 tests, run bailed anyway).
+const gateUnusable = (toolchain, envFailures) => {
+  const tests = (toolchain || []).map(t => t && t.test).filter(Boolean)
+  if (!tests.length) return true // nothing to gate on at all
+  // Fatal only if EVERY test command is itself among the env failures; one working gate is enough.
+  return tests.every(cmd => (envFailures || []).some(f => f && f.command === cmd))
+}
 // The exact file set a wave is allowed to commit: for each bug that CLOSED, its own
 // file, its test, and the supporting files that bug's fix agent declared in filesTouched.
 // The support term is load-bearing — a fix legitimately edits a shared type or helper,
@@ -500,10 +513,15 @@ const allBaseline = setup.baselineFailures || []
 const envFailures = allBaseline.filter(f => f.kind === 'env')
 baselineFailures = allBaseline.filter(f => f.kind !== 'env') // code-type only — genuine bugs, seeded below
 log(`Graph: ${setup.graphStats || 'n/a'} · toolchain: ${(setup.toolchain || []).length} pkg · env: ${env}${setup.containerImage ? ` (${setup.containerImage})` : ''} · provision: ${setup.provisioned || 'n/a'} · baseline: ${allBaseline.length} fail (${baselineFailures.length} code, ${envFailures.length} env)`)
-if (envFailures.length) {
-  // The env could not be made buildable, so the gate can never go green — any "fix" would only
-  // manufacture false regressions. Bail cleanly as UNFARMABLE rather than seed environment
-  // breakage into the bug queue (the tuya-local `uv build` false-positive class).
+if (envFailures.length && !gateUnusable(setup.toolchain, envFailures)) {
+  // Env failures never enter the bug queue (baselineFailures is code-only above), so the
+  // tuya-local `uv build` false-positive class is already handled. With a working test
+  // command the fix waves still have a real gate — carry on rather than abandon the run.
+  log(`Graph: ${envFailures.length} env failure(s) are absent or not-applicable steps, not bugs — gating on tests instead of bailing.`)
+}
+if (envFailures.length && gateUnusable(setup.toolchain, envFailures)) {
+  // No usable gate: nothing could verify a fix, so any "fix" would only manufacture false
+  // regressions. Bail cleanly as UNFARMABLE rather than seed environment breakage.
   log(`Unfarmable: ${envFailures.length} baseline failure(s) are environment issues '${env}' could not resolve — handing off without inventing bugs.`)
   return {
     repoRoot, scope: scope || 'full repo', issueRef: issueRef || undefined,
