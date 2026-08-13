@@ -88,6 +88,25 @@ test('auditFigma: pairing, sizes, mirror check, census', () => {
   assert.equal(res.items['1.7'].status, 'gap', 'empty Code Connect map')
 })
 
+// An unparseable variables dump must read as an unparseable relay, not as a design-system
+// gap that sends the human off to define Figma variables that already exist.
+test('auditFigma: unparseable variables dump is unknown, not a "no variables" gap', () => {
+  const res = auditFigma({
+    frames: [{ id: '1:1', name: 'Home / Desktop', width: 1440, height: 900 }],
+    variablesRaw: '<variables>color/primary: #0055FF</variables>',
+    answers: answers(),
+    repoFacts: { tokenNames: ['--color-primary'] },
+  })
+  assert.equal(res.items['1.4'].status, 'unknown')
+  assert.match(res.items['1.4'].evidence, /unparseable/)
+  assert.doesNotMatch(res.items['1.4'].evidence, /returned no variables/)
+})
+
+test('auditFigma: an absent variables dump is still a real gap', () => {
+  const res = auditFigma({ frames: [{ id: '1:1', name: 'Home / Desktop', width: 1440, height: 900 }], answers: answers() })
+  assert.equal(res.items['1.4'].status, 'gap')
+})
+
 test('auditFigma without answered breakpoints/screens stays unknown, never guesses', () => {
   const res = auditFigma({ frames: [{ id: '1:1', name: 'Home / Desktop', width: 1440, height: 900 }] })
   assert.equal(res.items['1.2'].status, 'unknown')

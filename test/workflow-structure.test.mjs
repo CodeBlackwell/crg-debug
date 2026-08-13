@@ -108,20 +108,37 @@ const declOf = (text, name) => {
 }
 
 // resolveModel is checked separately — crg-agentsmd.js has one documented variant.
-const SHARED_PRELUDE = ['fence', 'capText', 'norm', 'normPath', 'isSafeAbs', 'commitMessageOk', 'TIERS']
+const SHARED_PRELUDE = ['fence', 'capText', 'norm', 'normPath', 'isSafeAbs', 'commitMessageOk', 'TIERS', 'tryAgent', 'uncommitOk']
 
+// Prelude parity searches the WHOLE workflow, not just the helpers block: only *_SCHEMA
+// declarations are required to sit inside the markers, and several prelude copies
+// legitimately live below them (isSafeAbs in crg-ui.js, crg-ui-prep.js, crg-integrations.js).
+// Scoping the lookup to the block silently resolved isSafeAbs in one file and compared nothing.
 for (const name of SHARED_PRELUDE) {
   test(`prelude parity: ${name} is byte-identical everywhere it is defined`, () => {
     const found = files
-      .map(f => [f, declOf(helpersOf(f), name)])
+      .map(f => [f, declOf(src[f], name)])
       .filter(([, d]) => d !== null)
-    if (found.length < 2) return // defined once or not at all — nothing to keep in sync
+    assert.ok(found.length >= 2, `${name} resolved in ${found.length} workflow(s) — parity compared nothing`)
     const [refFile, ref] = found[0]
     for (const [f, decl] of found.slice(1)) {
       assert.equal(decl, ref, `${name} in ${f} has drifted from ${refFile}`)
     }
   })
 }
+
+// Protects the path-traversal guard: a repoRoot like /repo/../etc must never reach a tool.
+test('isSafeAbs: every copy rejects traversal and relative paths', () => {
+  const found = files.map(f => [f, declOf(src[f], 'isSafeAbs')]).filter(([, d]) => d !== null)
+  assert.ok(found.length >= 2, `isSafeAbs resolved in ${found.length} workflow(s)`)
+  for (const [f, decl] of found) {
+    const isSafeAbs = new Function(`${decl}\nreturn isSafeAbs`)()
+    assert.equal(isSafeAbs('/repo/sub'), true, `${f} rejects a safe absolute path`)
+    assert.equal(isSafeAbs('/repo/../etc'), false, `${f} accepts a traversal path`)
+    assert.equal(isSafeAbs('/repo/..'), false, `${f} accepts a trailing traversal path`)
+    assert.equal(isSafeAbs('repo/sub'), false, `${f} accepts a relative path`)
+  }
+})
 
 test('resolveModel: every copy is identical except the documented agentsmd variant', () => {
   const found = files

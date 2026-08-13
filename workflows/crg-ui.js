@@ -358,7 +358,7 @@ if (!repair) {
       summary: { type: 'string' },
     },
   }
-  const graph = await agent(
+  const graph = await safeAgent('graph', agent(
     `Prepare a crg-ui measurement run for the repo at ${repoRoot}. Run EXACTLY these commands in order and report each REAL exit code + output tail as a results[] row — do not interpret pass/fail:
 1. ${validatorPath && profilePath ? `node ${JSON.stringify(validatorPath)} validate ${JSON.stringify(profilePath)}   (profile validator — non-zero halts the run)` : 'echo "profile pre-validated by the skill"'}
 2. In ${repoRoot}: \`code-review-graph status\`. If it reports missing or 0 files, run \`code-review-graph build\`; otherwise \`code-review-graph update\`.
@@ -366,7 +366,7 @@ if (!repair) {
 4. \`curl -sS -o /dev/null -w '%{http_code}' --max-time 10 ${JSON.stringify(runtime.devUrl)}\` -> appUp = (an HTTP status was returned, any code < 500).
 Summarize files/nodes/edges as summary. ${UNTRUSTED}`,
     { label: 'graph', phase: 'Profile+Graph', schema: GRAPH_SCHEMA, model },
-  )
+  ))
   if (!graph) throw new Error('Phase 0 (Profile+Graph) agent failed')
   const rows = graph.results || []
   if (validatorPath && profilePath && rows[0] && rows[0].exitCode !== 0) {
@@ -386,12 +386,12 @@ Summarize files/nodes/edges as summary. ${UNTRUSTED}`,
     required: ['wrote', 'variableCount'],
     properties: { wrote: { type: 'string' }, variableCount: { type: 'integer' }, note: { type: 'string' } },
   }
-  const vars = await agent(
+  const vars = await safeAgent('variables', agent(
     `Transcribe the design variables of figma file ${JSON.stringify(profile.figma && profile.figma.fileKey)} for a crg-ui run. Load the figma MCP tools via ToolSearch ("select:mcp__figma__get_variable_defs" or the plugin-prefixed equivalent — search "figma variable" if unsure of the exact name), call get_variable_defs anchored on node ${JSON.stringify(cells[0] && cells[0].frameId)} (the tool requires a nodeId; variables are file-scoped, so any profile frame anchors them — never invent an id), and write its output to ${uiDir}/variables.raw.json VERBATIM (create ${uiDir} first) — do not reshape, resolve, or convert anything; the tool does that. Then run:
 node ${JSON.stringify(measureToolPath)} normalize-vars ${JSON.stringify(`${uiDir}/variables.raw.json`)} --out ${JSON.stringify(`${uiDir}/variables.json`)}
 Relay its printed JSON: return wrote = its "wrote" and variableCount = its "count". A count of 0 is a valid outcome, not an error. If get_variable_defs itself failed, return wrote="" and say why in note. ${UNTRUSTED}`,
     { label: 'variables', phase: 'Variables', schema: VARS_SCHEMA, model },
-  )
+  ))
   if (!vars || !vars.wrote) return { status: 'figma-unreachable', repoRoot, reason: 'variables capture failed — check figma MCP auth (whoami) and file access' }
   log(`Variables: ${vars.variableCount} captured`)
 
@@ -457,8 +457,13 @@ Report the command + REAL exit code as a results[] row. Parse its single-line st
   const failedCells = measured.filter(r => r.failed).map(r => r.cell.slug)
   if (!good.length) return { status: 'capture-failed', repoRoot, failedCells, reason: 'no cell produced a valid measurement — check figma access and the dev app' }
 
-  // ---- Assemble: the TOOL writes the ledger; the script cross-checks its seal against
-  // the seal of the keys it relayed cell-by-cell. Two independent paths must agree.
+  // ---- Assemble: the TOOL writes the ledger; the script names the exact cells to ingest
+  // (--cells) and then cross-checks the tool's seal against the seal of the keys it
+  // relayed cell-by-cell. Scoping the ingest is what makes that equality honest — the
+  // captures dir is never cleaned, so an unscoped assemble folds a renamed cell's orphan
+  // file, or last run's file for a cell that failed this one, straight into allKeys, which
+  // is the baseline a repair run reads as "pre-existing". sealOf sorts, so the tool's
+  // filename order and the script's profile order agree without relaying the keys at all.
   const discrepancies = good.flatMap(({ cell, measure }) =>
     (measure.discrepancies || []).map(d => ({ ...d, id: `${cell.slug}.${d.id}` })))
   const allKeysMem = discrepancies.map(d => d.key)
@@ -475,7 +480,7 @@ Report the command + REAL exit code as a results[] row. Parse its single-line st
   }
   const runAssemble = attempt => safeAgent(`assemble${attempt > 1 ? ':retry' : ''}`, agent(
     `Assemble the crg-ui ledger with the deterministic tool and relay its output VERBATIM. Run:
-node ${JSON.stringify(measureToolPath)} assemble ${JSON.stringify(`${uiDir}/capture`)} --profile ${JSON.stringify(profilePath)} --repo-root ${JSON.stringify(repoRoot)} --out ${JSON.stringify(ledgerPath)}${failedCells.length ? ` --failed ${JSON.stringify(failedCells.join(','))}` : ''}
+node ${JSON.stringify(measureToolPath)} assemble ${JSON.stringify(`${uiDir}/capture`)} --profile ${JSON.stringify(profilePath)} --repo-root ${JSON.stringify(repoRoot)} --out ${JSON.stringify(ledgerPath)} --cells ${JSON.stringify(good.map(({ cell }) => cell.slug).join(','))}${failedCells.length ? ` --failed ${JSON.stringify(failedCells.join(','))}` : ''}
 Report the command + REAL exit code as a results[] row and return the tool's printed wrote, cells, discrepancies, and seal fields UNMODIFIED. Do not write or edit any file yourself — the tool writes the ledger.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,
     { label: `assemble${attempt > 1 ? ':retry' : ''}`, phase: 'Measure', schema: ASSEMBLE_SCHEMA, model },
   ))
@@ -576,10 +581,10 @@ const branch = `crg-ui/fix-${slugOf(profile.project || 'run')}`
 // Branch setup: one commit gate creates/checks out the run branch off the current HEAD
 // and records the porcelain TREE BASELINE — every red unit must restore the tree to
 // exactly this state, or the run stops (a polluted tree poisons every later verify).
-const setup = await agent(
+const setup = await safeAgent('branch', agent(
   `Prepare the crg-ui repair branch in ${repoRoot}. Run, reporting each command + REAL exit code + FULL stdout as a results[] row: \`git -C ${repoRoot} rev-parse --abbrev-ref HEAD\` (record the current branch), then \`git -C ${repoRoot} checkout -B ${branch}\`, then \`git -C ${repoRoot} status --porcelain\` (stdout VERBATIM and complete — it is the tree baseline). Do NOT push, do NOT touch a remote. ${UNTRUSTED}`,
   { label: 'branch', phase: 'Fix (repair)', schema: COMMIT_SCHEMA, model },
-)
+))
 if (!setup || (setup.results || []).some(r => r.exitCode !== 0)) throw new Error(`could not create run branch ${branch}`)
 const treeBaseline = porcelainOf(setup.results)
 if (treeBaseline === null) throw new Error('branch setup did not relay the porcelain tree baseline')

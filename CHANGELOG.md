@@ -6,7 +6,73 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
-## [0.30.0] - 2026-08-13
+## [0.31.0] - 2026-08-13
+
+One defect class, found in `crg-debug.js` in 0.29.0 and swept through the rest of the
+fleet: **`agent()` throws as well as returning `null`**, and every workflow was written as
+if it only ever returned `null`. A schema-gated call that exhausts its StructuredOutput
+retry cap throws, which walks straight past `if (!x)` guards and `.filter(Boolean)` — so
+one serialization glitch could destroy phases that had already succeeded.
+
+Chasing it surfaced a second, closely related class that `tryAgent` alone does not fix: a
+contained agent returns `null`, and **a `null` verdict was being read as a passing one**.
+A dead gate is not a green gate; a dead commit relay is not a failed commit; an un-commit
+that never reported is not an un-commit. Each of those was a place where the script logged
+a guarantee it had no evidence for.
+
+### Fixed
+- **`agent()` failures are contained in every workflow.** `tryAgent` — one `try/catch` that
+  logs and normalizes a throw to `null` — now wraps every top-level call in
+  `crg-debug.js` (9 wrappers), `crg-build.js`, `crg-integrations.js`, and `crg-ralph.js`.
+  `crg-debug.farm-bypass.js` gets `bestEffort` for its telemetry calls, where a throw in
+  pure bookkeeping used to take down a run whose real work had succeeded.
+- **A dead wave gate no longer reads as a clean wave** (`crg-ralph.js`). `waveClean` fell
+  back to "was anything touched in a gate package?" when the gate reported no rows. That is
+  right for a gate with nothing to run and wrong for a gate that died — both are silent.
+  A second bug compounded it: `underFence(f, ['.'])` is `false`, so for the common
+  single-package repo the fallback said "nothing in scope" for *every* file, and a dead
+  wave gate was *always* clean.
+- **A dead commit relay no longer reads as "nothing was committed"** (`crg-ralph.js`). The
+  commit agent runs `add`/`commit`/`rev-parse` *before* it reports, so the likely shape of a
+  failure is a commit that landed with a dead relay — and none of the script's verdicts
+  (allowlist, porcelain, message) ever ran on it. The wave now stops and names the branch
+  instead of letting later waves stack commits on an unverified one.
+- **An un-commit that never reported is recorded as unconfirmed** (`crg-ralph.js`,
+  `crg-debug.js`). Both discarded `uncommitAgent()`'s return and logged "un-committed, work
+  stays in tree" regardless, leaving a rejected out-of-fence commit on the run branch while
+  telling the human it was gone. New shared helper `uncommitOk` gates the claim on the
+  reset's own exit code.
+- **The crg-ui assemble gate no longer mismatches by construction** (`crg-ui.js`,
+  `crg-ui.measure.mjs`). The script cross-checked the tool's ledger seal against the keys it
+  measured cell-by-cell, but the tool ingests *every* `*.measure.json` in the captures dir —
+  which is never cleaned — so the ledger legitimately held more keys and a correct run was
+  thrown away as `assemble-mismatch`. `assemble` now takes `--cells` and ingests exactly the
+  cells the run measured. That also closes the real hazard underneath: an orphan capture
+  file from a renamed cell used to enter `allKeys`, the no-regression baseline a repair run
+  slices, where a stale key makes a genuine new regression read as pre-existing.
+- **An unclassified security finding takes the advisory track**
+  (`crg-debug.farm-bypass.js`). The check was `!secCheck || !secCheck.securitySensitive`, so
+  a classifier that failed outright rejoined the unattended commit → push → public draft PR
+  pipeline. Only an affirmative `securitySensitive === false` does now.
+- **`--maxTier` is an absolute cap** (`crg-debug.farm-bypass.js`). A model recommending
+  `opus` under `--maxTier sonnet` used to run at `opus`; the recommendation is now clamped,
+  and the escalation stop compares tier *indices* rather than string equality.
+- **An unparseable Figma variables dump reports `unknown`, not `gap`**
+  (`crg-ui.prep-figma.mjs`) — "we could not read this" is not the same finding as "this is
+  missing", though both still block the packet.
+
+### Changed
+- Prelude parity now searches the whole workflow rather than the pure-helpers block. Several
+  copies legitimately live below the markers (`isSafeAbs` in three workflows), so the
+  block-scoped lookup silently resolved one copy and compared nothing; `found.length < 2` is
+  an assertion instead of a skip. `tryAgent` and `uncommitOk` joined the shared-prelude set.
+
+### Added
+- ~250 tests (389 total, up from 294 across 33 files). The new resilience suites eval and
+  execute the real workflow bodies with faked sandbox globals rather than asserting on
+  mocks, and every guard above is mutation-tested: reintroducing the defect fails a test.
+
+
 
 `/crg-debug` could not sweep a repo that has no build step — including this one. Found by
 pointing it at itself and watching it refuse.

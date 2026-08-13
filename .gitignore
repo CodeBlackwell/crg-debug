@@ -1,2 +1,11 @@
 crg-debug-report-*.md
 .DS_Store
+
+# Per-run state each workflow writes into the repo it is sweeping. This repo gets swept by
+# its own commands (dogfooding), so these land here too and must never be committed.
+.crg-debug/
+.crg-build/
+.crg-integrations/
+.crg-ralph/
+.crg-ui/
+.crg-agentsmd/

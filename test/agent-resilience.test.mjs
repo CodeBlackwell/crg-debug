@@ -84,12 +84,71 @@ test('tryAgent survives a thrown non-Error and an absent label', async () => {
 // The bug was not that one call lacked a guard — it was that NO call had one, while the
 // whole file was written as if agent() only ever returns null.
 
-test('crg-debug.js calls agent() only through tryAgent', () => {
-  const decl = declOf(src, 'tryAgent')
-  const outside = src.replace(decl, '')
-  const bare = [...outside.matchAll(/await agent\(/g)]
-  assert.equal(bare.length, 0, `${bare.length} unguarded await agent( call(s) — route them through tryAgent`)
-  assert.equal([...decl.matchAll(/await agent\(/g)].length, 1, 'tryAgent must wrap exactly one agent() call')
+// Every agent() call outside the tryAgent declaration, tagged with the `const NAME =`
+// it sits under. The bare token is what matters, not `await agent(`: a one-line wrapper
+// (`const gateAgent = touched => agent(…)`) is exactly as uncontained as a bare call,
+// and its await site reads as an ordinary helper call.
+const unguardedAgentCalls = text => {
+  const decl = declOf(text, 'tryAgent')
+  const outside = decl ? text.replace(decl, '') : text
+  return [...outside.matchAll(/(?<![\w$.])agent\(/g)]
+    .filter(m => !outside.slice(outside.lastIndexOf('\n', m.index) + 1, m.index).includes('//'))
+    .map(m => {
+      const owner = [...outside.slice(0, m.index).matchAll(/^const ([\w$]+) = /gm)].pop()
+      return owner ? owner[1] : 'top-level'
+    })
+}
+
+// A wrapper helper is the shape the old `await agent(` proxy waved through, so it is the
+// shape the invariant has to catch — otherwise the tryAgent port ships green and uncontained.
+const WRAPPER_FIXTURE = `
+const tryAgent = async (prompt, opts) => {
+  try {
+    return await agent(prompt, opts)
+  } catch (err) {
+    return null
+  }
+}
+
+const gateAgent = touched => {
+  return agent('run the gate', { label: 'gate' })
+}
+
+const finalGate = await gateAgent(['a.ts'])
+`
+
+test('an agent() call hidden behind a wrapper helper counts as unguarded', () => {
+  assert.deepEqual(unguardedAgentCalls(WRAPPER_FIXTURE), ['gateAgent'])
+})
+
+test('source whose only agent() call is tryAgent’s reports nothing unguarded', () => {
+  const contained = `
+const tryAgent = async (prompt, opts) => {
+  try {
+    return await agent(prompt, opts)
+  } catch (err) {
+    return null
+  }
+}
+
+const map = await tryAgent('x', { label: 'map' })
+`
+  assert.deepEqual(unguardedAgentCalls(contained), [])
+})
+
+// The wrapper helpers crg-debug.js has not yet routed through tryAgent. The backlog is
+// EMPTY and must stay empty: every entry left here would whitelist a future regression,
+// which is exactly what it did while the nine ported wrappers were still listed.
+const KNOWN_UNGUARDED = []
+
+test('crg-debug.js adds no new agent() call outside tryAgent', () => {
+  const added = [...new Set(unguardedAgentCalls(src))].filter(name => !KNOWN_UNGUARDED.includes(name))
+  assert.deepEqual(added, [], `unguarded agent() call(s) in ${added.join(', ')} — route them through tryAgent`)
+  assert.equal(
+    [...declOf(src, 'tryAgent').matchAll(/(?<![\w$.])agent\(/g)].length,
+    1,
+    'tryAgent must wrap exactly one agent() call',
+  )
 })
 
 test('tryAgent is defined before the first call site', () => {

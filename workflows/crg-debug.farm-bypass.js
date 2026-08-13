@@ -140,22 +140,25 @@ log(`crg-farm --auto-bypass (harness): direction=${direction} maxTier=${maxTier}
 //     `query '{"type":"stage"}'` and take the latest record per repo as that candidate's current
 //     state — no transcript reading. Each mark() costs one tiny append agent, hence milestones only.
 const note = (repo, msg, why) => log(`[${repo || 'run'}] ${msg}${why ? ` — why: ${why}` : ''}`)
+// Bookkeeping is best-effort: a telemetry agent that hits its retry cap and throws must never
+// take down a run whose real work succeeded. Contained here, logged, never silent.
+const bestEffort = (p, what) => p.catch(e => note(null, `${what} failed: ${capText(e && e.message, 200)}`, 'best-effort log — run continues'))
 const mark = async (repo, stage, detail, why, phase = 'Triage') => {
   note(repo, `${stage}${detail ? `: ${detail}` : ''}`, why)
-  await agent(
+  await bestEffort(agent(
     `Append one farm-DB record via \`node ${farmDbPath} append\`: ${JSON.stringify({ type: 'stage', farmRunId, repo: repo || null, stage, detail: detail || null, why: why || null })} on stdin. Return {"logged":true}.`,
     { phase, schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: `stage:${repo || 'run'}:${stage}` }
-  )
+  ), `stage log ${repo || 'run'}:${stage}`)
 }
 
 // Close the run: append its run-end record (duration derived from the run record) on EVERY exit
 // path. An unclosed run never gets archived by farm-db compaction — its telemetry stays in the hot
 // live file forever — so this must fire whether the run ships PRs or bails early at RECON.
 const logRunEnd = () =>
-  agent(
+  bestEffort(agent(
     `Close this farm run: run \`node ${farmDbPath} close-run ${farmRunId}\` — it reads the run record, computes durationMs, and appends one "run-end". If it reports no run record exists, return {"logged":false}; otherwise {"logged":true}.`,
     { schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: 'run:close' }
-  )
+  ), 'run close')
 
 // ---- Phase 1: RECON + dedup + rank ---------------------------------------------
 phase('Recon')
@@ -214,7 +217,7 @@ await mark(
 )
 capped.forEach((c, i) => note(c.repo, `SELECTED #${i} (${c.severity || '?'}, farm:${c.priorUnfarmable ? 'priorUnfarm' : c.farmabilityPrior || '?'}) ${c.issueRef} — ${c.title || ''}`))
 
-await agent(
+await bestEffort(agent(
   `Append farm-DB records via \`node ${farmDbPath} append\` (one JSON object on stdin per call — call it once per record below):
 - One "run" record: {"type":"run","farmRunId":"${farmRunId}","direction":"${direction}","mode":"auto-bypass-harness"}.
 - One "candidate" record per entry in fresh[] and dropped[] below: {"type":"candidate","farmRunId":"${farmRunId}","repo":<repo>,"issueRef":<issueRef>,"keyOf":"<repo>::<issueRef>","status":<"fresh" for fresh[] entries, else the dropped[] entry's status>,"competingPr":<if present>}.
@@ -225,7 +228,7 @@ dropped: ${JSON.stringify(dropped)}
 
 Return {"logged":true} once every record above has been appended.`,
   { phase: 'Recon', schema: { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' } } }, label: 'recon:log' }
-)
+), 'recon log')
 
 if (!capped.length) {
   log('Recon found no fresh, unclaimed candidates — nothing to fix or ship this run.')
@@ -298,13 +301,16 @@ const stageTriage = async candidate => {
         label: `sec-classify:${candidate.repo}`,
       }
     )
-    if (!secCheck || !secCheck.securitySensitive) {
+    // Fail-closed, like every other signal here: only an AFFIRMATIVE negative classification
+    // rejoins the pipeline. An absent result (agent failure / no structured output) is doubt,
+    // and doubt takes the advisory track — never the unattended push-and-open-a-public-PR one.
+    if (secCheck && secCheck.securitySensitive === false) {
       note(candidate.repo, `security-classify: clear (non-security) → normal fix/PR pipeline`)
       return { candidate, repoRoot: clone.repoRoot, ledgerPath: triage.ledgerPath, confirmedBugs: triage.confirmedBugs }
     }
-    await mark(candidate.repo, 'security-flagged', (secCheck.vulnClasses || []).join(', ') || 'unspecified', 'advisory track: PoC + exploit-path + contrib-policy, then computed channel', 'Advisory')
+    const vulnClasses = (secCheck && secCheck.vulnClasses) || []
+    await mark(candidate.repo, 'security-flagged', vulnClasses.join(', ') || (secCheck ? 'unspecified' : 'unclassified — classifier returned no result'), 'advisory track: PoC + exploit-path + contrib-policy, then computed channel', 'Advisory')
 
-    const vulnClasses = secCheck.vulnClasses || []
     // §Security classification, advisory track steps 1-3, run as one concise pass: a quick PoC (the
     // smallest input/script that proves the point, not an exploit demo), a quick hop-by-hop trace
     // ending in a reachability + marginal-risk verdict, and a check of the target repo's own
@@ -389,7 +395,10 @@ const stageFix = async (triaged, candidate) => {
       `For each unique file among these confirmed bugs, call mcp__code-review-graph__get_impact_radius_tool against the repo at ${triaged.repoRoot} and combine blast radius + severity + language penalty per methodology.md's §Complexity scoring (${methodologyPath}) to recommend ONE starting fix tier for this whole batch: haiku, sonnet, or opus.\n\nconfirmedBugs: ${JSON.stringify(triaged.confirmedBugs)}`,
       { phase: 'Fix', schema: { type: 'object', required: ['tier'], properties: { tier: { type: 'string', enum: TIERS } } }, label: `tier:${candidate.repo}` }
     )
-    let tier = (tierPick && tierPick.tier) || 'haiku'
+    // Clamped: the model recommends, args.maxTier decides. A recommendation above the cap
+    // becomes the cap — no pass ever runs above what the caller allowed.
+    const picked = (tierPick && tierPick.tier) || 'haiku'
+    let tier = TIERS.indexOf(picked) > TIERS.indexOf(maxTier) ? maxTier : picked
     let ledgerPath = triaged.ledgerPath
     let regressionEscalations = 0
     let fixRet = null
@@ -442,7 +451,7 @@ const stageFix = async (triaged, candidate) => {
         break
       }
 
-      if (tier === maxTier) {
+      if (TIERS.indexOf(tier) >= TIERS.indexOf(maxTier)) {
         outcome = 'handed-to-human'
         reason = `${unfixed.length} bug(s) still unfixed at the tier cap (${maxTier})`
         note(candidate.repo, `fix: ${unfixed.length} bug(s) unfixed at tier cap ${maxTier}`, `hand off`)
