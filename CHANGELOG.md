@@ -6,6 +6,20 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Added
+- **Verify can be replayed on its own** (`crg-debug.js`). A new inline arg, `fromFindings`,
+  takes up to 200 finding rows from a prior run and verifies exactly those: Graph still runs
+  (reviewers query it), Map, Discover and the semantic merge are skipped, the ledger is
+  persisted as usual, and the return carries `mode: 'verify-from-findings'`. It cannot be
+  combined with `fromLedger` or `fix:true`, and an unusable list is refused whole rather
+  than trimmed, so a replay never reviews a finding the original run did not produce.
+
+### Changed
+- **The reviewer prompt and the survivor rule are now unit-tested helpers** (`reviewerBrief`,
+  `bucketVerdicts`) inside the pure-helpers block. No wording or bucketing rule changed: the
+  prompt is pinned byte for byte and the precedence between `intentional`, confirm and refute
+  is covered branch by branch.
+
 ## [0.31.2] - 2026-08-13
 
 Closes the last vacuous shape of the crg-build wave gate that 0.31.1 left open.
