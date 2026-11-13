@@ -551,6 +551,36 @@ const decisionRow = (root, wave, bugs, file, strike, proposal, changed, ground) 
   apply: `git -C ${shellQuote(root)} cherry-pick ${proposal.ref}`,
 })
 
+// ---- dirty-tree guard ---------------------------------------------------------
+// Fix does not start on a tree that already holds uncommitted work in tracked files. A wave
+// commit stages whole files, so a user's half-finished edit in a file a fix touches would
+// be committed as part of the fix; and anything already staged rides into the first wave's
+// commit, is rejected as a stray, and comes back unstaged. Untracked files do not block:
+// nothing the Workflow commits can pick them up.
+// One read-only command: `staged <path>` / `changed <path>` rows for tracked files, then a
+// line counting them. GIT_OPTIONAL_LOCKS=0 keeps status from rewriting the index. A
+// directory that is not a repository yet has nothing tracked, so it counts as clean.
+const TREE_STATUS_LINE = 'crg-tree-status'
+const treeStatusCommand = root =>
+  `( if git -C ${shellQuote(root)} rev-parse --is-inside-work-tree >/dev/null 2>&1; then S="$(GIT_OPTIONAL_LOCKS=0 git -c core.quotePath=false -C ${shellQuote(root)} status --porcelain=v1 --untracked-files=no)" && D="$(printf '%s\\n' "$S" | sed -n 's/^[^ ]. /staged /p'; printf '%s\\n' "$S" | sed -n 's/^.[^ ] /changed /p')" && printf '%s\\n' "$D" && echo "${TREE_STATUS_LINE} $(printf '%s\\n' "$D" | grep -c .)"; else echo "${TREE_STATUS_LINE} 0"; fi )`
+// {staged, changed} as that command printed them, or null when the relay cannot be trusted:
+// dead, a non-zero exit, no count line, or a different number of rows than it counted.
+const treeStatusOf = relay => {
+  const rows = (relay && relay.results) || []
+  const lines = printedLines(relay)
+  const counted = lines.map(l => new RegExp(`^${TREE_STATUS_LINE} (\\d+)$`).exec(l)).filter(Boolean)
+  const found = lines.map(l => /^(staged|changed) (.+)$/.exec(l)).filter(Boolean)
+  if (!rows.length || !rows.every(x => x && x.exitCode === 0) || counted.length !== 1 || Number(counted[0][1]) !== found.length) return null
+  const of = kind => found.filter(m => m[1] === kind).map(m => m[2])
+  return { staged: of('staged'), changed: of('changed') }
+}
+// THE verdict: why Fix may not start, or '' when it may.
+const treeRefusal = status => {
+  if (!status) return 'the working tree could not be checked for uncommitted changes'
+  if (!status.staged.length && !status.changed.length) return ''
+  return `the working tree had uncommitted changes in tracked files before the run (${status.staged.length} staged, ${status.changed.length} modified or deleted)`
+}
+
 // ---- schemas ------------------------------------------------------------------
 // Static literals, declared inside this block so the structure and parity tests in
 // test/workflow-structure.test.mjs can reach them. Order matters where one refers
@@ -1039,6 +1069,22 @@ const tryAgent = async (prompt, opts) => {
     log(`agent "${(opts && opts.label) || 'unlabeled'}" failed: ${capText(err && err.message, 200)}`)
     return null
   }
+}
+
+// ---- Dirty-tree guard: before the first write of a run that means to fix --------
+// Checked here, ahead of everything, so it sees the tree as the user left it and not the
+// Workflow's own writes (the graph, the ledger, a scaffolded test runner). A refusal stops
+// only the Fix phase: Discover and Verify still run and report.
+let treeStatus = null
+let fixRefused = ''
+if (fix) {
+  treeStatus = treeStatusOf(await tryAgent(
+    `Report the state of the git working tree at ${repoRoot}, before anything in it is changed. Do NOT edit, stage, stash, reset or commit anything. Run EXACTLY the command below and nothing else; it only reads. It prints one row per tracked file with uncommitted changes and then a line counting them. Return a single results[] row: command = the word status (do not copy the command text); exitCode = its REAL exit code; stdout = EVERYTHING it printed, every row and the last line, copied character for character. The script counts the rows against that line, so a shortened or summarised stdout counts as no answer.
+${fence(treeStatusCommand(repoRoot))}`,
+    { label: 'tree-status', phase: 'Graph', schema: GATE_SCHEMA, model },
+  ))
+  fixRefused = treeRefusal(treeStatus)
+  if (fixRefused) log(`Fix will NOT start: ${fixRefused}${treeStatus ? ` — ${capText([...new Set([...treeStatus.staged, ...treeStatus.changed])].join(', '), 600)}` : ''}. Commit or stash them and run again. Nothing in the tree, the index or any branch is changed by the fix phase.`)
 }
 
 // ---- Phases 0-3, OR ingest a prior ledger (fix-from-ledger hand-off) -----------
@@ -1586,7 +1632,13 @@ Return two results[] rows, one per command. In each: command = just its name abo
 }
 
 let fixResult = null
-if (fix && confirmedBugs.some(b => !b.conflicted)) {
+if (fix && fixRefused) {
+  // Refused before anything was written: no branch, no bootstrap, no edit, no commit.
+  const waiting = confirmedBugs.filter(b => !b.conflicted)
+  fixResult = { notStarted: fixRefused, tree: treeStatus, waves: [], fixed: [], unfixed: waiting.map(b => ({ ...b, reason: `fix not started — ${fixRefused}` })), commits: [], uncommitted: [], needsDecision: [] }
+  log(`Fix not started: ${waiting.length} confirmed bug(s) left unfixed — ${fixRefused}`)
+}
+if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
   // Test-harness bootstrap (once, before any wave — avoids parallel fix agents
   // racing to scaffold the same config). TDD's RED step needs a runner first.
   if (!(setup.toolchain || []).some(t => t.test)) {

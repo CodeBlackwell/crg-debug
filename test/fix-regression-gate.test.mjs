@@ -311,6 +311,7 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
     calls.push({ label, prompt, opts })
     const custom = on[kind] ? await on[kind]({ label, prompt, nth, fenced: fenced(prompt) }) : undefined
     if (custom !== undefined) return custom
+    if (kind === 'tree-status') return { results: [{ command: 'status', exitCode: 0, stdout: '\ncrg-tree-status 0\n' }] }
     if (kind === 'ingest-ledger') return { confirmedBugs: bugs, deferred: [], rejected: [], toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (kind === 'fix-branch') return { branch: 'crg-debug/fix-abc123', results: [{ command: 'git checkout -b crg-debug/fix-abc123', exitCode: 0 }] }
     if (kind === 'fix') {
@@ -359,7 +360,7 @@ const bug = (bugId, file) => ({ bugId, file: `${file}:10`, rootCause: `${bugId} 
 // Everything the Fix phase asked of the agents it had BEFORE the regression gate existed:
 // one line per call, a digest of the exact prompt and options.
 const priorAgentLines = (calls, sha) =>
-  calls.filter(c => !/^(regress|blame|restore|snapshot|testedits|propose):/.test(c.label)).map(c => `${c.label} ${sha(`${c.prompt}\n${JSON.stringify(c.opts)}`)}`)
+  calls.filter(c => !/^(tree-status$|(regress|blame|restore|snapshot|testedits|propose):)/.test(c.label)).map(c => `${c.label} ${sha(`${c.prompt}\n${JSON.stringify(c.opts)}`)}`)
 // Six bugs, five of them in one file, a per-bug gate that never passes for b3, an earlier
 // failed attempt and a named model: two waves, a thrash, the coupled fallback, two commits.
 const BUSY = {
@@ -431,7 +432,7 @@ test('with a clean gate, every agent the Fix phase already had is asked exactly 
 
 test('a clean run takes a baseline, checks each wave before its commit, and reports the gate', async () => {
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO })
-  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'commit:wave', 'gate'])
+  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'commit:wave', 'gate'])
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.equal(result.fix.halted, undefined)
   assert.deepEqual(result.fix.regressionGate, {
@@ -476,7 +477,7 @@ test('a fix that breaks a passing test is restored before the commit, and tried 
     },
   })
   assert.deepEqual(labels, [
-    'ingest-ledger', 'fix-branch', 'regress:baseline',
+    'tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline',
     'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'commit:wave',
     'snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'regress:wave2', 'commit:wave', 'gate',
   ])
@@ -579,7 +580,7 @@ test('when restoring the blamed fix does not clear the failure, the whole wave g
       blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }),
     },
   })
-  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'gate'])
+  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'gate'])
   const second = calls.filter(c => c.label === 'restore:wave1')[1]
   assert.ok(second.prompt.includes(`'src/alpha.py' 'tests/test_alpha.py' 'src/bravo.py' 'tests/test_bravo.py'`), 'every file the wave touched')
   assert.deepEqual(result.fix.fixed, [])
@@ -591,7 +592,7 @@ test('when restoring the blamed fix does not clear the failure, the whole wave g
 test('a blame that never arrives, or names nobody in the wave, takes the whole wave back', async () => {
   for (const blame of [() => null, () => { throw new Error('retry cap') }, () => ({ causes: [{ test: EXISTING.id, bugIds: ['b77'] }] })]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING)), blame } })
-    assert.deepEqual(labels.slice(8), ['testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'gate'])
+    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'gate'])
     assert.deepEqual(result.fix.commits, [])
     assert.equal(result.fix.unfixed.length, 2)
   }
@@ -600,7 +601,7 @@ test('a blame that never arrives, or names nobody in the wave, takes the whole w
 test('a baseline that does not report stops the Fix phase before any fix is attempted', async () => {
   for (const regress of [() => null, () => { throw new Error('retry cap') }, () => ({ runs: [] })]) {
     const { result, labels, logs } = await fixRun(SRC, { bugs: TWO, on: { regress } })
-    assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'gate'], 'no fix agent may run without a baseline')
+    assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'gate'], 'no fix agent may run without a baseline')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill('regression baseline did not report — no fix attempted'))
     assert.equal(result.fix.regressionGate.baselineReported, false)
@@ -613,7 +614,7 @@ test('a wave gate that does not report is not a clean gate: the wave is restored
   const skipped = { runs: [{ command: 'pytest tests/test_bravo.py', exitCode: 0, failing: [] }] } // left a baseline command out
   for (const answer of [null, new Error('retry cap'), { runs: [] }, skipped]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), answer) } })
-    assert.deepEqual(labels.slice(8), ['testedits:wave1', 'regress:wave1', 'restore:wave1', 'gate'])
+    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'regress:wave1', 'restore:wave1', 'gate'])
     assert.deepEqual(result.fix.commits, [])
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill(H.REGRESSION_UNREPORTED))
@@ -708,8 +709,8 @@ test('an open bug\'s own red test is left to its own gate — it does not take a
       regress: script(runs(), runs(ownRed)),
     },
   })
-  assert.equal(labels.slice(0, 11).some(l => /^(blame|restore):/.test(l)), false)
-  assert.deepEqual(labels.slice(8, 11), ['testedits:wave1', 'regress:wave1', 'commit:wave'], 'b2 commits; b1 goes round again as it always did')
+  assert.equal(labels.slice(1, 12).some(l => /^(blame|restore):/.test(l)), false)
+  assert.deepEqual(labels.slice(9, 12), ['testedits:wave1', 'regress:wave1', 'commit:wave'], 'b2 commits; b1 goes round again as it always did')
   assert.ok(names(result.fix.fixed).includes('b2'))
   assert.deepEqual(result.fix.regressionGate.waves[0], { wave: 1, newFailures: [], takenBack: [], outcome: 'clean' })
 })
@@ -719,7 +720,7 @@ test('the coupled attempt passes the same gate before it commits, and gets the s
   const perBugRed = ({ label, nth }) => (label === 'gate:alpha.py' && nth === 1 ? { results: [{ command: 'pytest', exitCode: 1 }] } : undefined)
   const coupled = ['snapshot:coupled', 'fix:coupled', 'gate:alpha.py', 'testedits:coupled', 'regress:coupled']
   const once = await fixRun(SRC, { bugs: stuck, on: { gate: perBugRed, regress: script(runs(), runs(), runs(EXISTING)) } })
-  assert.deepEqual(once.labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave1', 'regress:wave1', ...coupled, 'restore:coupled', ...coupled, 'commit:wave', 'gate'])
+  assert.deepEqual(once.labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave1', 'regress:wave1', ...coupled, 'restore:coupled', ...coupled, 'commit:wave', 'gate'])
   const [first, second] = once.calls.filter(c => c.label === 'fix:coupled')
   assert.equal(first.prompt.includes('TAKEN BACK'), false)
   assert.ok(second.prompt.includes(H.takenBackNote(stuck, new Map([['b1', H.strikeOf([EXISTING], [])]]))))
@@ -771,7 +772,7 @@ test('a wave with no restore point is not started', async () => {
   const failed = ({ fenced }) => ({ results: [{ command: fenced[0], exitCode: 128, stdout: '' }] })
   for (const snapshot of [() => null, () => { throw new Error('retry cap') }, prose, failed]) {
     const { result, labels, logs } = await fixRun(SRC, { bugs: five, on: { snapshot } })
-    assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'gate'], 'no fixer may edit a tree that cannot be put back')
+    assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'gate'], 'no fixer may edit a tree that cannot be put back')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(5).fill('not attempted — no restore point could be taken before wave 1'))
     assert.equal(result.fix.halted, 'no restore point could be taken before wave 1')

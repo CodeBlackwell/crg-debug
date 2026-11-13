@@ -44,6 +44,8 @@ const stubAgent = (throwOn, trace = []) => async (_p, opts = {}) => {
     results: [{ command: 'git commit', exitCode: 0, stdout: '', stderr: '' }],
   }
   // A restore point is recorded before each wave.
+  // The tree is clean when the run begins.
+  if (label === 'tree-status') return { results: [{ command: 'status', exitCode: 0, stdout: 'crg-tree-status 0' }] }
   if (label.startsWith('snapshot:')) return { results: [{ command: 'git write-tree', exitCode: 0, stdout: 'a'.repeat(40) }] }
   // No existing test had a line changed.
   if (label.startsWith('testedits:')) return { results: [{ command: 'check', exitCode: 0, stdout: `crg-test-edits-checked ${'a'.repeat(40)} 0` }] }

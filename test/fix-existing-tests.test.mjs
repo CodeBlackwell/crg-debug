@@ -272,7 +272,7 @@ const EDITED = H.strikeOf([], [{ path: 'tests/test_alpha.py', removed: 1 }])
 test('a fixer that rewrites an expected value in an existing test is taken back and tried once more, and the rest of the wave commits', async () => {
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO, on: { testedits: only('testedits:wave1', ALPHA_EDIT) } })
   assert.deepEqual(labels, [
-    'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py',
+    'tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py',
     'testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave',
     'snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'regress:wave2', 'commit:wave', 'gate',
   ], 'no blame agent — the fixer is known — and one retry')
@@ -362,7 +362,7 @@ test('a check that does not report is not a pass: the wave is put back and nothi
   const failed = ({ prompt }) => ({ results: [{ command: 'check', exitCode: 128, stdout: summary(0, idIn(prompt)) }] })
   for (const testedits of [() => null, () => { throw new Error('retry cap') }, empty, prose, dropped, failed]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { testedits } })
-    assert.deepEqual(labels.slice(8), ['testedits:wave1', 'restore:wave1', 'gate'], 'no regression gate is asked and no commit is made')
+    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'gate'], 'no regression gate is asked and no commit is made')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.commits, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill(H.TEST_CHECK_UNREPORTED))
@@ -374,7 +374,7 @@ test('an existing test changed by a fixer that did not declare it is put back al
   const { result, labels, calls } = await fixRun(SRC, { bugs: TWO, on: { testedits: printed(...SOURCES, '2\t2\ttests/test_utils.py') } })
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.ok(restore.prompt.includes(`-- 'tests/test_utils.py' `) && !restore.prompt.includes('alpha') && !restore.prompt.includes('bravo'), 'only the test file goes back')
-  assert.deepEqual(labels.slice(8), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'gate'], 'then the regression gate runs against the original test')
+  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'gate'], 'then the regression gate runs against the original test')
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.deepEqual(result.fix.existingTestEdits, [{ wave: 1, bugs: [], files: [{ path: 'tests/test_utils.py', removed: 2 }] }])
 })
@@ -401,14 +401,14 @@ test('a wave the script took a fixer back in has not stalled: the bug gets its o
 test('a fixer taken back for an existing test keeps its retry when the rest of its wave is then lost', async () => {
   const regress = ({ label }) => (label === 'regress:wave1' ? null : undefined) // the regression gate goes silent
   const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { testedits: only('testedits:wave1', ALPHA_EDIT), regress } })
-  assert.deepEqual(labels.slice(8, 12), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'restore:wave1'])
+  assert.deepEqual(labels.slice(9, 13), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'restore:wave1'])
   assert.deepEqual(result.fix.unfixed.map(b => [b.bugId, b.reason]), [['b2', 'regression gate did not report']])
   assert.deepEqual(names(result.fix.fixed), ['b1'], 'b1 was already out of the tree; it is tried again and closes')
 })
 
 test('if the taken-back fixer cannot be confirmed put back, the fix phase stops', async () => {
   const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { testedits: ALPHA_EDIT, restore: () => null } })
-  assert.deepEqual(labels.slice(8), ['testedits:wave1', 'restore:wave1', 'gate'])
+  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'gate'])
   assert.equal(result.fix.halted, 'the restore after wave 1 was not confirmed')
   assert.deepEqual(result.fix.commits, [])
   assert.deepEqual(result.fix.fixed, [])
