@@ -15,6 +15,11 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   than trimmed, so a replay never reviews a finding the original run did not produce.
 
 ### Changed
+- **Verify's reviewers now see the run context, and a change under review no longer vouches
+  for itself** (`crg-debug.js`). When a run carries `issueContext`, each reviewer receives it
+  fenced, plus one rule: the change's own commit message, description, comments and tests say
+  what the author meant, not that the result is correct or that a behavior it introduces is
+  intentional. A run with no context sends the same reviewer prompt as before, byte for byte.
 - **The reviewer prompt and the survivor rule are now unit-tested helpers** (`reviewerBrief`,
   `bucketVerdicts`) inside the pure-helpers block. No wording or bucketing rule changed: the
   prompt is pinned byte for byte and the precedence between `intentional`, confirm and refute
