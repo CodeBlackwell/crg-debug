@@ -56,11 +56,12 @@ const stubAgent = (throwOn, trace = []) => async (_p, opts = {}) => {
 }
 
 test('a throwing FINAL gate still returns the run — committed waves are not lost', async () => {
-  const res = await runWorkflow({ args: fixArgs, agent: stubAgent('gate'), parallel })
+  const res = await runWorkflow({ args: fixArgs, agent: stubAgent('regress:allfixes'), parallel })
   assert.equal(res.fix.fixed.length, 1, 'the closed bug must survive the final gate failing')
   assert.equal(res.fix.commits.length, 1, 'the already-committed wave must be reported to the caller')
   assert.equal(res.fix.commits[0].hash, 'deadbeef123')
   assert.equal(res.fix.finalGate.clean, false, 'a gate that never produced results is not green')
+  assert.equal(res.fix.finalGate.verdict, 'not checked', 'and it is not red either: nothing was compared')
   assert.deepEqual(res.fix.finalGate.results, [], 'the null-shape guard on the final gate must run')
 })
 

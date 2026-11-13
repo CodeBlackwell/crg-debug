@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. A fix taken back for either reason gets one retry; the second time it is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. A fix taken back for either reason gets one retry; the second time it is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, or a newly failing test; a check that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way; \'green\' needs at least one check that was green before and after, otherwise the verdict is \'not checked\'. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -550,6 +550,68 @@ const decisionRow = (root, wave, bugs, file, strike, proposal, changed, ground) 
   commit: proposal.commit,
   apply: `git -C ${shellQuote(root)} cherry-pick ${proposal.ref}`,
 })
+
+// ---- final gate, judged against a baseline ------------------------------------
+// The final gate used to be green only if every command exited 0, so a type checker that
+// was never installed (exit 127) made every run RED, fixes or no fixes. A check can only
+// say something about the fixes if it was green before them. So each one is run once before
+// the first fix and again at the end, and the script compares:
+//   regressed   — green before, red now; or a test that fails now and did not before
+//   not checked — red before the first fix, for any reason: named, with its exit code,
+//                 and counted neither green nor red
+//   held        — green before and green now
+// GREEN needs no regression and at least one check that held. A gate where nothing held is
+// not green; it is "not checked". (A check that was already red cannot show a new error.)
+// The typecheck and build commands of the toolchain, each under a short id of its own.
+const finalChecks = toolchain => {
+  const usable = c => typeof c === 'string' && c.trim() !== '' && c.trim() !== '-'
+  const found = dedupBy(
+    (toolchain || []).filter(Boolean).flatMap(t => ['typecheck', 'build'].filter(kind => usable(t[kind])).map(kind => ({ kind, package: t.package, command: t[kind].trim() }))),
+    c => c.command,
+  )
+  const several = kind => found.filter(c => c.kind === kind).length > 1
+  return found.map((c, i) => ({ id: `k${i + 1}`, name: several(c.kind) ? `${c.kind}:${capText(c.package, 60) || i + 1}` : c.kind, command: c.command }))
+}
+// id -> exit code, from a relay of those checks. A row is matched by the id it was asked to
+// answer with (or by the command text, if the agent echoed that after all). A check
+// reported twice keeps its non-zero code: red before means less is claimed, red after means
+// a regression is not missed.
+const exitCodesById = (relay, checks) => {
+  const codes = new Map()
+  for (const row of ((relay && relay.results) || []).filter(Boolean)) {
+    const id = (/^\W*(k\d+)\b/i.exec(String(row.command || '')) || [])[1]
+    const check = (checks || []).find(c => (id && c.id === id.toLowerCase()) || norm(c.command) === norm(row.command))
+    if (check && Number.isInteger(row.exitCode) && !codes.get(check.id)) codes.set(check.id, row.exitCode)
+  }
+  return codes
+}
+// The same for the regression gate's test commands, under their c-ids. Pass a re-run relay
+// through resolveRuns first.
+const runCodesById = (relay, commands) => {
+  const codes = new Map()
+  ;(commands || []).forEach((command, i) => {
+    for (const run of ((relay && relay.runs) || []).filter(r => r && r.command === command && Number.isInteger(r.exitCode))) {
+      if (!codes.get(commandId(i))) codes.set(commandId(i), run.exitCode)
+    }
+  })
+  return codes
+}
+// THE final verdict. checks = [{id, name}]; before/after = Map id -> exit code;
+// newFailing = ids of tests that fail now and did not before the first fix.
+const finalGateVerdict = (checks, before, after, newFailing) => {
+  const out = { verdict: 'not checked', regressed: [], newFailures: newFailing || [], notChecked: [], unreported: [], held: [] }
+  for (const c of checks || []) {
+    const was = before.get(c.id)
+    const now = after.get(c.id)
+    if (was !== 0) out.notChecked.push({ name: c.name, exitCode: was === undefined ? null : was })
+    else if (now === undefined) out.unreported.push(c.name)
+    else if (now !== 0) out.regressed.push({ name: c.name, before: was, after: now })
+    else out.held.push(c.name)
+  }
+  if (out.regressed.length || out.newFailures.length) out.verdict = 'red'
+  else if (out.held.length && !out.unreported.length) out.verdict = 'green'
+  return out
+}
 
 // ---- dirty-tree guard ---------------------------------------------------------
 // Fix does not start on a tree that already holds uncommitted work in tracked files. A wave
@@ -1611,6 +1673,15 @@ ${fence(testEditCommand(repoRoot, snapshot))}`,
     { label: `testedits:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
   )
 
+// The typecheck and build commands, run by id: once before the first fix, once at the end.
+const checksAgent = (label, when, checks) =>
+  tryAgent(
+    `Run the typecheck and build commands of the repo at ${repoRoot}, ${when}. Do NOT edit any file. Run EXACTLY these ${checks.length} command(s), each verbatim and to completion; add no flag and drop none. A command whose tool is not installed is still run and its exit code reported as it is — do not install anything and do not skip it. Each is given under a short id:
+${checks.map(c => `${c.id}:\n${fence(c.command)}`).join('\n')}
+Return one results[] row per command: command = JUST its id (k1, k2, …) — do not copy the command text; exitCode = its REAL exit code — do not interpret pass/fail; stdout and stderr = the last lines it printed, at most 20 each.`,
+    { label: `checks:${label}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+  )
+
 const proposeAgent = (tag, command) =>
   tryAgent(
     `Save a fix that is about to be taken back after ${tag} in the git repo at ${repoRoot}, so that a person can look at it later. Run EXACTLY the command below and nothing else. It writes only inside the git directory: it changes neither the working tree nor the index, and it moves no branch. Return a single results[] row: command = the word save (do not copy the command text); exitCode = its REAL exit code; stdout = EVERYTHING it printed, every line, copied character for character. The script reads the lines it prints and counts them, so a shortened or summarised stdout counts as not saved.
@@ -1750,6 +1821,12 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
     log(`Fix: regression baseline did not report — stopping before any fix is applied; ${queue.length} bug(s) left unfixed`)
     unfixedBugs.push(...queue.map(b => ({ ...b, reason: 'regression baseline did not report — no fix attempted', wave: 0 })))
     queue = []
+  }
+  // The final gate's baseline — its typecheck and build commands, once, before any fix.
+  const checks = finalChecks(setup.toolchain)
+  const checksBefore = checks.length && queue.length ? exitCodesById(await checksAgent('baseline', 'BEFORE any fix is applied', checks), checks) : new Map()
+  if (checks.length && queue.length) {
+    log(`Fix: final-gate baseline — ${checks.map(c => `${c.name} ${checksBefore.has(c.id) ? `exit ${checksBefore.get(c.id)}` : 'did not report'}${checksBefore.get(c.id) === 0 ? '' : ' (not checked: it cannot show what a fix breaks)'}`).join(', ')}`)
   }
   const redCommands = new Map() // bugId -> the test command of an OPEN bug whose own gate is still red
   // The tree as it stands right now, to put a wave's files back to. '' = none could be taken,
@@ -2076,16 +2153,32 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
     if (green) await commitWave(stillOpen, coupledFix, 'coupled', coupledSupport)
   }
 
-  // Final gate over the cumulative diff — the regression detector: with bugs closed
-  // per-test, this re-runs the blast radius of EVERY touched file together (via the
-  // graph), surfacing any fix that broke a sibling. Scoped to the impact radius, not
-  // the whole suite, so it can't hang on a huge repo. RED here flags a regression.
-  const finalGate = await gateAgent([...touchedFiles])
-  const finalResults = (finalGate && finalGate.results) || []
-  const finalClean = allGreen(finalGate)
-  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, uncommitted, finalGate: { clean: finalClean, results: finalResults }, needsDecision, regressionGate: regression, existingTestEdits: testChanges, halted: halted || undefined }
+  // Final gate over the cumulative diff, judged against what was green before the first
+  // fix: the checks that were green then are run again, and the regression gate's test
+  // commands once more over EVERY touched file together. See finalGateVerdict.
+  const stillGreen = checks.filter(c => checksBefore.get(c.id) === 0)
+  const finalRelay = stillGreen.length ? await checksAgent('final', 'AFTER every fix', stillGreen) : null
+  const finalTests = baselineCommands.length ? resolveRuns(await regressionRerunAgent('all fixes', baselineCommands, [...touchedFiles], baselineNamed), baselineCommands) : null
+  const testsReported = regressionReported(finalTests, baselineCommands)
+  const testChecks = baselineCommands.map((_, i) => ({ id: commandId(i), name: baselineCommands.length === 1 ? 'tests' : `tests:${commandId(i)}` }))
+  const finalNew = testsReported ? newFailures(failingTests(finalTests), baselineFailing, [...redCommands.values()]).map(t => t.id) : []
+  const finalGate = finalGateVerdict(
+    [...checks, ...testChecks],
+    new Map([...checksBefore, ...runCodesById(baseline, baselineCommands)]),
+    new Map([...exitCodesById(finalRelay, stillGreen), ...(testsReported ? runCodesById(finalTests, baselineCommands) : [])]),
+    finalNew,
+  )
+  const finalResults = (finalRelay && finalRelay.results) || []
+  const finalClean = finalGate.verdict === 'green'
+  const finalWord = finalClean ? 'green' : finalGate.verdict === 'red' ? 'RED' : 'NOT CHECKED'
+  if (finalGate.verdict === 'red') {
+    log(`Fix: final gate — ${[...finalGate.regressed.map(r => `${r.name} was green before the first fix and now exits ${r.after}`), ...(finalNew.length ? [`${finalNew.length} test(s) newly failing (${capText(finalNew.join(', '), 300)})`] : [])].join('; ')}`)
+  } else if (!finalClean) {
+    log(`Fix: final gate not checked — ${finalGate.unreported.length ? `did not report: ${finalGate.unreported.join(', ')}` : 'no check was green both before the first fix and after the last'}`)
+  }
+  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, uncommitted, finalGate: { clean: finalClean, ...finalGate, results: finalResults }, needsDecision, regressionGate: regression, existingTestEdits: testChanges, halted: halted || undefined }
   const awaiting = needsDecision.reduce((n, row) => n + row.bugs.length, 0)
-  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${awaiting} need a decision · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed)${uncommitted.length ? ` · ${uncommitted.length} wave(s) NOT known to be committed` : ''} · final gate ${finalClean ? 'green' : 'RED'} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back`)
+  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${awaiting} need a decision · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed)${uncommitted.length ? ` · ${uncommitted.length} wave(s) NOT known to be committed` : ''} · final gate ${finalWord}${finalGate.notChecked.length ? ` · not checked: ${finalGate.notChecked.map(c => c.name).join(', ')}` : ''} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back`)
 }
 
 // ---- return -------------------------------------------------------------------

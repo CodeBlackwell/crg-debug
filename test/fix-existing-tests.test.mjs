@@ -274,7 +274,7 @@ test('a fixer that rewrites an expected value in an existing test is taken back 
   assert.deepEqual(labels, [
     'tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py',
     'testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave',
-    'snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'regress:wave2', 'commit:wave', 'gate',
+    'snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'regress:wave2', 'commit:wave', 'regress:allfixes',
   ], 'no blame agent — the fixer is known — and one retry')
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.ok(restore.prompt.includes(`-- 'src/alpha.py' 'tests/test_alpha.py' `) && !restore.prompt.includes('bravo'), 'only that fixer\'s files go back')
@@ -302,7 +302,7 @@ test('the second time, the fix is saved as a proposal before it is taken back, a
     ? { ground: GROUND, filesTouched: ['src/alpha.py', 'tests/test_alpha.py'], fixes: [{ bugId: 'b1', testFile: 'tests/test_alpha.py', testCommand: 'pytest tests/test_alpha.py::test_b1', redObserved: true, greenObserved: true }] }
     : undefined)
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO, on: { testedits: ALPHA_EDIT, fix } })
-  assert.deepEqual(labels.slice(labels.indexOf('snapshot:wave2')), ['snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'propose:wave2', 'restore:wave2', 'gate'], 'saved first, then put back; never committed')
+  assert.deepEqual(labels.slice(labels.indexOf('snapshot:wave2')), ['snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'testedits:wave2', 'propose:wave2', 'restore:wave2', 'regress:allfixes'], 'saved first, then put back; never committed')
   const name = H.proposalName(H.branchSlug(TWO), 'wave 2', 'src/alpha.py')
   const ref = `refs/crg-debug/proposed/${name}-abc123abc123`
   assert.deepEqual(result.fix.needsDecision, [{
@@ -362,7 +362,7 @@ test('a check that does not report is not a pass: the wave is put back and nothi
   const failed = ({ prompt }) => ({ results: [{ command: 'check', exitCode: 128, stdout: summary(0, idIn(prompt)) }] })
   for (const testedits of [() => null, () => { throw new Error('retry cap') }, empty, prose, dropped, failed]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { testedits } })
-    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'gate'], 'no regression gate is asked and no commit is made')
+    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:allfixes'], 'no regression gate is asked and no commit is made')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.commits, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill(H.TEST_CHECK_UNREPORTED))
@@ -374,7 +374,7 @@ test('an existing test changed by a fixer that did not declare it is put back al
   const { result, labels, calls } = await fixRun(SRC, { bugs: TWO, on: { testedits: printed(...SOURCES, '2\t2\ttests/test_utils.py') } })
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.ok(restore.prompt.includes(`-- 'tests/test_utils.py' `) && !restore.prompt.includes('alpha') && !restore.prompt.includes('bravo'), 'only the test file goes back')
-  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'gate'], 'then the regression gate runs against the original test')
+  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'regress:allfixes'], 'then the regression gate runs against the original test')
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.deepEqual(result.fix.existingTestEdits, [{ wave: 1, bugs: [], files: [{ path: 'tests/test_utils.py', removed: 2 }] }])
 })
@@ -408,7 +408,7 @@ test('a fixer taken back for an existing test keeps its retry when the rest of i
 
 test('if the taken-back fixer cannot be confirmed put back, the fix phase stops', async () => {
   const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { testedits: ALPHA_EDIT, restore: () => null } })
-  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'gate'])
+  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:allfixes'])
   assert.equal(result.fix.halted, 'the restore after wave 1 was not confirmed')
   assert.deepEqual(result.fix.commits, [])
   assert.deepEqual(result.fix.fixed, [])
@@ -422,12 +422,12 @@ test('the coupled attempt may not rewrite an existing test either: one more atte
   const coupledEdit = nths => ({ label, nth, prompt }) => (label === 'testedits:coupled' && nths.includes(nth) ? edit({ prompt }) : undefined)
 
   const once = await fixRun(SRC, { bugs: stuck, on: { gate: perBugRed, testedits: coupledEdit([1]) } })
-  assert.deepEqual(once.labels.slice(once.labels.indexOf('testedits:coupled')), ['testedits:coupled', 'restore:coupled', 'snapshot:coupled', 'fix:coupled', 'gate:alpha.py', 'testedits:coupled', 'regress:coupled', 'commit:wave', 'gate'])
+  assert.deepEqual(once.labels.slice(once.labels.indexOf('testedits:coupled')), ['testedits:coupled', 'restore:coupled', 'snapshot:coupled', 'fix:coupled', 'gate:alpha.py', 'testedits:coupled', 'regress:coupled', 'commit:wave', 'regress:allfixes'])
   assert.ok(once.calls.filter(c => c.label === 'fix:coupled')[1].prompt.includes(H.takenBackNote(stuck, new Map([['b1', EDITED]]))))
   assert.deepEqual(names(once.result.fix.fixed), ['b1'])
 
   const twice = await fixRun(SRC, { bugs: stuck, on: { gate: perBugRed, testedits: coupledEdit([1, 2]) } })
-  assert.deepEqual(twice.labels.slice(-5), ['gate:alpha.py', 'testedits:coupled', 'propose:coupled', 'restore:coupled', 'gate'], 'no regression gate, no commit, no third attempt')
+  assert.deepEqual(twice.labels.slice(-5), ['gate:alpha.py', 'testedits:coupled', 'propose:coupled', 'restore:coupled', 'regress:allfixes'], 'no regression gate, no commit, no third attempt')
   assert.deepEqual(twice.result.fix.unfixed, [])
   assert.deepEqual(twice.result.fix.needsDecision.map(d => [d.wave, d.bugs, d.reason]), [['coupled', ['b1'], 'fix needs an existing test changed: tests/test_alpha.py']])
   assert.deepEqual(twice.result.fix.existingTestEdits.map(t => t.wave), ['coupled', 'coupled'])

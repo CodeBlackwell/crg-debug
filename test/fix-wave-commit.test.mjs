@@ -26,7 +26,7 @@ test('a commit relay that dies is neither a failed commit nor a successful one, 
   const five = [...Array(5)].map((_, i) => bug(`b${i + 1}`, 'src/core.py'))
   for (const commit of [() => null, () => { throw new Error('retry cap') }]) {
     const { result, labels, logs } = await fixRun(SRC, { bugs: five, on: { commit } })
-    assert.deepEqual(labels.slice(-4), ['testedits:wave1', 'regress:wave1', 'commit:wave', 'gate'], 'no wave 2 agent may be called')
+    assert.deepEqual(labels.slice(-4), ['testedits:wave1', 'regress:wave1', 'commit:wave', 'regress:allfixes'], 'no wave 2 agent may be called')
     assert.equal(labels.filter(l => l.startsWith('fix:')).length, 1)
     assert.equal(result.fix.halted, 'the commit of wave 1 is unknown')
     assert.deepEqual(result.fix.commits, [], 'nothing unverified is reported as committed')
