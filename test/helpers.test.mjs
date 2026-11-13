@@ -599,12 +599,14 @@ test('bucketVerdicts: one dead reviewer leaves the survivor’s verdict standing
   assert.deepEqual(H.bucketVerdicts([row(no, null)]).rejected, [{ ...FINDING, refutationReason: 'guard upstream' }])
 })
 
-// A reviewer who confirmed outranks one who said "intentional": the finding is kept with the
-// objection as `dissent`. Every pairing is covered in verify-dissent.test.mjs.
-test('bucketVerdicts: a confirm outranks an intentional classification, which defers only alone', () => {
+// Current precedence, pinned on purpose: ANY intentional classification defers the finding
+// before confirms are counted — even when the other reviewer reproduced it.
+test('bucketVerdicts: an intentional classification defers even alongside a confirm', () => {
   const intentional = { confirmed: false, classification: 'intentional', reason: 'documented fallback' }
-  assert.deepEqual(H.bucketVerdicts([row(intentional, yes)]), { confirmedBugs: [{ ...FINDING, dissent: 'documented fallback' }], deferred: [], rejected: [] })
-  assert.deepEqual(H.bucketVerdicts([row(intentional, no)]), { confirmedBugs: [], deferred: [{ ...FINDING, deferReason: 'documented fallback' }], rejected: [] })
+  const out = H.bucketVerdicts([row(intentional, yes)])
+  assert.deepEqual(out, { confirmedBugs: [], deferred: [{ ...FINDING, deferReason: 'documented fallback' }], rejected: [] })
+  const confirmedAndIntentional = { confirmed: true, classification: 'intentional', reason: 'by design' }
+  assert.deepEqual(H.bucketVerdicts([row(yes, confirmedAndIntentional)]).deferred, [{ ...FINDING, deferReason: 'by design' }])
 })
 
 test('bucketVerdicts: confirms with no refute keep the finding unflagged', () => {
