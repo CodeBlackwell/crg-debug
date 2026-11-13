@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,7 +14,7 @@ const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
 const H = new Function(
-  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, regressionReported, regressionReason, blamedBugIds, shellQuote, restoreCommands, restoreOk, restoreReach, regressionNote, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
+  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, regressionReported, regressionReason, blamedBugIds, shellQuote, snapshotCommand, snapshotOf, restoreCommands, restoreOk, regressionNote, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
 )()
 
 // ---- the script's own comparisons ------------------------------------------------
@@ -76,64 +76,131 @@ test('the unfixed reason names the test the fix broke', () => {
   assert.equal(H.regressionReason([{ id: 't::a' }, { id: 't::b' }, { id: 't::c' }]), 'fix breaks existing test t::a (+2 more)')
 })
 
-test('a restore to HEAD takes every uncommitted fix that shares a file, whole', () => {
-  const loose = [
-    { bugId: 'b1', files: ['src/alpha.py', 'tests/test_alpha.py'] },
-    { bugId: 'b2', files: ['tests/test_alpha.py', 'src/helper.py'] },
-    { bugId: 'b3', files: ['src/other.py'] },
-  ]
-  assert.deepEqual(H.restoreReach(['./src/alpha.py'], loose), { files: ['src/alpha.py', 'tests/test_alpha.py', 'src/helper.py'], lost: ['b1', 'b2'] })
-  assert.deepEqual(H.restoreReach(['src/z.py'], loose), { files: ['src/z.py'], lost: [] })
+test('a restore point is an object id from a relay that exited clean, and nothing else', () => {
+  const id = 'fa866b8dee299454452b36fcb5557d1fe0155771'
+  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: `${id}\n` }] }), id)
+  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: 'f'.repeat(64) }] }), 'f'.repeat(64), 'a sha-256 repository')
+  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 128, stdout: id }] }), '', 'a failed command is no restore point')
+  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: 'done, the tree is saved' }] }), '', 'prose is not an object id')
+  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: `${id}; rm -rf .` }] }), '', 'nothing but the id may reach a command line')
+  assert.equal(H.snapshotOf({ results: [] }), '')
+  assert.equal(H.snapshotOf(null), '')
 })
 
-test('a restore is confirmed only by clean exit codes and an empty status', () => {
-  const rows = stdout => ({ results: [
-    { command: 'git diff … | xargs -0 git checkout HEAD --', exitCode: 0 },
-    { command: 'git clean -f -- a', exitCode: 0 },
-    { command: 'git status --porcelain -- a', exitCode: 0, stdout },
+test('a restore is confirmed only by clean exit codes and a comparison that lists no file', () => {
+  const rows = (stdout, exitCode = 0) => ({ results: [
+    { command: '( … read-tree abc && … checkout-index -f -z --stdin && … clean -f -q -- a )', exitCode: 0 },
+    { command: '( … add -A && … diff --cached --name-only --exit-code abc -- a )', exitCode, stdout },
   ] })
   assert.equal(H.restoreOk(rows('')), true)
-  assert.equal(H.restoreOk(rows(' M src/alpha.py\n')), false, 'a file still dirty is not restored')
-  assert.equal(H.restoreOk({ results: rows('').results.slice(0, 2) }), false, 'no status check, no confirmation')
-  assert.equal(H.restoreOk({ results: [{ command: 'git status --porcelain -- a', exitCode: 128, stdout: '' }] }), false)
+  assert.equal(H.restoreOk(rows('src/a.py\n', 1)), false, 'a file that still differs is not restored')
+  assert.equal(H.restoreOk(rows('src/a.py\n', 0)), false, 'a listed file outweighs a kind exit code')
+  assert.equal(H.restoreOk({ results: rows('').results.slice(0, 1) }), false, 'no comparison, no confirmation')
   assert.equal(H.restoreOk(null), false, 'a restore that never reported is not a restore')
 })
 
-test('the restore commands put back exactly the named files in a real repository', () => {
+// A real repository, and a "wave" played by the test: snapshot, edit, restore, compare.
+const sh = command => execFileSync('sh', ['-c', command], { stdio: 'pipe' }).toString()
+const withRepo = run => {
   const repo = mkdtempSync(join(tmpdir(), 'crg-restore-'))
-  const git = (...argv) => execFileSync('git', ['-C', repo, ...argv], { stdio: 'pipe' })
+  const git = (...argv) => execFileSync('git', ['-C', repo, ...argv], { stdio: 'pipe' }).toString()
+  const write = (file, text) => writeFileSync(join(repo, file), text)
+  const read = file => readFileSync(join(repo, file), 'utf8')
   try {
     git('init', '-q')
     git('config', 'user.email', 'dev@example.com')
     git('config', 'user.name', 'dev')
     mkdirSync(join(repo, 'src'))
     mkdirSync(join(repo, 'tests'))
-    for (const f of ['src/alpha.py', 'src/b*.py', 'src/bystander.py', "src/it's.py", 'tests/test_alpha.py']) writeFileSync(join(repo, f), 'original\n')
-    git('add', '-A')
-    git('commit', '-qm', 'init')
-    for (const f of ['src/alpha.py', 'src/b*.py', 'src/bystander.py', "src/it's.py", 'tests/test_alpha.py']) writeFileSync(join(repo, f), 'edited\n')
-    mkdirSync(join(repo, 'tests/new'))
-    writeFileSync(join(repo, 'tests/new/test_added.py'), 'new\n')
-    writeFileSync(join(repo, 'tests/test_kept.py'), 'someone else\n')
-
-    const named = ['src/alpha.py', 'src/b*.py', "src/it's.py", 'tests/test_alpha.py', 'tests/new/test_added.py', 'src/never_existed.py']
-    const out = H.restoreCommands(repo, named).map(c => execFileSync('sh', ['-c', c], { stdio: 'pipe' }).toString())
-    assert.equal(out[2], '', 'the status check must print nothing once the files are back')
-    for (const f of ['src/alpha.py', 'src/b*.py', "src/it's.py", 'tests/test_alpha.py']) assert.equal(readFileSync(join(repo, f), 'utf8'), 'original\n', f)
-    assert.equal(existsSync(join(repo, 'tests/new/test_added.py')), false, 'a file the fixer created is removed')
-    assert.equal(readFileSync(join(repo, 'src/bystander.py'), 'utf8'), 'edited\n', 'src/b*.py is a file name, not a pattern')
-    assert.equal(existsSync(join(repo, 'tests/test_kept.py')), true, 'an untracked file nobody named survives')
+    return run({ repo, git, write, read })
   } finally {
     rmSync(repo, { recursive: true, force: true })
   }
+}
+const restore = (repo, files, snapshot) => H.restoreCommands(repo, files, snapshot).map(sh)
+
+test('a restored file keeps the uncommitted edit the user had in it before the wave', () => {
+  withRepo(({ repo, git, write, read }) => {
+    write('src/core.py', 'def f():\n    return 1\n')
+    git('add', '-A')
+    git('commit', '-qm', 'init')
+    write('src/core.py', 'def f():\n    return 1\n\n# my half-finished idea\n') // the user's own, uncommitted
+    const snapshot = sh(H.snapshotCommand(repo)).trim()
+    assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: snapshot }] }), snapshot)
+
+    write('src/core.py', 'def f():\n    return 2\n\n# my half-finished idea\n') // the wave's fix, which broke a test
+    const [, compared] = restore(repo, ['src/core.py'], snapshot)
+    assert.equal(compared, '', 'the comparison must list nothing')
+    assert.equal(read('src/core.py'), 'def f():\n    return 1\n\n# my half-finished idea\n', 'the user\'s edit is still there, and the wave\'s is gone')
+  })
+})
+
+test('a restore puts back exactly what the wave began with — staged, untracked, deleted, created', () => {
+  withRepo(({ repo, git, write, read }) => {
+    for (const f of ['src/a.py', 'src/b*.py', 'src/bystander.py', "src/it's.py", 'src/staged.py', 'src/removed.py', 'tests/test_a.py']) write(f, 'committed\n')
+    write('run.sh', '#!/bin/sh\n')
+    chmodSync(join(repo, 'run.sh'), 0o755)
+    git('add', '-A')
+    git('commit', '-qm', 'init')
+    // What was already in the tree when the wave began, none of it committed.
+    write('src/staged.py', 'staged\n')
+    git('add', 'src/staged.py')
+    write('src/staged.py', 'staged\nand then edited\n')
+    write('notes.txt', 'untracked, mine\n')
+    write('tests/test_earlier_fix.py', 'an earlier wave\'s test, never committed\n')
+    const indexBefore = readFileSync(join(repo, '.git/index'))
+    const statusBefore = git('status', '--porcelain')
+    const snapshot = sh(H.snapshotCommand(repo)).trim()
+    assert.deepEqual(readFileSync(join(repo, '.git/index')), indexBefore, 'taking a restore point must not touch the index')
+    assert.equal(git('status', '--porcelain'), statusBefore, 'nor the working tree')
+
+    // The wave.
+    for (const f of ['src/a.py', 'src/b*.py', 'src/bystander.py', "src/it's.py", 'src/staged.py', 'notes.txt', 'tests/test_earlier_fix.py', 'tests/test_a.py']) write(f, 'wave\n')
+    unlinkSync(join(repo, 'src/removed.py'))
+    chmodSync(join(repo, 'run.sh'), 0o644)
+    mkdirSync(join(repo, 'tests/new'))
+    write('tests/new/test_added.py', 'created by the wave\n')
+    write('tests/test_created.py', 'created by the wave\n')
+
+    const named = ['src/a.py', 'src/b*.py', "src/it's.py", 'src/staged.py', 'notes.txt', 'tests/test_earlier_fix.py', 'tests/test_a.py', 'src/removed.py', 'run.sh', 'tests/new/test_added.py', 'tests/test_created.py', 'src/never_existed.py']
+    const [, compared] = restore(repo, named, snapshot)
+    assert.equal(compared, '')
+    for (const f of ['src/a.py', 'src/b*.py', "src/it's.py", 'tests/test_a.py', 'src/removed.py']) assert.equal(read(f), 'committed\n', f)
+    assert.equal(read('src/staged.py'), 'staged\nand then edited\n')
+    assert.equal(read('notes.txt'), 'untracked, mine\n', 'an untracked file that existed is put back, not deleted')
+    assert.equal(read('tests/test_earlier_fix.py'), 'an earlier wave\'s test, never committed\n')
+    assert.equal(statSync(join(repo, 'run.sh')).mode & 0o111, 0o111, 'the executable bit comes back too')
+    assert.equal(existsSync(join(repo, 'tests/new/test_added.py')), false, 'a file the wave created is removed')
+    assert.equal(existsSync(join(repo, 'tests/test_created.py')), false)
+    assert.equal(read('src/bystander.py'), 'wave\n', 'src/b*.py is a file name, not a pattern: a file nobody named keeps its edit')
+    assert.deepEqual(readFileSync(join(repo, '.git/index')), indexBefore, 'the restore must not touch the index either')
+    assert.equal(git('diff', '--cached', '--name-only'), 'src/staged.py\n', 'what the user had staged is still what is staged')
+  })
+})
+
+test('the comparison notices a named file that is not what it was', () => {
+  withRepo(({ repo, git, write }) => {
+    write('src/a.py', 'committed\n')
+    git('add', '-A')
+    git('commit', '-qm', 'init')
+    const snapshot = sh(H.snapshotCommand(repo)).trim()
+    const [, compare] = H.restoreCommands(repo, ['src/a.py', 'tests/test_new.py'], snapshot)
+    assert.equal(sh(compare), '', 'nothing has changed yet')
+    write('src/a.py', 'still edited\n')
+    write('tests/test_new.py', 'still here\n')
+    assert.throws(() => sh(compare), err => err.status === 1 && err.stdout.toString() === 'src/a.py\ntests/test_new.py\n', 'exit 1 and both files named')
+  })
 })
 
 test('a path cannot become a command or widen the restore', () => {
-  const [checkout, clean, status] = H.restoreCommands('/repo', ['a bravo.py', '$(rm -rf ~).py', ':/'])
-  for (const c of [checkout, clean, status]) {
-    assert.ok(c.includes(`'a bravo.py' '$(rm -rf ~).py' ':/'`), c)
-    assert.ok(c.startsWith(`git --literal-pathspecs -C '/repo' `), c)
+  const [putBack, compare] = H.restoreCommands('/repo', ['a b.py', '$(rm -rf ~).py', ':/'], 'abc123')
+  for (const c of [putBack, compare]) {
+    assert.ok(c.includes(`-- 'a b.py' '$(rm -rf ~).py' ':/'`), c)
+    assert.ok(c.startsWith(`( G="$(git -C '/repo' rev-parse --absolute-git-dir)" && `) && c.endsWith(' )'), 'each runs in a subshell, so the scratch index cannot leak')
+    assert.equal(/GIT_INDEX_FILE="\$G\/crg-debug-wave\.index"/.test(c), true, 'and never against the real index')
   }
+  assert.ok(putBack.includes(`git --literal-pathspecs -C '/repo' ls-files -z -- 'a b.py'`) && putBack.includes(`git --literal-pathspecs -C '/repo' clean -f -q -- 'a b.py'`))
+  assert.ok(compare.includes(`git --literal-pathspecs -C '/repo' diff --cached --name-only --exit-code abc123 -- 'a b.py'`))
   assert.equal(H.shellQuote(`it's`), `'it'\\''s'`)
 })
 
@@ -156,7 +223,7 @@ test('both regression schemas submit a single property', () => {
 
 // ---- stubbed fix runs --------------------------------------------------------------
 // A fix-from-ledger run over `bugs`. Every agent has a sensible default answer; `on` maps
-// the first segment of a label (fix, gate, regress, blame, restore, commit…) to a handler
+// the first segment of a label (fix, gate, snapshot, regress, blame, restore, commit…) to a handler
 // that may answer instead — return undefined to fall through, null to play dead, or throw.
 // The block is self-contained: fix-wave-commit.test.mjs evaluates it too, because a shared
 // module anywhere under test/ would be run by `node --test` as a test of its own.
@@ -192,6 +259,7 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
     }
     if (kind === 'regress') return { runs: [{ command: 'pytest tests/test_alpha.py tests/test_bravo.py', exitCode: 0, failing: [] }] }
     if (kind === 'blame') return { causes: [] }
+    if (kind === 'snapshot') return { results: [{ command: fenced(prompt)[0], exitCode: 0, stdout: `${'5'.repeat(39)}${nth}\n` }] }
     if (kind === 'restore') return { results: fenced(prompt).map(command => ({ command, exitCode: 0, stdout: '' })) }
     return { results: [{ command: 'ok', exitCode: 0, stdout: '', stderr: '' }] }
   }
@@ -207,7 +275,7 @@ const bug = (bugId, file) => ({ bugId, file: `${file}:10`, rootCause: `${bugId} 
 // Everything the Fix phase asked of the agents it had BEFORE the regression gate existed:
 // one line per call, a digest of the exact prompt and options.
 const priorAgentLines = (calls, sha) =>
-  calls.filter(c => !/^(regress|blame|restore):/.test(c.label)).map(c => `${c.label} ${sha(`${c.prompt}\n${JSON.stringify(c.opts)}`)}`)
+  calls.filter(c => !/^(regress|blame|restore|snapshot):/.test(c.label)).map(c => `${c.label} ${sha(`${c.prompt}\n${JSON.stringify(c.opts)}`)}`)
 // Six bugs, five of them in one file, a per-bug gate that never passes for b3, an earlier
 // failed attempt and a named model: two waves, a thrash, the coupled fallback, two commits.
 const BUSY = {
@@ -231,6 +299,7 @@ const script = (...answers) => {
   }
 }
 const names = bugs => bugs.map(b => b.bugId)
+const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out for a label's first call
 
 // PINNED was produced by running the harness above over the script as it stood before the
 // regression gate (commit 6b6b8d7). A clean gate must add its own agents and change
@@ -278,7 +347,7 @@ test('with a clean gate, every agent the Fix phase already had is asked exactly 
 
 test('a clean run takes a baseline, checks each wave before its commit, and reports the gate', async () => {
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO })
-  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'commit:wave', 'gate'])
+  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'commit:wave', 'gate'])
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.deepEqual(result.fix.regressionGate, {
     baselineReported: true, baselineFailures: 0, takenBack: 0, halted: undefined,
@@ -291,6 +360,10 @@ test('a clean run takes a baseline, checks each wave before its commit, and repo
   assert.match(baseline.prompt, /get_impact_radius_tool and query_graph_tool\(pattern="tests_for"\)/)
   assert.match(baseline.prompt, /never stop at the first failure: no -x,/)
   assert.deepEqual(baseline.opts.schema, H.REGRESSION_SCHEMA)
+
+  const snapshot = calls.find(c => c.label === 'snapshot:wave1')
+  assert.ok(snapshot.prompt.includes(H.fence(H.snapshotCommand('/tmp/crg-fixture'))), 'the restore point is taken by the script\'s own command')
+  assert.deepEqual(snapshot.opts.schema.required, ['results'])
 
   const rerun = calls.find(c => c.label === 'regress:wave1')
   assert.ok(rerun.prompt.includes(`Run EXACTLY these 1 command(s)`))
@@ -315,12 +388,13 @@ test('a fix that breaks a passing test is restored before the commit, and tried 
   })
   assert.deepEqual(labels, [
     'ingest-ledger', 'fix-branch', 'regress:baseline',
-    'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'commit:wave',
-    'fix:alpha.py', 'gate:alpha.py', 'regress:wave2', 'commit:wave', 'gate',
+    'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'commit:wave',
+    'snapshot:wave2', 'fix:alpha.py', 'gate:alpha.py', 'regress:wave2', 'commit:wave', 'gate',
   ])
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.deepEqual(restore.opts.schema.required, ['results'])
-  assert.ok(restore.prompt.includes(H.restoreCommands('/tmp/crg-fixture', ['src/alpha.py', 'tests/test_alpha.py']).map(c => H.fence(c)).join('\n')), 'only the blamed fixer\'s files go back')
+  assert.ok(restore.prompt.includes(H.restoreCommands('/tmp/crg-fixture', ['src/alpha.py', 'tests/test_alpha.py'], WAVE1).map(c => H.fence(c)).join('\n')), 'only the blamed fixer\'s files go back, to wave 1\'s restore point')
+  assert.ok(calls.find(c => c.label === 'blame:wave1').prompt.includes(`git -C /tmp/crg-fixture diff ${WAVE1} -- <its files>`), 'the blame agent reads this wave\'s edits, not everything since HEAD')
   assert.equal(restore.prompt.includes('src/bravo.py'), false)
 
   const firstCommit = calls.filter(c => c.label === 'commit:wave')[0]
@@ -364,7 +438,7 @@ test('when restoring the blamed fix does not clear the failure, the whole wave g
       blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }),
     },
   })
-  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'gate'])
+  assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'gate'])
   const second = calls.filter(c => c.label === 'restore:wave1')[1]
   assert.ok(second.prompt.includes(`'src/alpha.py' 'tests/test_alpha.py' 'src/bravo.py' 'tests/test_bravo.py'`), 'every file the wave touched')
   assert.deepEqual(result.fix.fixed, [])
@@ -376,7 +450,7 @@ test('when restoring the blamed fix does not clear the failure, the whole wave g
 test('a blame that never arrives, or names nobody in the wave, takes the whole wave back', async () => {
   for (const blame of [() => null, () => { throw new Error('retry cap') }, () => ({ causes: [{ test: EXISTING.id, bugIds: ['b77'] }] })]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING)), blame } })
-    assert.deepEqual(labels.slice(7), ['regress:wave1', 'blame:wave1', 'restore:wave1', 'gate'])
+    assert.deepEqual(labels.slice(8), ['regress:wave1', 'blame:wave1', 'restore:wave1', 'gate'])
     assert.deepEqual(result.fix.commits, [])
     assert.equal(result.fix.unfixed.length, 2)
   }
@@ -398,7 +472,7 @@ test('a wave gate that does not report is not a clean gate: the wave is restored
   const skipped = { runs: [{ command: 'pytest tests/test_bravo.py', exitCode: 0, failing: [] }] } // left a baseline command out
   for (const answer of [null, new Error('retry cap'), { runs: [] }, skipped]) {
     const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), answer) } })
-    assert.deepEqual(labels.slice(7), ['regress:wave1', 'restore:wave1', 'gate'])
+    assert.deepEqual(labels.slice(8), ['regress:wave1', 'restore:wave1', 'gate'])
     assert.deepEqual(result.fix.commits, [])
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill(H.REGRESSION_UNREPORTED))
@@ -438,8 +512,8 @@ test('an open bug\'s own red test is left to its own gate — it does not take a
       regress: script(runs(), runs(ownRed)),
     },
   })
-  assert.equal(labels.slice(0, 9).some(l => /^(blame|restore):/.test(l)), false)
-  assert.deepEqual(labels.slice(7, 9), ['regress:wave1', 'commit:wave'], 'b2 commits; b1 goes round again as it always did')
+  assert.equal(labels.slice(0, 10).some(l => /^(blame|restore):/.test(l)), false)
+  assert.deepEqual(labels.slice(8, 10), ['regress:wave1', 'commit:wave'], 'b2 commits; b1 goes round again as it always did')
   assert.ok(names(result.fix.fixed).includes('b2'))
   assert.deepEqual(result.fix.regressionGate.waves[0], { wave: 1, newFailures: [], takenBack: [], outcome: 'clean' })
 })
@@ -448,7 +522,7 @@ test('the coupled attempt passes the same gate before it commits', async () => {
   const stuck = [bug('b1', 'src/alpha.py')]
   const perBugRed = ({ label, nth }) => (label === 'gate:alpha.py' && nth === 1 ? { results: [{ command: 'pytest', exitCode: 1 }] } : undefined)
   const broke = await fixRun(SRC, { bugs: stuck, on: { gate: perBugRed, regress: script(runs(), runs(), runs(EXISTING)) } })
-  assert.deepEqual(broke.labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'fix:alpha.py', 'gate:alpha.py', 'regress:wave1', 'fix:coupled', 'gate:alpha.py', 'regress:coupled', 'restore:coupled', 'gate'])
+  assert.deepEqual(broke.labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'gate:alpha.py', 'regress:wave1', 'snapshot:coupled', 'fix:coupled', 'gate:alpha.py', 'regress:coupled', 'restore:coupled', 'gate'])
   assert.deepEqual(broke.result.fix.fixed, [])
   assert.deepEqual(broke.result.fix.commits, [])
   assert.deepEqual(broke.result.fix.unfixed.map(b => b.reason), [`fix breaks existing test ${EXISTING.id}`])
@@ -463,16 +537,47 @@ test('the coupled attempt passes the same gate before it commits', async () => {
   assert.deepEqual(silent.result.fix.commits, [])
 })
 
-test('with commits off, a restore also takes back the earlier fixes it overwrites, and says so', async () => {
+test('a restore goes back to the start of its own wave, so earlier fixes that never reached a commit survive it', async () => {
   const five = [...Array(5)].map((_, i) => bug(`b${i + 1}`, 'src/alpha.py')) // wave 1 fixes four, wave 2 the fifth
-  const { result, logs } = await fixRun(SRC, {
+  const { result, calls } = await fixRun(SRC, {
     bugs: five,
     args: { commit: false },
-    on: { regress: script(runs(), runs(), runs(EXISTING)), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b5'] }] }) },
+    on: {
+      snapshot: ({ label, fenced }) => ({ results: [{ command: fenced[0], exitCode: 0, stdout: label === 'snapshot:wave2' ? 'b'.repeat(40) : 'a'.repeat(40) }] }),
+      regress: script(runs(), runs(), runs(EXISTING)),
+      blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b5'] }] }),
+    },
   })
-  assert.deepEqual(names(result.fix.fixed), ['b5'], 'only the retry of b5 stands on the restored file')
-  assert.deepEqual(result.fix.unfixed.map(b => [b.bugId, b.reason]), ['b1', 'b2', 'b3', 'b4'].map(id => [id, 'its uncommitted fix shared a file restored after wave 2']))
-  assert.ok(logs.some(l => /b1 was fixed but never committed and shared a restored file — now unfixed/.test(l)))
+  const restore = calls.find(c => c.label === 'restore:wave2')
+  assert.ok(restore.prompt.includes(`read-tree ${'b'.repeat(40)} `), 'wave 2 is taken back to wave 2\'s restore point')
+  assert.equal(restore.prompt.includes('a'.repeat(40)), false, 'never to an earlier one')
+  assert.equal(restore.prompt.includes('HEAD'), false, 'and never to HEAD')
+  assert.deepEqual(names(result.fix.fixed), ['b1', 'b2', 'b3', 'b4', 'b5'], 'wave 1\'s uncommitted fixes stand; b5 lands on its second try')
+  assert.deepEqual(result.fix.unfixed, [])
+})
+
+test('a wave with no restore point is not started', async () => {
+  const five = [...Array(5)].map((_, i) => bug(`b${i + 1}`, 'src/alpha.py'))
+  const prose = ({ fenced }) => ({ results: [{ command: fenced[0], exitCode: 0, stdout: 'saved the tree' }] })
+  const failed = ({ fenced }) => ({ results: [{ command: fenced[0], exitCode: 128, stdout: '' }] })
+  for (const snapshot of [() => null, () => { throw new Error('retry cap') }, prose, failed]) {
+    const { result, labels, logs } = await fixRun(SRC, { bugs: five, on: { snapshot } })
+    assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'gate'], 'no fixer may edit a tree that cannot be put back')
+    assert.deepEqual(result.fix.fixed, [])
+    assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(5).fill('not attempted — no restore point could be taken before wave 1'))
+    assert.equal(result.fix.regressionGate.halted, 'no restore point could be taken before wave 1')
+    assert.ok(logs.some(l => l.startsWith('Fix: no restore point could be taken before wave 1')))
+  }
+})
+
+test('the coupled attempt is not started without a restore point either', async () => {
+  const perBugRed = ({ label, nth }) => (label === 'gate:alpha.py' && nth === 1 ? { results: [{ command: 'pytest', exitCode: 1 }] } : undefined)
+  const { result, labels } = await fixRun(SRC, {
+    bugs: [bug('b1', 'src/alpha.py')],
+    on: { gate: perBugRed, snapshot: ({ label }) => (label === 'snapshot:coupled' ? null : undefined) },
+  })
+  assert.deepEqual(labels.slice(-3), ['regress:wave1', 'snapshot:coupled', 'gate'])
+  assert.deepEqual(result.fix.unfixed.map(b => b.reason), ['not attempted — no restore point could be taken before coupled'])
 })
 
 test('what a failing test printed reaches the blame agent and the next fixer only inside a fence', async () => {
