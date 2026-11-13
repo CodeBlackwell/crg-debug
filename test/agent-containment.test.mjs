@@ -43,6 +43,8 @@ const stubAgent = (throwOn, trace = []) => async (_p, opts = {}) => {
     committedFiles: ['src/alpha-widget.ts', 'src/alpha-widget.test.ts'],
     results: [{ command: 'git commit', exitCode: 0, stdout: '', stderr: '' }],
   }
+  // The regression gate finds nothing failing, before the fix or after it.
+  if (label.startsWith('regress:')) return { runs: [{ command: 'npm test', exitCode: 0, failing: [] }] }
   // Every gate (per-bug `gate:*`, the final `gate`, and `uncommit`) reports green.
   return { results: [{ command: 'npm test -- alpha-widget', exitCode: 0, stdout: '', stderr: '' }] }
 }
