@@ -45,6 +45,8 @@ const stubAgent = (throwOn, trace = []) => async (_p, opts = {}) => {
   }
   // A restore point is recorded before each wave.
   if (label.startsWith('snapshot:')) return { results: [{ command: 'git write-tree', exitCode: 0, stdout: 'a'.repeat(40) }] }
+  // No existing test had a line changed.
+  if (label.startsWith('testedits:')) return { results: [{ command: 'check', exitCode: 0, stdout: `crg-test-edits-checked ${'a'.repeat(40)} 0` }] }
   // The regression gate finds nothing failing, before the fix or after it.
   if (label.startsWith('regress:')) return { runs: [{ command: 'npm test', exitCode: 0, failing: [] }] }
   // Every gate (per-bug `gate:*`, the final `gate`, and `uncommit`) reports green.
