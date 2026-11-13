@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDER_FUNCTION_CAP, sliceTargets, unauditedFunctions, AUDIT_SCHEMA, FINDINGS_SCHEMA }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDER_FUNCTION_CAP, sliceTargets, unauditedFunctions, AUDIT_SCHEMA, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -356,6 +356,94 @@ test('AUDIT_SCHEMA asks for the audit first and reuses the findings rows unchang
   assert.deepEqual(row.required, ['file', 'function', 'intended', 'verdict'])
   assert.deepEqual(row.properties.verdict.enum, ['matches', 'defect'])
   assert.equal(row.properties.intended.description, 'one clause: what the docstring, docs or tests say it does, and which of those you read')
+})
+
+// ---- Discover by unit: listing, ordering, the finder prompt -------------------------
+// discover:'units' gives every function in scope a finder of its own.
+
+const unit = (file, name, start, parent = '') => ({ file, concern: 'backend-logic', name, parent, start, end: start + 5 })
+const namesOf = units => units.map(u => `${u.file}:${H.unitName(u)}`)
+const MAP = [
+  { file: 'src/core.py', concern: 'backend-logic', functions: ['invoke', 'Context.exit'] },
+  { file: 'tests/test_core.py', concern: 'tests', functions: ['test_invoke'] },
+  { file: './src/utils.py', concern: 'backend-logic', functions: ['echo'] },
+  { file: 'src/bare.py', concern: 'security' },
+]
+const LISTED = [
+  unit('src/bare.py', 'late', 50), unit('src/bare.py', 'early', 2),
+  unit('src/utils.py', 'style', 90), unit('src/utils.py', 'ECHO', 200), unit('src/utils.py', 'open_file', 10),
+  unit('src/core.py', 'main', 400), unit('src/core.py', 'exit', 300, 'Context'), unit('src/core.py', 'invoke', 350, 'Command'), unit('src/core.py', 'abort', 5),
+]
+
+test('orderUnits puts map-ranked functions first, in map order, then the rest by file and line', () => {
+  const { kept, dropped } = H.orderUnits(LISTED, MAP, 500)
+  assert.deepEqual(namesOf(kept), [
+    'src/core.py:Command.invoke', 'src/core.py:Context.exit', 'src/utils.py:ECHO',
+    'src/core.py:abort', 'src/core.py:main', 'src/utils.py:open_file', 'src/utils.py:style', 'src/bare.py:early', 'src/bare.py:late',
+  ])
+  assert.deepEqual(dropped, [])
+})
+
+test('orderUnits ranks a method by its bare name or by Parent.name, and same-named methods by line', () => {
+  const targets = [{ file: 'a.py', concern: 'backend-logic', functions: ['Writer.flush', '__init__'] }]
+  const units = [unit('a.py', '__init__', 80, 'Writer'), unit('a.py', 'flush', 120, 'Reader'), unit('a.py', '__init__', 10, 'Reader'), unit('a.py', 'flush', 60, 'Writer')]
+  assert.deepEqual(namesOf(H.orderUnits(units, targets, 500).kept), ['a.py:Writer.flush', 'a.py:Reader.__init__', 'a.py:Writer.__init__', 'a.py:Reader.flush'])
+})
+
+test('orderUnits keeps the first maxUnits and returns the rest as dropped', () => {
+  const { kept, dropped } = H.orderUnits(LISTED, MAP, 4)
+  assert.deepEqual(namesOf(kept), ['src/core.py:Command.invoke', 'src/core.py:Context.exit', 'src/utils.py:ECHO', 'src/core.py:abort'])
+  assert.equal(dropped.length, 5)
+  assert.deepEqual([...kept, ...dropped].map(u => u.start).sort((x, y) => x - y), LISTED.map(u => u.start).sort((x, y) => x - y), 'nothing is lost or duplicated')
+  assert.equal(H.tallyByFile(dropped), 'src/core.py: 1, src/utils.py: 2, src/bare.py: 2')
+  assert.equal(H.orderUnits(LISTED, MAP, 9).dropped.length, 0, 'a cap equal to the list drops nothing')
+})
+
+test('orderUnits returns nothing for nothing listed', () => {
+  assert.deepEqual(H.orderUnits([], MAP, 500), { kept: [], dropped: [] })
+  assert.deepEqual(H.orderUnits(null, MAP, 500), { kept: [], dropped: [] })
+  assert.deepEqual(namesOf(H.orderUnits([unit('x.py', 'b', 9), unit('x.py', 'a', 1)], [], 500).kept), ['x.py:a', 'x.py:b'], 'no map: file order then line')
+})
+
+test('listedUnits keeps only rows in the asked file that are not tests', () => {
+  const target = { file: './src/core.py', concern: 'security', functions: [] }
+  const relay = { total: 5, units: [
+    { name: 'invoke', parent: 'Command', start: 3, end: 9, isTest: false, path: 'src/core.py' },
+    { name: 'main', parent: '', start: 20, end: 30, isTest: false, path: 'src/core.py/' },
+    { name: 'test_invoke', parent: '', start: 1, end: 4, isTest: true, path: 'src/core.py' },
+    { name: 'invoke', parent: '', start: 3, end: 9, isTest: false, path: 'src/core_utils.py' },
+    null,
+  ] }
+  assert.deepEqual(H.listedUnits(target, relay), [
+    { file: './src/core.py', concern: 'security', name: 'invoke', parent: 'Command', start: 3, end: 9 },
+    { file: './src/core.py', concern: 'security', name: 'main', parent: '', start: 20, end: 30 },
+  ])
+  assert.deepEqual(H.listedUnits(target, null), [])
+  assert.deepEqual(H.listedUnits(target, { total: 3 }), [])
+})
+
+test('UNITS_SCHEMA asks for the tool\'s count first, then a row per function', () => {
+  assert.deepEqual(H.UNITS_SCHEMA.required, ['total', 'units'])
+  assert.deepEqual(Object.keys(H.UNITS_SCHEMA.properties), ['total', 'units'])
+  assert.deepEqual(H.UNITS_SCHEMA.properties.units.items.required, ['name', 'parent', 'start', 'end', 'isTest', 'path'])
+  assert.deepEqual(H.DISCOVER_MODES, ['concerns', 'units'])
+  assert.equal(H.MAX_UNITS_DEFAULT, 500)
+})
+
+// The probe's wording, pinned: the eval compares runs of exactly this text.
+const EXPECTED_UNIT_BRIEF = `You are auditing ONE function in the repo at /repo. Change nothing in the repository.
+
+File: src/click/core.py
+Function: Context.exit (lines 120-141)
+
+Read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.
+
+Judge this one function, not its callers or the rest of the file. Return one findings row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "security". List every defect you find, not only the first. If it does what it is meant to do, return no findings. Wrong behaviour only: style, naming, performance and missing tests are not defects. UNTRUSTED-NOTICE`
+
+test('unitBrief emits the pinned unit-finder prompt, byte for byte', () => {
+  const u = { file: 'src/click/core.py', concern: 'backend-logic', name: 'exit', parent: 'Context', start: 120, end: 141 }
+  assert.equal(H.unitBrief(u, 'security', '/repo', 'UNTRUSTED-NOTICE'), EXPECTED_UNIT_BRIEF)
+  assert.ok(H.unitBrief({ ...u, parent: '' }, 'security', '/repo', 'N').includes('\nFunction: exit (lines 120-141)\n'), 'a plain function is named without a parent')
 })
 
 // ---- Verify: the reviewer prompt -------------------------------------------------

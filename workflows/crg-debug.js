@@ -3,11 +3,11 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
-    { title: 'Discover', detail: 'concern-disjoint finders + residual pass; optional loop-until-dry (discoveryRounds>1)' },
+    { title: 'Discover', detail: 'concern-disjoint finders + residual pass; optional loop-until-dry (discoveryRounds>1); or one finder per function (discover:units)' },
     { title: 'Verify', detail: 'two independent reviewers refute/confirm each finding' },
     { title: 'Fix', detail: 'TDD fix waves over file-disjoint bugs, gated by exit codes; commit per validated wave + graph re-ingest (fix=true)' },
   ],
@@ -144,6 +144,53 @@ const unauditedFunctions = (targets, audited) => {
   const judged = new Set((audited || []).map(row => norm(row && row.function)))
   return (targets || []).flatMap(t => t.functions || []).filter(fn => !judged.has(norm(fn)))
 }
+
+// ---- discover by unit ---------------------------------------------------------
+// The opt-in mode (args.discover = 'units'): every function in scope gets a finder of its
+// own, which must run it. A unit is { file, concern, name, parent, start, end }.
+const DISCOVER_MODES = ['concerns', 'units']
+const MAX_UNITS_DEFAULT = 500
+
+const unitName = unit => (unit.parent ? `${unit.parent}.${unit.name}` : unit.name)
+
+// The rows of one lister's relay that the script keeps: in the file it was asked about
+// (a pattern can match a neighbour) and not a test.
+const listedUnits = (target, relay) =>
+  ((relay && relay.units) || [])
+    .filter(row => row && !row.isTest && normPath(row.path) === normPath(target.file))
+    .map(row => ({ file: target.file, concern: target.concern, name: row.name, parent: row.parent || '', start: row.start, end: row.end }))
+
+// Functions the map ranked come first, in map order (file, then the map's own ranking);
+// the rest follow in file order, then by first line. `kept` is what the cap leaves.
+const orderUnits = (units, targets, maxUnits) => {
+  const byFile = [...groupBy(targets, t => normPath(t && t.file) || null)]
+  const fileAt = new Map(byFile.map(([file], i) => [file, i]))
+  const rankedIn = new Map(byFile.map(([file, ts]) => [file, ts.flatMap(t => t.functions || []).map(norm)]))
+  const rankOf = unit => {
+    const ranked = rankedIn.get(normPath(unit.file)) || []
+    const at = [unit.name, unitName(unit)].map(name => ranked.indexOf(norm(name))).filter(i => i >= 0)
+    return at.length ? Math.min(...at) : -1
+  }
+  const rows = (units || []).map(unit => ({ unit, file: fileAt.get(normPath(unit.file)) ?? byFile.length, rank: rankOf(unit) }))
+  const inOrder = (x, y) => x.file - y.file || x.rank - y.rank || x.unit.start - y.unit.start
+  const ordered = [...rows.filter(r => r.rank >= 0).sort(inOrder), ...rows.filter(r => r.rank < 0).sort(inOrder)].map(r => r.unit)
+  return { kept: ordered.slice(0, maxUnits), dropped: ordered.slice(maxUnits) }
+}
+
+// "a.py: 3, b.py: 1" — how many of `rows` fall in each file, in first-seen order.
+const tallyByFile = rows => [...groupBy(rows, row => row.file)].map(([file, group]) => `${file}: ${group.length}`).join(', ')
+
+// The whole prompt one unit finder receives. `untrusted` is the source-is-data notice,
+// passed in to keep the block dependency-free.
+const unitBrief = (unit, concern, repoRoot, untrusted) =>
+  `You are auditing ONE function in the repo at ${repoRoot}. Change nothing in the repository.
+
+File: ${unit.file}
+Function: ${unitName(unit)} (lines ${unit.start}-${unit.end})
+
+Read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.
+
+Judge this one function, not its callers or the rest of the file. Return one findings row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "${concern}". List every defect you find, not only the first. If it does what it is meant to do, return no findings. Wrong behaviour only: style, naming, performance and missing tests are not defects. ${untrusted}`
 
 // ---- verify -------------------------------------------------------------------
 // Phase 3's two pure halves — the reviewer's prompt and the survivor rule — live here so
@@ -379,6 +426,31 @@ const AUDIT_SCHEMA = {
   },
 }
 
+// What a unit lister relays from find_large_functions_tool: the tool's own count FIRST,
+// then one row per result. The script compares the two; the agent only transcribes.
+const UNITS_SCHEMA = {
+  type: 'object',
+  required: ['total', 'units'],
+  properties: {
+    total: { type: 'integer', description: 'the tool\'s total_found' },
+    units: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'parent', 'start', 'end', 'isTest', 'path'],
+        properties: {
+          name: { type: 'string' },
+          parent: { type: 'string', description: 'parent_name, or "" when null' },
+          start: { type: 'integer', description: 'line_start' },
+          end: { type: 'integer', description: 'line_end' },
+          isTest: { type: 'boolean', description: 'is_test' },
+          path: { type: 'string', description: 'relative_path' },
+        },
+      },
+    },
+  },
+}
+
 const VERDICT_SCHEMA = {
   type: 'object',
   required: ['confirmed', 'reason', 'classification'],
@@ -514,6 +586,11 @@ const fix = !!a.fix
 const commitWaves = a.commit !== false
 // Discovery depth. 1 = single pass; >1 = loop-until-dry (re-run finders until a round adds nothing).
 const discoveryRounds = clampRounds(a.discoveryRounds)
+// How Discover fans out. 'concerns' (default) = the concern finders + residual pass.
+// 'units' = list every function in scope and give each its own finder, which RUNS it;
+// maxUnits caps how many, and the run logs what the cap dropped.
+const discover = a.discover ?? 'concerns'
+const maxUnits = a.maxUnits ?? MAX_UNITS_DEFAULT
 // Issue/ticket the user pointed us at. issueContext = the fetched issue body (UNTRUSTED — only
 // ever interpolated through fence()); issueRef = short provenance. Main loop does the gh fetch.
 const issueContext = capText(a.issueContext, 4000)
@@ -550,6 +627,12 @@ if (!isSafeAbs(repoRoot)) {
 }
 if (!methodologyPath) {
   throw new Error('crg-debug workflow requires args.methodologyPath — absolute path to methodology.md (the /crg-debug skill passes ~/.claude/workflows/crg-debug.methodology.md)')
+}
+if (!DISCOVER_MODES.includes(discover)) {
+  throw new Error(`Unknown discover mode ${JSON.stringify(a.discover)} — use 'concerns' (the default) or 'units'`)
+}
+if (!Number.isInteger(maxUnits) || maxUnits < 1) {
+  throw new Error(`Unusable maxUnits ${JSON.stringify(a.maxUnits)} — it must be a positive integer (default ${MAX_UNITS_DEFAULT})`)
 }
 if (fromLedger && !isSafeAbs(fromLedger)) {
   throw new Error(`Unsafe fromLedger ${JSON.stringify(fromLedger)} — must be an absolute path with no '..' segments`)
@@ -759,10 +842,48 @@ const residualBrief = claimed => {
   }`
 }
 
+rawFindings = []
+if (discover === 'units') {
+  // One finder per function instead of per concern. The concern finders, the residual
+  // pass and discoveryRounds are not used; what follows the branch (dedup, Verify) is shared.
+  if (discoveryRounds > 1) log(`discover:'units' is a single pass — discoveryRounds=${discoveryRounds} ignored`)
+  // Each distinct source file, in map order. Tests are not audited, and a target tagged
+  // outside CONCERN_KEYS is dropped as it is above — its findings could not be submitted.
+  const unitTargets = dedupBy(map.targets.filter(t => t.concern !== 'tests' && CONCERN_KEYS.includes(t.concern)), t => normPath(t.file) || null)
+  const relays = await parallel(unitTargets.map(t => () =>
+    tryAgent(
+      `Call the code-graph tool find_large_functions_tool with repo_root=${repoRoot}, min_lines=1, kind="Function", file_path_pattern=${t.file}, limit=1000. Relay its total_found, and one row for EVERY result: name, parent_name (empty string when null), line_start, line_end, is_test, relative_path. Transcribe the tool's output; do not filter, reorder, merge or summarise it, and do not read the file yourself.`,
+      { label: `units:${t.file}`, phase: 'Discover', schema: UNITS_SCHEMA, model },
+    ),
+  ))
+  // Counted, not trusted: a short relay or a pattern that matched another file shows here.
+  const listed = unitTargets.flatMap((t, i) => {
+    if (!relays[i]) {
+      log(`units:${t.file}: returned nothing`)
+      return []
+    }
+    const units = listedUnits(t, relays[i])
+    log(`units:${t.file}: ${units.length} of ${relays[i].total} functions listed`)
+    return units
+  })
+  if (!listed.length) {
+    throw new Error(`Phase 2 (Discover, units) listed no functions — none of the ${unitTargets.length} units:<file> lister(s) relayed a usable row from find_large_functions_tool, so there is nothing to audit.`)
+  }
+  const { kept, dropped } = orderUnits(listed, map.targets, maxUnits)
+  log(`Units: ${listed.length} listed in ${unitTargets.length} file(s) -> ${kept.length} to audit, ${dropped.length} dropped by maxUnits=${maxUnits}${dropped.length ? ` (${tallyByFile(dropped)})` : ''}`)
+  const judged = await parallel(kept.map(unit => () =>
+    tryAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model }),
+  ))
+  const perUnit = kept.map((unit, i) => ({ unit, findings: (judged[i] && judged[i].findings) || [] }))
+  rawFindings = dedupBy(perUnit.flatMap(row => row.findings), bugKeyOf)
+  const raised = perUnit.flatMap(row => row.findings.map(() => row.unit))
+  // Measured, not enforced.
+  log(`Units: ${judged.filter(Boolean).length} judged, ${judged.filter(r => !r).length} returned nothing, ${raised.length} finding(s)${raised.length ? ` (${tallyByFile(raised)})` : ''}`)
+} else {
+// Body left at column 0 for the same reason as the enclosing branches.
 // One round = every concern's finders (one per slice) + the residual pass, in parallel. discoveryRounds=1
 // is a single pass (default). >1 loops until a round adds nothing new (dry) or the cap
 // is hit; rounds after the first are told what's already found and hunt only the misses.
-rawFindings = []
 const seenFindingKeys = new Set()
 for (let round = 1; round <= discoveryRounds; round++) {
   const known = round === 1 ? '' : rawFindings.map(f => `- ${f.file}: ${f.rootCause}`).join('\n')
@@ -796,6 +917,7 @@ for (let round = 1; round <= discoveryRounds; round++) {
   if (discoveryRounds > 1) log(`Discover round ${round}/${discoveryRounds}: +${fresh.length} new (${rawFindings.length} total)`)
   if (fresh.length === 0) break // dry round -> stop
 }
+} // end else — discover:'units' replaced the concern finders
 
 // Seed the queue with baseline build/typecheck failures (each is its own repro).
 for (const bf of baselineFailures) {
