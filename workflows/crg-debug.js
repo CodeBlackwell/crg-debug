@@ -114,11 +114,19 @@ const branchSlug = bugs => {
 // "Fix core.py" was 11 characters against a floor of 12, so any wave that closed bugs in
 // one short-named file stayed out of git. The count carries the length now, and a file
 // whose own name trips the attribution gate (claude_client.py) is left out of the
-// message, not out of the commit.
+// message, not out of the commit. It reads as a person wrote it at any length.
 const waveCommitMessage = bugs => {
   const count = (bugs || []).length
   const files = [...new Set((bugs || []).map(b => shortFile(b.file)).filter(Boolean))]
-  const named = capText(`Fix ${count === 1 ? 'a bug' : `${count} bugs`} in ${files.join(', ')}`, 72)
+  const lead = `Fix ${count === 1 ? 'a bug' : `${count} bugs`} in `
+  // Too many names for a 72-character subject are cut BETWEEN names, never inside one:
+  // as many as fit, then how many are left ("core.py, types.py and 8 more files").
+  const subject = shown => {
+    const rest = files.length - shown
+    return `${lead}${files.slice(0, shown).join(', ')}${rest ? ` and ${rest} more file${rest === 1 ? '' : 's'}` : ''}`
+  }
+  const shown = files.map((_, i) => files.length - i).find(n => subject(n).length <= 72)
+  const named = shown ? subject(shown) : files.length > 1 ? `${lead}${files.length} files` : ''
   if (files.length && commitMessageOk(named)) return named
   return count === 1 ? 'Fix a confirmed bug' : `Fix ${count} confirmed bugs`
 }

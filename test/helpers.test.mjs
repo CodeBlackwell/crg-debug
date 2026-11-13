@@ -185,6 +185,24 @@ test('waveCommitMessage uses only a count and file names, dedupes, and stays wit
   assert.equal(H.commitMessageOk(H.waveCommitMessage(many)), true)
 })
 
+test('waveCommitMessage cuts a long list between file names, and says how many are left', () => {
+  // A live run committed "Fix 20 bugs in types.py, _termui_impl.py, core.py, _compat.py, shell_com".
+  const live = ['types.py', '_termui_impl.py', 'core.py', '_compat.py', 'shell_completion.py', 'parser.py', 'termui.py', 'utils.py', 'decorators.py', 'formatting.py']
+  const bugs = [...live, ...live].map(f => ({ file: `src/click/${f}:1` }))
+  assert.equal(H.waveCommitMessage(bugs), 'Fix 20 bugs in types.py, _termui_impl.py, core.py and 7 more files')
+  assert.equal(H.waveCommitMessage(Array.from({ length: 3 }, (_, i) => ({ file: `${'n'.repeat(26)}${i}.py` }))), `Fix 3 bugs in ${'n'.repeat(26)}0.py and 2 more files`)
+  assert.equal(H.waveCommitMessage([{ file: `${'a'.repeat(30)}.py` }, { file: `${'b'.repeat(30)}.py` }]), `Fix 2 bugs in ${'a'.repeat(30)}.py and 1 more file`)
+  // A single name too long for the subject line is counted, not chopped.
+  assert.equal(H.waveCommitMessage([{ file: `${'z'.repeat(80)}.py` }, { file: 'b.py' }]), 'Fix 2 bugs in 2 files')
+  assert.equal(H.waveCommitMessage([{ file: `${'z'.repeat(80)}.py` }]), 'Fix a confirmed bug')
+  for (let n = 1; n <= 40; n++) {
+    const msg = H.waveCommitMessage(Array.from({ length: n }, (_, i) => ({ file: `dir/module_number_${i}.py` })))
+    assert.ok(msg.length <= 72, msg)
+    assert.match(msg, /^Fix (a bug|\d+ bugs) in (module_number_\d+\.py)(, module_number_\d+\.py)*( and \d+ more files?)?$/, msg)
+    assert.equal(H.commitMessageOk(msg), true)
+  }
+})
+
 test('waveCommitMessage always passes the commit gate, whatever the files are called', () => {
   // A refused message means a validated wave never reaches git. "Fix core.py" was one
   // character short of the gate's floor, so every wave that fixed only core.py stayed out.
