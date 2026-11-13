@@ -33,7 +33,7 @@ const sweep = async ({ answer = () => ({ audited: [], findings: [] }), args = {}
     if (label === 'setup') return { graphStats: '6 files', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (label === 'map') return { overview: 'o', targets: TARGETS }
     if (label.startsWith('find:')) return answer(label)
-    if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'r', classification: 'real-bug' }
+    if (opts.phase === 'Verify' && opts.schema) return { verdict: { confirmed: true, reason: 'r', classification: 'real-bug', reproduced: true, crash: true } }
     return 'written'
   }
   const res = await new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC)(
@@ -102,7 +102,7 @@ test('the script logs how many ranked functions each finder gave a verdict', asy
     'find:security: 0 of 1 ranked functions given a verdict',
     'find:residual: 0 of 0 ranked functions given a verdict',
   ])
-  assert.deepEqual(res.confirmedBugs, [FINDING], 'downstream still reads findings only, and a dead or lazy finder gates nothing')
+  assert.deepEqual(res.confirmedBugs.map(({ decidedBy, reviews, citations, ...finding }) => finding), [FINDING], 'downstream still reads findings only, and a dead or lazy finder gates nothing')
 })
 
 test('a later round keeps the slice number and puts the round suffix last', async () => {
