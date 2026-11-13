@@ -349,8 +349,9 @@ test('a clean run takes a baseline, checks each wave before its commit, and repo
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO })
   assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'regress:wave1', 'commit:wave', 'gate'])
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
+  assert.equal(result.fix.halted, undefined)
   assert.deepEqual(result.fix.regressionGate, {
-    baselineReported: true, baselineFailures: 0, takenBack: 0, halted: undefined,
+    baselineReported: true, baselineFailures: 0, takenBack: 0,
     waves: [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }],
   })
   assert.match(logs.at(-1), /regression gate: 0 test\(s\) failing before the first fix, 0 fix\(es\) taken back$/)
@@ -497,7 +498,7 @@ test('a restore that is not confirmed stops the Fix phase and says which files t
     assert.deepEqual(labels.slice(-3), ['blame:wave1', 'restore:wave1', 'gate'], 'no recheck, no commit, no second wave, no coupled attempt')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.commits, [])
-    assert.equal(result.fix.regressionGate.halted, 'the restore after wave 1 was not confirmed')
+    assert.equal(result.fix.halted, 'the restore after wave 1 was not confirmed')
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), [...Array(4).fill('the restore after wave 1 was not confirmed'), 'not attempted — the restore after wave 1 was not confirmed'])
     assert.ok(logs.some(l => /restore NOT confirmed — src\/alpha\.py, tests\/test_alpha\.py may still hold an edit/.test(l)))
   }
@@ -565,7 +566,7 @@ test('a wave with no restore point is not started', async () => {
     assert.deepEqual(labels, ['ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'gate'], 'no fixer may edit a tree that cannot be put back')
     assert.deepEqual(result.fix.fixed, [])
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(5).fill('not attempted — no restore point could be taken before wave 1'))
-    assert.equal(result.fix.regressionGate.halted, 'no restore point could be taken before wave 1')
+    assert.equal(result.fix.halted, 'no restore point could be taken before wave 1')
     assert.ok(logs.some(l => l.startsWith('Fix: no restore point could be taken before wave 1')))
   }
 })
