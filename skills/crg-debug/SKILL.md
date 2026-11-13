@@ -88,3 +88,13 @@ Relay the ledger: confirmed bugs by severity, deferred (intentional), rejected f
 fix-wave outcome (fixed / unfixed / needs-human), the fix branch + wave commits, and the final gate
 status. Nothing was pushed. Offer to merge the fix branch back (or run `/cpdv`), and note any
 leftover uncommitted work (a failed or opted-out commit) still sitting in the tree.
+
+**Fixes that need a decision.** End the report with every row of `fix.needsDecision`. These are
+fixes that passed their own test but could only stand by changing or breaking a test that already
+existed. The Workflow never changes an existing test on its own: it took each of these fixes back
+and saved it as a commit on no branch. For each row show the bugs, the `reason`, the existing
+test's changed lines (`existingTests[].changed`, old and new; when that is `null`, read them with
+`git show <ref> -- <path>`), the `failingTests`, and the `apply` command exactly as given. Show
+`fixerClaim` under the words "the fix agent's claim" — it is the agent's stated ground, not a
+checked fact. Do not run `apply` yourself and do not count these as fixed or as unfixed: the
+person decides whether the test or the fix is wrong.
