@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. A fix taken back for either reason gets one retry; the second time it is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, or a newly failing test; a check that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way; \'green\' needs at least one check that was green before and after, otherwise the verdict is \'not checked\'. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. After a take-back every bug of that fixer is attempted alone, one bug per agent, and only an attempt a bug had to itself counts against it. A bug whose own attempt is taken back gets one retry; the second time its fix is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, or a newly failing test; a check that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way; \'green\' needs at least one check that was green before and after, otherwise the verdict is \'not checked\'. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -536,6 +536,7 @@ const changedTestLines = (relay, commit) => {
     omitted: Math.max(0, f.old.length - MAX_CHANGED_LINES) + Math.max(0, f.new.length - MAX_CHANGED_LINES),
   }))
 }
+const NO_GROUND = 'none given — the fix agent stated no ground for the change'
 // One needsDecision row. Everything in it is the script's except fixerClaim, which is the
 // fix agent's own stated ground and is labelled as a claim.
 const decisionRow = (root, wave, bugs, file, strike, proposal, changed, ground) => ({
@@ -545,7 +546,7 @@ const decisionRow = (root, wave, bugs, file, strike, proposal, changed, ground) 
   reason: strikeReason(strike),
   existingTests: strike.files.map(f => ({ path: f.path, removed: f.removed, changed: (changed || []).find(c => c.path === f.path) || null })),
   failingTests: strike.tests.map(t => t.id),
-  fixerClaim: capText(ground, 1500),
+  fixerClaim: capText(ground, 1500) || NO_GROUND,
   ref: proposal.ref,
   commit: proposal.commit,
   apply: `git -C ${shellQuote(root)} cherry-pick ${proposal.ref}`,
@@ -1802,6 +1803,14 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
   const MAX_BUGS_PER_FIX = 4 // one agent's load cap; a denser file sends extra chunks to later waves
   let waveNum = 0
   let stalled = null // set to the open set when a wave stalls (closed 0 / thrash)
+  // AFTER A TAKE-BACK, ONE BUG PER AGENT. One fixer holds every bug of a file, so when the
+  // script took a fixer back for what one of its fixes did to an existing test, the others
+  // went with it — and the second time all of them ended in one proposal, although only
+  // some needed a decision (a live run: 5 listed, 2 real). So every bug of a taken-back
+  // fixer is from then on attempted alone, and a strike counts only from an attempt the
+  // bug had to itself. A file still has one fixer per wave, so its bugs take turns.
+  const solo = new Set() // bugIds owed single-bug attempts
+  let waveCap = MAX_WAVES // a wave that holds a single-bug retry does not use the cap up
 
   // Regression baseline — once, before the first fix is applied. Which blast-radius tests
   // already fail, and the exact commands that showed it. A baseline that did not report
@@ -1911,21 +1920,26 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
     return { ...out, whole: left ? regressionReason(left) : REGRESSION_UNREPORTED }
   }
 
-  while (queue.length && waveNum < MAX_WAVES) {
+  while (queue.length && waveNum < waveCap) {
     waveNum++
     // One agent exclusively owns a file's chunk this wave. A file with more than
     // MAX_BUGS_PER_FIX bugs fixes one chunk now and DEFERS the rest to the next wave
     // (deferral is normal progress, NOT thrash — only failed retries trip that guard).
+    // A file with a bug owed a single-bug attempt gives this wave to that bug alone.
     const byFile = groupBy(queue, bugFile)
     const groups = [] // [file, chunk[]] — at most one chunk per file this wave
     const attempted = [] // bugs actually sent to an agent this wave
     const deferredChunks = [] // extra bugs in a dense file -> next wave, untouched
     for (const [file, bugs] of byFile) {
-      const chunk = bugs.slice(0, MAX_BUGS_PER_FIX)
+      const owedAlone = bugs.find(b => solo.has(b.bugId))
+      const chunk = owedAlone ? [owedAlone] : bugs.slice(0, MAX_BUGS_PER_FIX)
       groups.push([file, chunk])
       attempted.push(...chunk)
-      deferredChunks.push(...bugs.slice(MAX_BUGS_PER_FIX))
+      deferredChunks.push(...bugs.filter(b => !chunk.includes(b)))
     }
+    // Single-bug retries are bounded on their own — each one closes its bug, answers it, or
+    // spends its one strike — so they do not count against the cap on ordinary waves.
+    if (attempted.some(b => solo.has(b.bugId))) waveCap++
 
     const waveTag = `wave ${waveNum}`
     const snapshot = await restorePoint(waveTag)
@@ -1994,7 +2008,15 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
     // were there. A fixer that changed or removed a line of one is taken back whole and
     // gets one retry; the second time its change is saved as a proposal (strikeOrPropose).
     const filesOf = bugs => waveAllowlist(bugs, fixById, supportById, repoRoot)
+    const backNow = new Set() // bugs whose fixer the script takes back in this wave
     const answer = async ([file, bugs], culprits, strike) => {
+      for (const b of bugs.filter(b => !settled.has(b.bugId))) {
+        solo.add(b.bugId)
+        backNow.add(b.bugId)
+      }
+      // A fixer that held several bugs: nobody's own attempt, so nobody's strike and no
+      // proposal. Each bug now gets an attempt to itself, and that one counts.
+      if (bugs.length > 1) return
       const ground = ((results.find(x => x.bugs === bugs) || {}).r || {}).ground
       const done = await strikeOrPropose(waveTag, waveNum, file, culprits.filter(b => !settled.has(b.bugId)), strike, filesOf(bugs), snapshot, ground)
       done.forEach(b => settled.add(b.bugId))
@@ -2091,12 +2113,22 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
     // Fixed-point guard: a wave that closes nothing means the open bugs resist per-bug
     // isolated fixing -> stop the loop; the coupled fallback below takes them.
     // (A wave the script took a fixer back in did not stall: those bugs are owed their retry.)
-    if (closed === 0 && !tookForTests && !verdict.taken.length) { stalled = nextRaw; break }
+    const stall = closed === 0 && !tookForTests && !verdict.taken.length
     // Thrash guard: ONLY a bug attempted-and-failed (requeued) that returns again is
-    // thrash. Deferred chunks were never attempted, so they never trip this.
-    const thrash = requeued.find(b => seenKeys.has(waveKey(b)))
-    requeued.forEach(b => seenKeys.add(waveKey(b)))
-    if (thrash) { stalled = nextRaw; break }
+    // thrash. Deferred chunks were never attempted, so they never trip this — and neither
+    // does a bug the script took back: its own test did not fail, its fixer was undone.
+    const failed = requeued.filter(b => !backNow.has(b.bugId))
+    const thrash = failed.find(b => seenKeys.has(waveKey(b)))
+    failed.forEach(b => seenKeys.add(waveKey(b)))
+    if (stall || thrash) {
+      // The coupled attempt is for bugs that resist being fixed alone. A bug still owed its
+      // single-bug attempt has not had the chance to: the waves go on for those.
+      const waiting = nextRaw.filter(b => solo.has(b.bugId) && !failed.includes(b))
+      stalled = [...(stalled || []), ...nextRaw.filter(b => !waiting.includes(b))]
+      if (!waiting.length) break
+      queue = waiting
+      continue
+    }
     queue = nextRaw
   }
 
@@ -2106,7 +2138,7 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
   // attempt and gate on that shared test. A stalled wave is itself the coupling detector —
   // no prediction needed. One attempt; a second only for bugs whose first was taken back
   // for an existing test, and that second one answers every bug it holds.
-  let coupledOpen = stalled || (waveNum >= MAX_WAVES ? queue : [])
+  let coupledOpen = stalled || (waveNum >= waveCap ? queue : [])
   for (let attempt = 1; coupledOpen.length && attempt <= 2; attempt++) {
     const stillOpen = coupledOpen
     coupledOpen = []

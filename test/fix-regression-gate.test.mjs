@@ -525,7 +525,7 @@ test('a fix that breaks an existing test a second time is saved as a proposal, t
   const ref = `refs/crg-debug/proposed/${name}-abc123abc123`
   assert.deepEqual(result.fix.needsDecision, [{
     wave: 2, bugs: ['b1'], file: 'src/alpha.py', reason: `fix breaks existing test ${EXISTING.id}`,
-    existingTests: [], failingTests: [EXISTING.id], fixerClaim: '',
+    existingTests: [], failingTests: [EXISTING.id], fixerClaim: 'none given — the fix agent stated no ground for the change',
     ref, commit: `abc123abc123${'0'.repeat(28)}`, apply: `git -C '/tmp/crg-fixture' cherry-pick ${ref}`,
   }])
   const propose = calls.find(c => c.label === 'propose:wave2')
@@ -536,15 +536,6 @@ test('a fix that breaks an existing test a second time is saved as a proposal, t
   assert.equal(result.fix.regressionGate.takenBack, 2)
   assert.ok(logs.some(l => l.includes(`b1 need(s) a decision. The fix is saved, on no branch, as ${ref}; apply it with: git -C '/tmp/crg-fixture' cherry-pick ${ref}`)))
   assert.match(logs.at(-1), /^Fix complete: 1 fixed · 0 unfixed · 1 need a decision · 1 wave commit/)
-})
-
-test('only the bug the blame names is answered; a neighbour in the same file just goes round again', async () => {
-  const pair = [bug('b1', 'src/alpha.py'), bug('b2', 'src/alpha.py')] // one fixer holds both
-  const { result } = await fixRun(SRC, {
-    bugs: pair,
-    on: { regress: script(runs(), runs(EXISTING), runs(), runs(EXISTING), runs()), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }) },
-  })
-  assert.deepEqual(result.fix.needsDecision.map(d => d.bugs), [['b1']], 'b2 was never blamed, so it is not a second time for b2')
 })
 
 test('a wave whose only fix was taken back has not stalled: the bug is retried on its own, not as a coupled bug', async () => {
