@@ -18,7 +18,7 @@ test('a wave whose only file is core.py commits', async () => {
   assert.ok(commitsOf(calls)[0].prompt.includes('commit -m "Fix a bug in core.py"'))
   assert.deepEqual(result.fix.commits.map(c => [c.wave, c.message, c.bugs]), [['wave 1', 'Fix a bug in core.py', ['b1']]])
   assert.deepEqual(result.fix.uncommitted, [])
-  assert.match(logs.at(-1), /1 fixed · 0 unfixed · 1 wave commit\(s\) on crg-debug\/fix-abc123 \(never pushed\) · final gate/)
+  assert.match(logs.at(-1), /1 fixed · 0 unfixed · 0 need a decision · 1 wave commit\(s\) on crg-debug\/fix-abc123 \(never pushed\) · final gate/)
 })
 
 test('a commit relay that dies is neither a failed commit nor a successful one, and nothing is built on it', async () => {
