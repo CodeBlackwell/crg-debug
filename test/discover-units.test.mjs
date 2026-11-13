@@ -34,8 +34,7 @@ const pinTranscript = async (source, args, sha) => {
     if (label === 'map') return { overview: 'o', targets }
     if (label.startsWith('find:')) return { audited: [{ file: 'f', function: 'core_0', intended: 'i', verdict: 'matches' }], findings: [finding(label)] }
     if (label === 'dedup') return { duplicateGroups: [[0, 1]] }
-    // A security finding is not reproduced, a residual one is reproduced with nothing to stand on, the rest crash.
-    if (opts.phase === 'Verify' && opts.schema) return { verdict: { confirmed: !label.includes('security'), reason: `${label} reason`, classification: label.includes('residual') ? 'intentional' : 'real-bug', reproduced: !label.includes('security'), crash: !/security|residual/.test(label) } }
+    if (opts.phase === 'Verify' && opts.schema) return { confirmed: !label.includes('security'), reason: `${label} reason`, classification: label.includes('residual') ? 'intentional' : 'real-bug' }
     return 'written'
   }
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -46,8 +45,6 @@ const pinTranscript = async (source, args, sha) => {
 // <<< pin-harness
 
 const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newline', issueRef: 'gh#12', discoveryRounds: 2, model: 'sonnet' }
-// Re-pinned when Verify began deciding from evidence: the reviewer lines, the ledger write, the
-// log and the return value moved. Every Discover line (setup, map, find, dedup) is as it was.
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -58,19 +55,19 @@ const PINNED = {
     'find:tests 507a5f26dac7',
     'find:residual 126f61178927',
     'dedup 8a37d89105a6',
-    'refute:find_backend_logic_.py c5640a4bd57e',
-    'confirm:find_backend_logic_.py 0f7ca7e256be',
-    'refute:find_security.py 824d63e28501',
-    'confirm:find_security.py 0f8f4228ac0d',
-    'refute:find_tests.py c55ce802e4fe',
-    'confirm:find_tests.py a5e68f5fced7',
-    'refute:find_residual.py e6d2debb4991',
-    'confirm:find_residual.py 8043051ca8a6',
-    'refute:z.py 1c766a4c935f',
-    'confirm:z.py f056b0d9abd1',
-    'persist 3a516160cc69',
-    'logs b08f1f462fef',
-    'return 147806561628',
+    'refute:find_backend_logic_.py c829645f37d0',
+    'confirm:find_backend_logic_.py 9ab57f77950e',
+    'refute:find_security.py c121a237c1c1',
+    'confirm:find_security.py 73aa913f96aa',
+    'refute:find_tests.py 4084e84e9390',
+    'confirm:find_tests.py 49d4484543f6',
+    'refute:find_residual.py 480cb917ecf7',
+    'confirm:find_residual.py ac06bda651f2',
+    'refute:z.py db2c9964acd7',
+    'confirm:z.py dc045b6c9657',
+    'persist 27d9e50a2d40',
+    'logs b2c32a3098cb',
+    'return d371da3de4de',
   ],
   rich: [
     'setup 90104e291d00',
@@ -86,25 +83,25 @@ const PINNED = {
     'find:tests#2 d190f90dfb34',
     'find:residual#2 47dfe715393b',
     'dedup 11dabb9ca674',
-    'refute:find_backend_logic_.py f01ff3ef5600',
-    'confirm:find_backend_logic_.py ea4b4afa88f0',
-    'refute:find_security.py b3a0717a328b',
-    'confirm:find_security.py 274629b41808',
-    'refute:find_tests.py 75e647571b17',
-    'confirm:find_tests.py 3386fdfead8d',
-    'refute:find_residual.py bea54e4dd562',
-    'confirm:find_residual.py da118d5499a2',
-    'refute:find_security_.py c926261d4602',
-    'confirm:find_security_.py a975ea813ecf',
-    'refute:find_tests_.py 443d28db05e1',
-    'confirm:find_tests_.py f65189fe8cd4',
-    'refute:find_residual_.py b99179b991b8',
-    'confirm:find_residual_.py f1af485e5391',
-    'refute:z.py 63424ab7785d',
-    'confirm:z.py 2ad36d34ff6b',
-    'persist bc2f384e89f0',
-    'logs 9f23a9b0f6d7',
-    'return 91fdc19548e4',
+    'refute:find_backend_logic_.py b632e478d611',
+    'confirm:find_backend_logic_.py 9ddabe5e5843',
+    'refute:find_security.py a0ebf7e05b46',
+    'confirm:find_security.py 3f0c1268a706',
+    'refute:find_tests.py 2ee7f8bddf2f',
+    'confirm:find_tests.py 6b3211a026f8',
+    'refute:find_residual.py 26191b5fd25e',
+    'confirm:find_residual.py 982c8da4a10a',
+    'refute:find_security_.py 838223f13f24',
+    'confirm:find_security_.py 39f40128927a',
+    'refute:find_tests_.py 946d7956454b',
+    'confirm:find_tests_.py 1ad12615dda1',
+    'refute:find_residual_.py e64c73ef38d5',
+    'confirm:find_residual_.py 4936854aef5b',
+    'refute:z.py 15d8818032f8',
+    'confirm:z.py 95c83502b9c2',
+    'persist b1aaf48b2f18',
+    'logs 262e32d7f1a6',
+    'return 0870f64d32db',
   ],
 }
 
@@ -151,7 +148,7 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
       const rows = findings(label)
       return rows === null ? null : { findings: rows }
     }
-    if (opts.phase === 'Verify' && opts.schema) return { verdict: { confirmed: true, reason: 'r', classification: 'real-bug', reproduced: true, crash: true } }
+    if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'r', classification: 'real-bug' }
     return 'written'
   }
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC.replace(/^export\s+const\s+meta/m, 'const meta'))

@@ -178,7 +178,7 @@ const sweep = async (args, status) => {
     if (label === 'map') return { overview: 'o', targets: [{ file: 'src/core.py', concern: 'backend-logic', functions: ['f'] }] }
     if (label.startsWith('find:')) return { audited: [], findings: [{ file: 'src/core.py:7', concern: 'backend-logic', symptom: `${label} symptom`, rootCause: `${label} root`, severity: 'High', whyRepro: 'in -> out', confidence: 'high' }] }
     if (label === 'dedup') return { duplicateGroups: [] }
-    if (opts.phase === 'Verify' && opts.schema) return { verdict: { confirmed: true, reason: 'reproduced', classification: 'real-bug', reproduced: true, crash: true } }
+    if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'reproduced', classification: 'real-bug' }
     return 'written'
   }
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
