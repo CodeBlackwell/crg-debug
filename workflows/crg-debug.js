@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is restored to HEAD before anything commits — requeued once with the failing test in its brief, then left unfixed (\'fix breaks existing test <id>\'); a gate that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is restored to HEAD before anything commits — requeued once with the failing test in its brief, then left unfixed (\'fix breaks existing test <id>\'); a gate that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -108,11 +108,19 @@ const branchSlug = bugs => {
   for (const ch of (bugs || []).map(b => `${b.file}::${b.rootCause}`).sort().join('|')) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0
   return h.toString(36)
 }
-// Plain, human-sounding message built ONLY from file names — bug prose (which may
-// legitimately mention CLAUDE.md etc.) never enters it, so commitMessageOk holds.
+// Plain, human-sounding message built ONLY from a count and file names — bug prose (which
+// may legitimately mention CLAUDE.md etc.) never enters it. It must ALWAYS pass
+// commitMessageOk, because a refused message means a validated wave is never committed:
+// "Fix core.py" was 11 characters against a floor of 12, so any wave that closed bugs in
+// one short-named file stayed out of git. The count carries the length now, and a file
+// whose own name trips the attribution gate (claude_client.py) is left out of the
+// message, not out of the commit.
 const waveCommitMessage = bugs => {
+  const count = (bugs || []).length
   const files = [...new Set((bugs || []).map(b => shortFile(b.file)).filter(Boolean))]
-  return capText(`Fix ${files.join(', ')}`, 72)
+  const named = capText(`Fix ${count === 1 ? 'a bug' : `${count} bugs`} in ${files.join(', ')}`, 72)
+  if (files.length && commitMessageOk(named)) return named
+  return count === 1 ? 'Fix a confirmed bug' : `Fix ${count} confirmed bugs`
 }
 
 // ---- discover -----------------------------------------------------------------
@@ -1399,24 +1407,34 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   // Commit one validated wave: only the closed bugs' own files (source + test) by
   // explicit path, then verify what landed against that allowlist and the
   // no-attribution message gate — a bad commit is un-committed, the work stays in tree.
+  // A wave that should have committed and is not KNOWN to be in a commit is never silent:
+  // it is logged and returned, with its bugs, as `uncommitted`. landed:false = the work is
+  // in the tree and in no commit. landed:'unknown' = nobody can say — a commit relay that
+  // died may have committed first, so that is neither a failed commit nor a successful one.
+  const uncommitted = []
   const commitWave = async (closedNow, fixById, tag, supportById) => {
     if (!commitEnabled || !closedNow.length) return
+    const bugs = closedNow.map(b => b.bugId)
+    const hold = (landed, reason) => {
+      uncommitted.push({ wave: tag, bugs, landed, reason })
+      log(`Fix ${tag}: ${reason}`)
+    }
     const allow = waveAllowlist(closedNow, fixById, supportById, repoRoot)
     const message = waveCommitMessage(closedNow)
-    if (!allow.length || !commitMessageOk(message)) return
+    if (!allow.length) return hold(false, 'not committed — no file was recorded for the closed bugs; work stays in tree')
+    if (!commitMessageOk(message)) return hold(false, `not committed — the composed message ${JSON.stringify(message)} was refused; work stays in tree`)
     const c = await commitAgent(allow, message)
-    const landed = c && c.commitHash && commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)
-    if (landed) {
-      commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles })
-      log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${String(c.commitHash).slice(0, 9)} · graph re-ingested`)
-    } else if (c && c.commitHash) {
-      const undone = uncommitOk(await uncommitAgent())
-      log(undone
-        ? `Fix ${tag}: commit rejected (stray files vs allowlist) — un-committed, work stays in tree`
-        : `Fix ${tag}: commit rejected (stray files vs allowlist) AND the un-commit was not confirmed — ${String(c.commitHash).slice(0, 9)} may still be on the run branch`)
-    } else {
-      log(`Fix ${tag}: commit failed — work stays in tree`)
+    if (!c) return hold('unknown', `the commit relay did not report — a commit may have landed unverified${fixBranch ? ` on ${fixBranch}` : ''}; check git log before trusting the branch`)
+    const hash = String(c.commitHash || '').slice(0, 9)
+    if (hash && commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)) {
+      commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles, bugs })
+      log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${hash} · graph re-ingested`)
+      return
     }
+    if (!hash) return hold(false, 'commit failed — work stays in tree')
+    return uncommitOk(await uncommitAgent())
+      ? hold(false, 'commit rejected (stray files vs allowlist) — un-committed, work stays in tree')
+      : hold('unknown', `commit rejected (stray files vs allowlist) AND the un-commit was not confirmed — ${hash} may still be on the run branch`)
   }
 
   const seenKeys = new Set()
@@ -1674,8 +1692,8 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   const finalGate = await gateAgent([...touchedFiles])
   const finalResults = (finalGate && finalGate.results) || []
   const finalClean = allGreen(finalGate)
-  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, finalGate: { clean: finalClean, results: finalResults }, regressionGate: { ...regression, halted: halted || undefined } }
-  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed) · final gate ${finalClean ? 'green' : 'RED'} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back`)
+  fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, uncommitted, finalGate: { clean: finalClean, results: finalResults }, regressionGate: { ...regression, halted: halted || undefined } }
+  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed)${uncommitted.length ? ` · ${uncommitted.length} wave(s) NOT known to be committed` : ''} · final gate ${finalClean ? 'green' : 'RED'} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back`)
 }
 
 // ---- return -------------------------------------------------------------------

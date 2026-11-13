@@ -158,6 +158,8 @@ test('both regression schemas submit a single property', () => {
 // A fix-from-ledger run over `bugs`. Every agent has a sensible default answer; `on` maps
 // the first segment of a label (fix, gate, regress, blame, restore, commit…) to a handler
 // that may answer instead — return undefined to fall through, null to play dead, or throw.
+// The block is self-contained: fix-wave-commit.test.mjs evaluates it too, because a shared
+// module anywhere under test/ would be run by `node --test` as a test of its own.
 // >>> fix-harness
 const fixRun = async (source, { bugs, args = {}, on = {} }) => {
   const fileOf = b => b.file.split(':')[0]
@@ -233,6 +235,8 @@ const names = bugs => bugs.map(b => b.bugId)
 // PINNED was produced by running the harness above over the script as it stood before the
 // regression gate (commit 6b6b8d7). A clean gate must add its own agents and change
 // nothing any other agent is asked, in order — re-pin only for a change that means to.
+// Re-pinned once since: the three commit:wave lines moved when the wave commit message
+// gained its bug count ("Fix a bug in core.py"); every other line is 6b6b8d7's.
 const PINNED = {
   two: [
     'ingest-ledger d5d30dc0ee06',
@@ -241,7 +245,7 @@ const PINNED = {
     'fix:bravo.py 88b62555c23d',
     'gate:alpha.py c4a75d839022',
     'gate:bravo.py 675eb1af41ab',
-    'commit:wave 1422e08a1cf0',
+    'commit:wave ba51438170a9',
     'gate 2451bb1b6be4',
   ],
   busy: [
@@ -254,11 +258,11 @@ const PINNED = {
     'gate:alpha.py f3d457292a95',
     'gate:alpha.py a945067a9f5e',
     'gate:bravo.py e1397314abe4',
-    'commit:wave eb2551921b30',
+    'commit:wave ee47d0cf5a4f',
     'fix:alpha.py 3f1e3c6c9767',
     'gate:alpha.py 3a4d9c8155d1',
     'gate:alpha.py f3d457292a95',
-    'commit:wave 55696a2756e6',
+    'commit:wave 204ee0303cb4',
     'fix:coupled ad532a83e120',
     'gate:alpha.py fdb94e5ea4dc',
     'gate a26e159ad3ac',

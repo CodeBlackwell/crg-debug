@@ -171,17 +171,35 @@ test('branchSlug is deterministic and order-insensitive over the bug set', () =>
   assert.match(H.branchSlug(bugs), /^[a-z0-9]+$/)
 })
 
-test('waveCommitMessage uses only file names, dedupes, and stays within 72 chars', () => {
+test('waveCommitMessage uses only a count and file names, dedupes, and stays within 72 chars', () => {
   const bugs = [
     { file: 'src/a.py:12', rootCause: 'mentions Claude and CLAUDE.md' },
     { file: 'src/a.py:80', rootCause: 'x' },
     { file: 'src/b.ts', rootCause: 'y' },
   ]
   const msg = H.waveCommitMessage(bugs)
-  assert.equal(msg, 'Fix a.py, b.ts')
+  assert.equal(msg, 'Fix 3 bugs in a.py, b.ts')
   assert.equal(H.commitMessageOk(msg), true)
   const many = Array.from({ length: 30 }, (_, i) => ({ file: `dir/file-${i}-long-name.py` }))
   assert.ok(H.waveCommitMessage(many).length <= 72)
+  assert.equal(H.commitMessageOk(H.waveCommitMessage(many)), true)
+})
+
+test('waveCommitMessage always passes the commit gate, whatever the files are called', () => {
+  // A refused message means a validated wave never reaches git. "Fix core.py" was one
+  // character short of the gate's floor, so every wave that fixed only core.py stayed out.
+  assert.equal(H.waveCommitMessage([{ file: 'src/click/core.py:2210' }]), 'Fix a bug in core.py')
+  assert.equal(H.waveCommitMessage([{ file: 'a' }, { file: 'a' }]), 'Fix 2 bugs in a')
+  // A file whose own name trips the attribution gate is left out of the message.
+  assert.equal(H.waveCommitMessage([{ file: 'sdk/claude_client.py:4' }]), 'Fix a confirmed bug')
+  assert.equal(H.waveCommitMessage([{ file: 'CLAUDE.md' }, { file: 'x.py' }]), 'Fix 2 confirmed bugs')
+  assert.equal(H.waveCommitMessage([{ file: '' }]), 'Fix a confirmed bug')
+  const names = ['a', 'x.c', 'core.py', 'claude.py', 'anthropic_sdk.ts', '', 'co-authored-by.txt', 'generated with love.md', 'z'.repeat(200)]
+  for (const one of names) for (const two of names) {
+    for (const bugs of [[{ file: one }], [{ file: one }, { file: two }]]) {
+      assert.equal(H.commitMessageOk(H.waveCommitMessage(bugs)), true, JSON.stringify(bugs))
+    }
+  }
 })
 
 // ---- waveAllowlist --------------------------------------------------------------

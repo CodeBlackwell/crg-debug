@@ -71,7 +71,8 @@ test('a throwing commit agent leaves the work in the tree instead of killing the
   const res = await runWorkflow({ args: fixArgs, agent: stubAgent('commit:wave'), parallel, log: m => lines.push(m) })
   assert.equal(res.fix.fixed.length, 1)
   assert.deepEqual(res.fix.commits, [], 'a failed commit records nothing')
-  assert.ok(lines.some(l => /commit failed — work stays in tree/.test(l)), 'the documented commit-failure branch must be reachable')
+  assert.ok(lines.some(l => /the commit relay did not report — a commit may have landed unverified on crg-debug\/fix-abc123/.test(l)), 'a relay that died is not a failed commit: it may have committed first')
+  assert.deepEqual(res.fix.uncommitted.map(u => [u.bugs, u.landed]), [[['b1'], 'unknown']], 'and the caller is told which bugs are in doubt')
   assert.equal(res.fix.finalGate.clean, true, 'the run continues to the final gate')
 })
 
