@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { bugKeyOf as ledgerKeyOf } from '../lib/crg-debug.ledger-slice.mjs'
 
@@ -11,7 +12,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDER_FUNCTION_CAP, sliceTargets, unauditedFunctions, AUDIT_SCHEMA, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, REPO_PRECEDENT_CONTRACT, REPO_ONLY_EVIDENCE_RULE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDER_FUNCTION_CAP, sliceTargets, unauditedFunctions, AUDIT_SCHEMA, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -501,10 +502,11 @@ whyRepro: w
 UNTRUSTED>>>
 
 A candidate is CONFIRMED (confirmed=true) ONLY if ALL THREE hold:
-1. It violates a REAL contract — a type/shape requirement, an API precondition, a documented behavior, a test, or a spec. A style choice, a redundant-but-correct computation, dead code, or "this would read better as X" is NOT a contract and NOT a bug.
+1. It violates a REAL contract — a type/shape requirement, an API precondition, a documented behavior, a test, or a spec. How this repo itself handles the same case elsewhere — the base-class method, a sibling branch of the same function, a neighboring parameter — is also a contract when the cited code gives a different result for that case. A style choice, a redundant-but-correct computation, dead code, or "this would read better as X" is NOT a contract and NOT a bug.
 2. You can state a CONCRETE input and the SPECIFIC wrong output or exact error it produces, derived from the code you just read — not a hypothetical "could"/"might".
 3. The code actually REACHES that bad state at runtime: no upstream cast, guard, default, or sanitization prevents it.
 If the current code produces CORRECT output (just not how you'd write it), confirmed=false. If you cannot reproduce the violation from the code, confirmed=false. When in doubt, confirmed=false.
+What you remember of this project from outside this repo (its upstream, a released version of it) is NOT evidence, and neither is how long a behavior has existed: do not cite either, to confirm or to refuse. Evidence of intent has to be in this repo.
 
 Classify real-bug vs intentional per /m/METH.md: "intentional" requires POSITIVE evidence (doc/comment/test/naming). A security control that fails OPEN on missing/wrong config is NEVER intentional — it is a real bug.
 UNTRUSTED-NOTICE`
@@ -520,6 +522,39 @@ test('reviewerBrief differs between the two stances only in its opening line', (
     'You are independently trying to REPRODUCE this candidate bug from the code. Trace the concrete failing input to the specific wrong output yourself. If you cannot reproduce it from the code, say so (confirmed=false).',
   )
   assert.equal(reproduce, EXPECTED_REFUTE_BRIEF.replace(H.REFUTE_STANCE, H.REPRODUCE_STANCE))
+})
+
+// ---- Verify: the repo is the only witness ------------------------------------------
+// Reviewers ruled on what they remembered of the upstream project, both ways for the same
+// lines. The brief takes that ground away and gives one in the repo: its own handling of the
+// same case elsewhere. Two sentences, the same for both stances, on every kind of run.
+
+const PRECEDENT = 'How this repo itself handles the same case elsewhere — the base-class method, a sibling branch of the same function, a neighboring parameter — is also a contract when the cited code gives a different result for that case.'
+const WITNESS = 'What you remember of this project from outside this repo (its upstream, a released version of it) is NOT evidence, and neither is how long a behavior has existed: do not cite either, to confirm or to refuse. Evidence of intent has to be in this repo.'
+
+test('both evidence sentences reach both reviewers, on a sweep and on an issue-directed run', () => {
+  assert.equal(H.REPO_PRECEDENT_CONTRACT, PRECEDENT)
+  assert.equal(H.REPO_ONLY_EVIDENCE_RULE, WITNESS)
+  for (const stance of [H.REFUTE_STANCE, H.REPRODUCE_STANCE]) {
+    for (const issueContext of [undefined, 'echo() drops the trailing newline']) {
+      const brief = H.reviewerBrief(FINDING, stance, '/repo', '/m/METH.md', 'UNTRUSTED-NOTICE', issueContext)
+      assert.equal(brief.split(PRECEDENT).length, 2, 'the repo\'s own handling of the same case is a contract, said once')
+      assert.equal(brief.split(WITNESS).length, 2, 'memory of upstream and age are not evidence, said once')
+    }
+  }
+})
+
+test('the repo\'s own precedent is one more kind of contract, and what is NOT a contract still closes the criterion', () => {
+  const brief = H.reviewerBrief(FINDING, H.REFUTE_STANCE, '/repo', '/m/METH.md', 'UNTRUSTED-NOTICE')
+  const criterion = brief.split('\n').find(line => line.startsWith('1. '))
+  assert.ok(criterion.includes(`a test, or a spec. ${PRECEDENT} A style choice, a redundant-but-correct computation,`))
+  assert.ok(criterion.endsWith('is NOT a contract and NOT a bug.'), 'a different way of writing the same result is still no contract')
+  assert.ok(brief.includes(`When in doubt, confirmed=false.\n${WITNESS}\n\nClassify real-bug vs intentional`), 'the evidence rule stands between the bar and the classification: it binds both')
+})
+
+test('apart from the two evidence sentences, the reviewer prompt is the one sent before them', () => {
+  const before = EXPECTED_REFUTE_BRIEF.replace(`${PRECEDENT} `, '').replace(`${WITNESS}\n`, '')
+  assert.equal(createHash('sha256').update(before).digest('hex'), '9c294687bfe4601e76fbc39e8e4948148e37d9be3b177d6d7d5ac83b759ada7c')
 })
 
 // A finding is text an agent wrote after reading untrusted source, so it must not be able
