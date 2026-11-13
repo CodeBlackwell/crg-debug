@@ -89,6 +89,12 @@ fix-wave outcome (fixed / unfixed / needs-human), the fix branch + wave commits,
 status. Nothing was pushed. Offer to merge the fix branch back (or run `/cpdv`), and note any
 leftover uncommitted work (a failed or opted-out commit) still sitting in the tree.
 
+**Tests that were already failing.** When `fix.finalGate.alreadyFailing` is not empty, name every
+test in it, with its command, beside the final gate status, as failing before the first fix. A
+green final gate does not cover them: a test that was already failing cannot show that a fix broke
+it in a new way. Say also what `fix.finalGate.notChecked` lists, and for a red gate what
+`newFailures` and `fewerPassed` hold.
+
 **Fixes that need a decision.** End the report with every row of `fix.needsDecision`. These are
 fixes that passed their own test but could only stand by changing or breaking a test that already
 existed. The Workflow never changes an existing test on its own: it took each of these fixes back

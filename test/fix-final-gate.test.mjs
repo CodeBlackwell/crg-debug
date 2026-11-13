@@ -16,6 +16,8 @@ const { fixRun, bug } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fi
 
 // ---- the script's own judgment -----------------------------------------------------
 
+// c1 stands here for any third check judged by exit code. The script no longer judges a test
+// command that way: see fix-final-gate-by-test.test.mjs.
 const CHECKS = [{ id: 'k1', name: 'typecheck' }, { id: 'k2', name: 'build' }, { id: 'c1', name: 'tests' }]
 const codes = pairs => new Map(Object.entries(pairs))
 const verdict = (before, after, newFailing = []) => H.finalGateVerdict(CHECKS, codes(before), codes(after), newFailing)
@@ -95,8 +97,9 @@ test('a clean run with a type checker that is not installed ends green, and says
     'checks:final', 'regress:allfixes',
   ])
   assert.deepEqual(result.fix.finalGate, {
-    clean: true, verdict: 'green', regressed: [], newFailures: [],
+    clean: true, verdict: 'green', regressed: [], newFailures: [], fewerPassed: [],
     notChecked: [{ name: 'typecheck', exitCode: 127 }], unreported: [], held: ['build', 'tests'],
+    alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }],
     results: [{ command: 'k2', exitCode: 0, stdout: '', stderr: '' }],
   })
   assert.match(logs.at(-1), / · final gate green · not checked: typecheck · regression gate: /)
@@ -134,9 +137,9 @@ test('a test that fails at the end and did not before the first fix makes the fi
 })
 
 test('a final gate where nothing ran green is not called green', async () => {
-  // The type checker is missing and the test command was already red before the first fix.
-  const red = { runs: [{ command: BASE_CMD, exitCode: 1, failing: [EXISTING] }] }
-  const regress = ({ label }) => (label === 'regress:baseline' ? red : { runs: [{ command: 'c1', exitCode: 1, failing: [EXISTING] }] })
+  // The type checker is missing, and the test runner prints no count of what passed.
+  const red = { runs: [{ command: BASE_CMD, exitCode: 1, passed: -1, failing: [EXISTING] }] }
+  const regress = ({ label }) => (label === 'regress:baseline' ? red : { runs: [{ command: 'c1', exitCode: 1, passed: -1, failing: [EXISTING] }] })
   const untyped = ledger([{ package: 'app', test: 'pytest', typecheck: 'mypy src' }])
   const { result, labels, logs } = await fixRun(SRC, { bugs: TWO, on: { 'ingest-ledger': untyped, checks: checksAt({ k1: 127 }, {}), regress } })
   assert.equal(labels.includes('checks:final'), false)
@@ -144,7 +147,7 @@ test('a final gate where nothing ran green is not called green', async () => {
   assert.equal(result.fix.finalGate.clean, false)
   assert.equal(result.fix.finalGate.verdict, 'not checked')
   assert.deepEqual(result.fix.finalGate.notChecked, [{ name: 'typecheck', exitCode: 127 }, { name: 'tests', exitCode: 1 }])
-  assert.match(logs.at(-1), / · final gate NOT CHECKED · not checked: typecheck, tests · regression gate: /)
+  assert.match(logs.at(-1), / · final gate NOT CHECKED · 1 test already failing before the first fix · not checked: typecheck, tests · regression gate: /)
   assert.ok(logs.includes('Fix: final gate not checked — no check was green both before the first fix and after the last'))
 })
 
@@ -172,6 +175,6 @@ test('a checks baseline that does not report stops nothing, and vouches for noth
 test('a toolchain with no typecheck or build is gated on its tests alone', async () => {
   const { result, labels, logs } = await fixRun(SRC, { bugs: TWO })
   assert.equal(labels.some(l => l.startsWith('checks:')), false)
-  assert.deepEqual(result.fix.finalGate, { clean: true, verdict: 'green', regressed: [], newFailures: [], notChecked: [], unreported: [], held: ['tests'], results: [] })
+  assert.deepEqual(result.fix.finalGate, { clean: true, verdict: 'green', regressed: [], newFailures: [], fewerPassed: [], notChecked: [], unreported: [], held: ['tests'], alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }], results: [] })
   assert.match(logs.at(-1), / · final gate green · regression gate: /)
 })

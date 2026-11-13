@@ -286,7 +286,7 @@ test('only a fixer that was taken back is offered a place to state its ground', 
 
 test('both regression schemas submit a single property', () => {
   assert.deepEqual(Object.keys(H.REGRESSION_SCHEMA.properties), ['runs'])
-  assert.deepEqual(H.REGRESSION_SCHEMA.properties.runs.items.required, ['command', 'exitCode', 'failing'])
+  assert.deepEqual(H.REGRESSION_SCHEMA.properties.runs.items.required, ['command', 'exitCode', 'passed', 'failing'])
   assert.deepEqual(Object.keys(H.BLAME_SCHEMA.properties), ['causes'])
 })
 
@@ -328,7 +328,7 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
       return { commitHash: `c0ffee${calls.filter(c => c.label === label).length}`, committedFiles, results: [{ command: 'git commit', exitCode: 0 }] }
     }
     // Like a live agent: the baseline names its command in full, a re-run answers with the id.
-    if (kind === 'regress') return { runs: [{ command: label === 'regress:baseline' ? 'pytest tests/test_alpha.py tests/test_bravo.py' : 'c1', exitCode: 0, failing: [] }] }
+    if (kind === 'regress') return { runs: [{ command: label === 'regress:baseline' ? 'pytest tests/test_alpha.py tests/test_bravo.py' : 'c1', exitCode: 0, passed: 40, failing: [] }] }
     if (kind === 'blame') return { causes: [] }
     // Neither echoes its command back: the script must read what the command PRINTED.
     if (kind === 'snapshot') return { results: [{ command: 'snapshot', exitCode: 0, stdout: `crg-restore-point ${'5'.repeat(39)}${nth}\n` }] }
