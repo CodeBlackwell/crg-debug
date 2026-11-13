@@ -7,6 +7,22 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 ## [Unreleased]
 
 ### Added
+- **Each stage of `/crg-debug` can run on its own model** (`crg-debug.js`, the skill, the
+  methodology). `--discover-model`, `--verify-model` and `--fix-model` put the finders, the
+  reviewers and the fix phase on the model named; `--model` keeps its meaning and is the
+  fallback for every stage. The Workflow takes them as one arg, `stageModels`, an object keyed
+  `graph`, `map`, `discover`, `verify`, `fix` whose values are a model name, or `null` /
+  `'session'` to inherit the session model. Every agent runs on the model of the phase it
+  belongs to; a phase the map leaves out runs on `model`, and with no map every agent runs on
+  the model it ran on before. An unknown key or an unusable value is refused before any agent
+  starts, since a mistyped stage would otherwise run on the wrong model and be reported as the
+  right one. The two retries that leave the cheap model on purpose (`setup-retry`,
+  `map-retry`) still inherit the session model. `fromLedger` and `fromFindings` runs honour
+  the same map. Prose mode follows the same rule for its `Agent` calls.
+- **The ledger and the Workflow's return record the model of every phase** (`crg-debug.js`):
+  `models: {graph, map, discover, verify, fix}`, each a model name or `'session'`, on every
+  run, with or without `stageModels`. The ledger's `model` field is unchanged. The opening log
+  line lists the five when any of them differs from `model`.
 - **Verify can be replayed on its own** (`crg-debug.js`). A new inline arg, `fromFindings`,
   takes up to 200 finding rows from a prior run and verifies exactly those: Graph still runs
   (reviewers query it), Map, Discover and the semantic merge are skipped, the ledger is

@@ -15,6 +15,9 @@ const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 // was produced by running THIS harness over the script as it stood before the units mode
 // existed, so a default run that sends a different brief, label or agent set fails here and
 // the failing line names the agent. Re-pin only for a change that means to move the default.
+// Re-pinned once since, the persist and return lines alone: the ledger and the return gained
+// `models`, the model of every phase. Every other line, each agent's model among them, and
+// the log are as they were.
 // >>> pin-harness
 const pinTranscript = async (source, args, sha) => {
   const fns = (prefix, count) => Array.from({ length: count }, (_, i) => `${prefix}_${i}`)
@@ -65,9 +68,9 @@ const PINNED = {
     'confirm:find_residual.py ac06bda651f2',
     'refute:z.py db2c9964acd7',
     'confirm:z.py dc045b6c9657',
-    'persist 27d9e50a2d40',
+    'persist d443691f50a2',
     'logs b2c32a3098cb',
-    'return d371da3de4de',
+    'return 4673c2dac9c1',
   ],
   rich: [
     'setup 90104e291d00',
@@ -99,9 +102,9 @@ const PINNED = {
     'confirm:find_residual_.py 4936854aef5b',
     'refute:z.py 15d8818032f8',
     'confirm:z.py 95c83502b9c2',
-    'persist b1aaf48b2f18',
+    'persist 3075e8d71c7c',
     'logs 262e32d7f1a6',
-    'return 0870f64d32db',
+    'return f138002e0116',
   ],
 }
 

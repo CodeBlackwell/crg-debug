@@ -28,6 +28,8 @@ Each phase below is a set of independent **work items**.
 - **As the `/crg-debug` skill** (main loop): dispatch a phase's items as ONE parallel wave of `Agent` calls (multiple Agent tool calls in a single message), then barrier before the next phase.
 - **As the `crg-debugger` subagent** (isolated context, cannot spawn subagents): perform the same items yourself, one at a time, in listed order, before moving on.
 
+**One model per stage.** Every `Agent` call runs on its stage's model: Phase 2's discovery agents on the discover model (`--discover-model`), Phase 2's reviewers on the verify model (`--verify-model`), and every agent of Phases 3 and 4 on the fix model (`--fix-model`). A stage given no model of its own runs on the run's model: `haiku`, or what `--model` names; `session` inherits yours. Work marked *orchestrator* is your own and stays on your model, as does everything the `crg-debugger` subagent does, since it spawns nothing.
+
 Findings format, classification, the false-positive guard, verification, the git policy, and the report layout are **identical in both modes**. This file is the single source of truth — the subagent only references it.
 
 `$ARGUMENTS` = the focus. **Empty → full-repo sweep.** Non-empty → resolve it to a node/file set via `get_minimal_context(task=$ARGUMENTS)` + `semantic_search_nodes_tool`, then restrict every later phase to that set's `get_impact_radius_tool` blast radius (so dependents aren't missed).

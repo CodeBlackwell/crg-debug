@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. After a take-back every bug of that fixer is attempted alone, one bug per agent, and only an attempt a bug had to itself counts against it. A bug whose own attempt is taken back gets one retry; the second time its fix is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, a newly failing test, or fewer tests passing than before; a typecheck or build that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way. A test command is judged test by test, not by its exit code: every test relay carries the passed count from the runner\'s own summary, the tests that failed before the first fix are listed in fix.finalGate.alreadyFailing (id and command) and counted in the closing line, and a test command with no passed count before the first fix is listed in notChecked; \'green\' needs at least one check that held before and after, otherwise the verdict is \'not checked\'. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, stageModels?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json, requires fix:true) ingests that ledger and skips Map/Discover/Verify, running ONLY the fix phase over the already-confirmed bugs — the serialized detect->fix hand-off. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it (map-ranked first) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. After a take-back every bug of that fixer is attempted alone, one bug per agent, and only an attempt a bug had to itself counts against it. A bug whose own attempt is taken back gets one retry; the second time its fix is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. The return carries fix.regressionGate. Each validated wave is committed (only its own closed-bug files, allowlist-verified) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, a newly failing test, or fewer tests passing than before; a typecheck or build that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way. A test command is judged test by test, not by its exit code: every test relay carries the passed count from the runner\'s own summary, the tests that failed before the first fix are listed in fix.finalGate.alreadyFailing (id and command) and counted in the closing line, and a test command with no passed count before the first fix is listed in notChecked; \'green\' needs at least one check that held before and after, otherwise the verdict is \'not checked\'. stageModels ({graph?, map?, discover?, verify?, fix?}, each a model name, or null / \'session\' to inherit the session model) runs each phase\'s agents on that phase\'s model; a phase it leaves out runs on model, and with no stageModels every agent runs on model as before. An unknown phase or an unusable value is refused before any agent starts. The ledger and the return carry models, the model of every phase by name (\'session\' where it inherits). Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -27,6 +27,32 @@ const bugKeyOf = f => `${norm(f && f.file)}::${norm(f && f.rootCause)}`
 const shortFile = f => stripLine(f).split('/').pop()
 const bugFile = b => stripLine(b && b.file)
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
+// One model per phase. `stageModels` maps a phase, in lower case, to a model name, or to
+// null / 'session' to inherit the session's; a phase it leaves out runs on the run's
+// `model`. A map that is not understood is refused whole: a mistyped phase would run on
+// the wrong model and the run would report the right one.
+const STAGE_KEYS = ['graph', 'map', 'discover', 'verify', 'fix']
+const stageModelsOf = (stageModels, model) => {
+  const given = stageModels == null ? {} : stageModels
+  if (typeof given !== 'object' || Array.isArray(given)) {
+    throw new Error(`Unusable stageModels ${JSON.stringify(stageModels)} — it must be an object keyed by phase: ${STAGE_KEYS.join(', ')}`)
+  }
+  for (const [stage, value] of Object.entries(given)) {
+    if (!STAGE_KEYS.includes(stage)) throw new Error(`Unknown stageModels key ${JSON.stringify(stage)} — the phases are: ${STAGE_KEYS.join(', ')}`)
+    if (value !== null && !(typeof value === 'string' && value.trim())) {
+      throw new Error(`Unusable stageModels.${stage} ${JSON.stringify(value)} — give a model name, or null / 'session' to inherit the session model`)
+    }
+  }
+  return Object.fromEntries(STAGE_KEYS.map(stage => [stage, resolveModel(stage in given ? given[stage] : model)]))
+}
+// The same five as the ledger and the return record them: an inherited model has no name
+// to pass an agent, so it is written 'session'.
+const stageModelNames = models => Object.fromEntries(STAGE_KEYS.map(stage => [stage, models[stage] || 'session']))
+// For the opening log line: empty unless some phase runs on a model other than the run's.
+const stageModelsNote = (models, model) =>
+  STAGE_KEYS.some(stage => models[stage] !== model)
+    ? ` · stage models: ${STAGE_KEYS.map(stage => `${stage} ${models[stage] || 'session'}`).join(', ')}`
+    : ''
 const clampRounds = n => Math.max(1, Math.floor(Number(n) || 1))
 const capText = (s, n) => String(s == null ? '' : s).trim().slice(0, n)
 const normPath = p => String(p || '').trim().replace(/^\.\//, '').replace(/\/+$/, '')
@@ -1073,8 +1099,12 @@ const BOOT_SCHEMA = {
 const a = (typeof args === 'string' ? JSON.parse(args) : args) || {}
 const repoRoot = a.repoRoot
 const scope = a.scope || ''
-// Model for every agent. Defaults to 'haiku'; --model overrides; null/'session' inherits.
+// The run's model. Defaults to 'haiku'; --model overrides; null/'session' inherits.
 const model = resolveModel(a.model)
+// The model of each phase's agents: `model`, unless stageModels names another for that
+// phase. Every agent call takes the entry for the phase it runs in. Throws on a map it
+// cannot read, here, before any agent has started.
+const models = stageModelsOf(a.stageModels, a.model)
 // fix=true enables Phase 4 (TDD fix waves). Default off -> discovery only, no edits.
 const fix = !!a.fix
 // Per-wave commits on a crg-debug/fix-* branch are the DEFAULT; commit:false opts out
@@ -1190,7 +1220,7 @@ if (fix) {
   treeStatus = treeStatusOf(await tryAgent(
     `Report the state of the git working tree at ${repoRoot}, before anything in it is changed. Do NOT edit, stage, stash, reset or commit anything. Run EXACTLY the command below and nothing else; it only reads. It prints one row per tracked file with uncommitted changes and then a line counting them. Return a single results[] row: command = the word status (do not copy the command text); exitCode = its REAL exit code; stdout = EVERYTHING it printed, every row and the last line, copied character for character. The script counts the rows against that line, so a shortened or summarised stdout counts as no answer.
 ${fence(treeStatusCommand(repoRoot))}`,
-    { label: 'tree-status', phase: 'Graph', schema: GATE_SCHEMA, model },
+    { label: 'tree-status', phase: 'Graph', schema: GATE_SCHEMA, model: models.graph },
   ))
   fixRefused = treeRefusal(treeStatus)
   if (fixRefused) log(`Fix will NOT start: ${fixRefused}${treeStatus ? ` — ${capText([...new Set([...treeStatus.staged, ...treeStatus.changed])].join(', '), 600)}` : ''}. Commit or stash them and run again. Nothing in the tree, the index or any branch is changed by the fix phase.`)
@@ -1204,10 +1234,10 @@ let ledgerPath = `${repoRoot}/.crg-debug/ledger.json`
 if (fromLedger) {
   // Skip Map/Discover/Verify: load what a prior read-only run already confirmed and
   // jump to the fix phase. The sandbox can't read files, so one agent deserializes it.
-  log(`crg-debug fix-from-ledger: ingesting ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}`)
+  log(`crg-debug fix-from-ledger: ingesting ${fromLedger} on ${repoRoot} · model: ${model || 'session default'}${stageModelsNote(models, model)}`)
   const loaded = await tryAgent(
     `Read the JSON file at ${fromLedger} (in the repo at ${repoRoot}) and return its parsed contents. Do NOT edit any file. It is a crg-debug ledger: an object with confirmedBugs[], deferred[], rejected[], toolchain[], baselineFailures[]. Return every field EXACTLY as parsed, unmodified.`,
-    { label: 'ingest-ledger', phase: 'Graph', schema: LEDGER_SCHEMA, model },
+    { label: 'ingest-ledger', phase: 'Graph', schema: LEDGER_SCHEMA, model: models.graph },
   )
   if (!loaded) throw new Error(`fix-from-ledger: could not read/parse ledger at ${fromLedger}`)
   setup = { toolchain: loaded.toolchain || [], resolvedScope: 'from ledger' }
@@ -1221,7 +1251,7 @@ if (fromLedger) {
 // The discover+verify path. Body is intentionally left at column 0: it is the bulk of
 // the file, and reindenting it would bury every future diff.
 // ---- Phase 0: Graph -----------------------------------------------------------
-log(`crg-debug Phases 0-3 on ${repoRoot}${scope ? ` (scope: ${scope})` : ' (full sweep)'} · model: ${model || 'session default'}${issueRef ? ` · issue: ${issueRef}` : ''} · env: ${env}`)
+log(`crg-debug Phases 0-3 on ${repoRoot}${scope ? ` (scope: ${scope})` : ' (full sweep)'} · model: ${model || 'session default'}${stageModelsNote(models, model)}${issueRef ? ` · issue: ${issueRef}` : ''} · env: ${env}`)
 
 const repoSlug = repoRoot.split('/').filter(Boolean).slice(-2).join('-').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
 const provisionStep = env === 'container'
@@ -1245,7 +1275,7 @@ const setupBrief = `Bootstrap a graph-driven debug session for the repo at ${rep
 
 You perform the CRG build, a possible \`git init\`${env === 'container' ? ', and the step-4 container provisioning' : ''}; otherwise you are read-only over the source. Return the structured object.`
 
-setup = await tryAgent(setupBrief, { label: 'setup', phase: 'Graph', schema: SETUP_SCHEMA, model })
+setup = await tryAgent(setupBrief, { label: 'setup', phase: 'Graph', schema: SETUP_SCHEMA, model: models.graph })
 // Retry prose-free, and off the model that produced the leak. `model: undefined` inherits
 // the session model rather than the cheap default — a second attempt at the same shape on
 // the same model is a coin flip, and Phase 0 is the foundation the whole run stands on.
@@ -1296,7 +1326,7 @@ Run these CRG tools at detail_level="minimal": list_graph_stats_tool, get_hub_no
 
 Produce: (a) a terse overview — Stack / Shape / Hotspots / Coverage gaps / Risks; (b) a TARGET MAP — rank in-scope files+functions and tag EACH to exactly one concern from: ${CONCERN_KEYS.join(', ')}. Enumerate every in-scope source file (not just hubs — planted bugs cluster in non-hub leaf files), and mark untested=true where tests_for found no coverage. ${UNTRUSTED}`
 
-let map = await tryAgent(mapBrief, { label: 'map', phase: 'Map', schema: TARGETMAP_SCHEMA, model })
+let map = await tryAgent(mapBrief, { label: 'map', phase: 'Map', schema: TARGETMAP_SCHEMA, model: models.map })
 // The overview is a hint; the targets are the phase's actual product. If the two-field
 // submit failed (or came back with an empty map), re-ask for the targets alone — see
 // TARGETS_SCHEMA for why one property survives where two did not. The CRG work is
@@ -1345,7 +1375,7 @@ WORK ONE FUNCTION AT A TIME, NOT ONE FILE AT A TIME. For every function named ab
 Prefer CRG tools (get_flow_tool, query_graph_tool callers_of/callees_of, get_impact_radius_tool) before Grep. Run the "Common bug-class checklist" in ${SKILL} line-by-line over every function in your slice — extra scrutiny on files with NO test coverage, where inverted logic, flipped operators, double-applied transforms, and off-by-one bounds slip past. For the real-bug vs intentional and surface-vs-fix rules, defer to ${SKILL}.
 ${priorKnown ? `\nALREADY FOUND in earlier rounds — do NOT re-report these or trivial restatements of them; hunt ONLY for DISTINCT defects they missed (different file:line or different root cause):\n${fence(priorKnown)}\n` : ''}
 Return structured findings rows — NOT file dumps. Every finding needs a file:line you actually opened, the named contract it violates as rootCause, and a concrete failing input -> wrong output as whyRepro. ${UNTRUSTED}`,
-    { agentType: 'Explore', label, phase: 'Discover', schema: AUDIT_SCHEMA, model },
+    { agentType: 'Explore', label, phase: 'Discover', schema: AUDIT_SCHEMA, model: models.discover },
   )
 
 // The residual pass is the net for what a hub-centric sweep misses, so it needs to know
@@ -1374,7 +1404,7 @@ if (discover === 'units') {
   const relays = await parallel(unitTargets.map(t => () =>
     tryAgent(
       `Call the code-graph tool find_large_functions_tool with repo_root=${repoRoot}, min_lines=1, kind="Function", file_path_pattern=${t.file}, limit=1000. Relay its total_found, and one row for EVERY result: name, parent_name (empty string when null), line_start, line_end, is_test, relative_path. Transcribe the tool's output; do not filter, reorder, merge or summarise it, and do not read the file yourself.`,
-      { label: `units:${t.file}`, phase: 'Discover', schema: UNITS_SCHEMA, model },
+      { label: `units:${t.file}`, phase: 'Discover', schema: UNITS_SCHEMA, model: models.discover },
     ),
   ))
   // Counted, not trusted: a short relay or a pattern that matched another file shows here.
@@ -1393,7 +1423,7 @@ if (discover === 'units') {
   const { kept, dropped } = orderUnits(listed, map.targets, maxUnits)
   log(`Units: ${listed.length} listed in ${unitTargets.length} file(s) -> ${kept.length} to audit, ${dropped.length} dropped by maxUnits=${maxUnits}${dropped.length ? ` (${tallyByFile(dropped)})` : ''}`)
   const judged = await parallel(kept.map(unit => () =>
-    tryAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED_MAY_RUN), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model }),
+    tryAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED_MAY_RUN), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model: models.discover }),
   ))
   const perUnit = kept.map((unit, i) => ({ unit, findings: (judged[i] && judged[i].findings) || [] }))
   rawFindings = dedupBy(perUnit.flatMap(row => row.findings), bugKeyOf)
@@ -1470,7 +1500,7 @@ Findings (index :: file :: rootCause):
 ${fence(list)}
 
 Return duplicateGroups: each inner array lists the indices of findings that are the same bug (2+ members only). Singletons are implied — do not list them.`,
-    { label: 'dedup', phase: 'Discover', schema: DEDUP_SCHEMA, model },
+    { label: 'dedup', phase: 'Discover', schema: DEDUP_SCHEMA, model: models.discover },
   )
   if (clusters && Array.isArray(clusters.duplicateGroups)) {
     const drop = new Set()
@@ -1486,7 +1516,7 @@ log(`Discover: ${rawFindings.length} raw (incl. ${baselineFailures.length} basel
 
 // ---- Phase 3: Verify ----------------------------------------------------------
 const reviewer = (finding, stance, label) =>
-  tryAgent(reviewerBrief(finding, stance, repoRoot, SKILL, UNTRUSTED, issueContext), { label, phase: 'Verify', schema: VERDICT_SCHEMA, model })
+  tryAgent(reviewerBrief(finding, stance, repoRoot, SKILL, UNTRUSTED, issueContext), { label, phase: 'Verify', schema: VERDICT_SCHEMA, model: models.verify })
 
 const verified = await parallel(
   merged.map(f => () =>
@@ -1508,13 +1538,13 @@ log(`Verify: ${confirmedBugs.length} confirmed · ${deferred.length} deferred (i
 // coupling, or feed a later fix-only run. The sandbox can't write files itself,
 // so one short agent serializes it to the working tree.
 const ledger = {
-  repoRoot, scope: scope || 'full repo', issueRef: issueRef || undefined, model,
+  repoRoot, scope: scope || 'full repo', issueRef: issueRef || undefined, model, models: stageModelNames(models),
   toolchain: setup.toolchain || [], baselineFailures,
   confirmedBugs, deferred, rejected,
 }
 const persisted = await tryAgent(
   `Create the directory ${repoRoot}/.crg-debug if it does not exist, then write the following JSON to ${ledgerPath}, overwriting any existing file. Write EXACTLY these bytes as the entire file contents — do not reformat, wrap in markdown, annotate, or add fields. Output nothing else.\n\n${JSON.stringify(ledger, null, 2)}`,
-  { label: 'persist', phase: 'Verify', model },
+  { label: 'persist', phase: 'Verify', model: models.verify },
 )
 // A failed write leaves a STALE ledger on disk, which the fix-from-ledger hand-off would
 // silently re-fix. Say so rather than claiming a persist that did not happen.
@@ -1571,7 +1601,7 @@ For EACH bug above, run the TDD micro-cycle (mandatory, in order; full disciplin
 Open each test with a one-sentence comment naming the user-facing behavior it protects.
 Each bug's test must be ISOLATED to THAT bug: it must pass even while OTHER unfixed bugs remain (do not import a whole crashing module if a narrower import works; for compiled languages, build+run only that test). For each bug report testCommand: the exact, narrowest command that runs ONLY that bug's test (e.g. \`pytest path::test_x\`, or the gcc compile+run line) — the script re-runs each independently to confirm. ${CONTAINERIZED_TEST_NOTE}
 Return filesTouched and a fixes[] row per bug: {bugId, testFile, testCommand, redObserved, greenObserved}.`,
-    { label: `fix:${shortFile(file)}`, phase: 'Fix', schema: fixSchemaFor(bugs), model },
+    { label: `fix:${shortFile(file)}`, phase: 'Fix', schema: fixSchemaFor(bugs), model: models.fix },
   )
 
 // Coupled-bug holistic fixer (the prose fallback). Unlike fixAgent's per-bug TDD,
@@ -1590,7 +1620,7 @@ Toolchain:
 ${tcLine()}
 
 Apply the MINIMAL source fix for EVERY bug at once. Then write ONE test that exercises the shared behavior and passes ONLY when all of them are fixed — do NOT try to isolate a single bug. Run that test AND the owning package's existing test command; both must be green. Report each bug's greenObserved and put the SAME shared narrowest testCommand on every row. ${CONTAINERIZED_TEST_NOTE}`,
-    { label: 'fix:coupled', phase: 'Fix', schema: fixSchemaFor(bugs), model },
+    { label: 'fix:coupled', phase: 'Fix', schema: fixSchemaFor(bugs), model: models.fix },
   )
 
 // Verification gate, scoped to the BLAST RADIUS of the changed files via the graph
@@ -1608,7 +1638,7 @@ ${roots}
 Toolchain:
 ${tcLine()}
 Report the REAL exit code and output tail for every command actually run — do not interpret pass/fail. Return one results[] row per command: {command, exitCode, stdout, stderr}.`,
-    { label: 'gate', phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: 'gate', phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 }
 
@@ -1620,7 +1650,7 @@ const bugGateAgent = (b, cmd) =>
     `Independently confirm the fix for bug "${b.bugId}" in the repo at ${repoRoot}. Do NOT edit any file. Run EXACTLY this command and report its REAL exit code and output tail — do not interpret pass/fail. For a compiled language, compile and run exactly as written.
 ${fence(cmd)}
 Return one results[] row: {command, exitCode, stdout, stderr}.`,
-    { label: `gate:${shortFile(b.file)}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `gate:${shortFile(b.file)}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 // Fix-branch setup + graph freshness (covers fromLedger runs, which skip Phase 0).
@@ -1634,7 +1664,7 @@ const branchAgent = candidateBranch =>
 2. If that branch already matches crg-debug/fix-*, STAY on it. Otherwise run EXACTLY: git -C ${repoRoot} checkout -b ${candidateBranch}   (off the CURRENT HEAD — do not switch branches first, do not stash, reset, or clean anything; pre-existing uncommitted changes must stay untouched)
 3. Graph freshness: run \`code-review-graph status\` in ${repoRoot}; if missing/0 files run \`code-review-graph build\`, else \`code-review-graph update\`.
 Do NOT push. Return branch = the branch HEAD is on after step 2.`,
-    { label: 'fix-branch', phase: 'Fix', schema: BRANCH_SCHEMA, model },
+    { label: 'fix-branch', phase: 'Fix', schema: BRANCH_SCHEMA, model: models.fix },
   )
 
 const commitAgent = (files, message) =>
@@ -1646,13 +1676,13 @@ const commitAgent = (files, message) =>
 4. git -C ${repoRoot} show --name-only --format= HEAD  -> report the file list as committedFiles
 5. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
 Do NOT push. Do NOT touch any other file.`,
-    { label: 'commit:wave', phase: 'Fix', schema: COMMIT_SCHEMA, model },
+    { label: 'commit:wave', phase: 'Fix', schema: COMMIT_SCHEMA, model: models.fix },
   )
 
 const uncommitAgent = () =>
   tryAgent(
     `The last commit in the git repo at ${repoRoot} failed verification. Run EXACTLY: git -C ${repoRoot} reset --mixed HEAD~1 — nothing else (the work must stay in the tree). Report the exit code as a results[] row.`,
-    { label: 'uncommit', phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: 'uncommit', phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 // Regression gate agents. The baseline works out the blast-radius test commands ONCE, the
@@ -1677,7 +1707,7 @@ ${fileList(files)}
 Toolchain:
 ${tcLine()}
 ${regressionRows(BASELINE_COMMAND_RULE)}`,
-    { label: 'regress:baseline', phase: 'Fix', schema: REGRESSION_SCHEMA, model },
+    { label: 'regress:baseline', phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
   )
 
 const regressionRerunAgent = (tag, commands, touched, alreadyFailing, pass) =>
@@ -1691,7 +1721,7 @@ ${fileList(touched)}
 Toolchain:
 ${tcLine()}${alreadyFailing.length ? `\nThese tests were already failing before any fix. When one of them fails again, write its id exactly as it is written here:\n${fence(alreadyFailing.join('\n'))}` : ''}
 ${regressionRows(RERUN_COMMAND_RULE)}`,
-    { label: `regress:${tag.replace(/\s+/g, '')}${pass ? `:${pass}` : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model },
+    { label: `regress:${tag.replace(/\s+/g, '')}${pass ? `:${pass}` : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
   )
 
 // Which fix broke which test. `filesOf` gives the files one bug's fixer may have changed.
@@ -1703,21 +1733,21 @@ ${tests.map(t => fence(`test: ${capText(t.id, 300)}\noutput: ${capText(t.output,
 The fixes applied in ${tag} — none is committed yet. ${snapshot} is the tree as it stood before ${tag}, so inspect each with: git -C ${repoRoot} diff ${snapshot} -- <its files>
 ${bugs.map(b => fence(`bugId: ${b.bugId}\nfile: ${bugFile(b)}\nfiles its fixer touched: ${filesOf([b]).join(', ')}`)).join('\n')}
 For each failing test, read the test and the diffs, and name the bugId(s) whose edit made it fail. If two fixes could each be the cause, name both. Return one causes[] row per failing test: {test, bugIds}.`,
-    { label: `blame:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: BLAME_SCHEMA, model },
+    { label: `blame:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: BLAME_SCHEMA, model: models.fix },
   )
 
 const snapshotAgent = tag =>
   tryAgent(
     `Record a restore point for the git repo at ${repoRoot} before ${tag}. Run EXACTLY the command below and nothing else. It writes only inside the git directory: it changes neither the working tree nor the index. It prints one line. Return a single results[] row: command = the word snapshot (do not copy the command text); exitCode = its REAL exit code; stdout = the line it printed, copied character for character.
 ${fence(snapshotCommand(repoRoot))}`,
-    { label: `snapshot:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `snapshot:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 const testEditAgent = (tag, snapshot) =>
   tryAgent(
     `List the files ${tag} changed lines of in the git repo at ${repoRoot}. Run EXACTLY the command below and nothing else. It only reads the working tree and writes only inside the git directory. It prints one row per file and then a summary line. Return a single results[] row: command = the word check (do not copy the command text); exitCode = its REAL exit code; stdout = EVERYTHING it printed, every row and the summary line, copied character for character. The script counts the rows against the summary, so a shortened or summarised stdout counts as no answer.
 ${fence(testEditCommand(repoRoot, snapshot))}`,
-    { label: `testedits:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `testedits:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 // The typecheck and build commands, run by id: once before the first fix, once at the end.
@@ -1726,14 +1756,14 @@ const checksAgent = (label, when, checks) =>
     `Run the typecheck and build commands of the repo at ${repoRoot}, ${when}. Do NOT edit any file. Run EXACTLY these ${checks.length} command(s), each verbatim and to completion; add no flag and drop none. A command whose tool is not installed is still run and its exit code reported as it is — do not install anything and do not skip it. Each is given under a short id:
 ${checks.map(c => `${c.id}:\n${fence(c.command)}`).join('\n')}
 Return one results[] row per command: command = JUST its id (k1, k2, …) — do not copy the command text; exitCode = its REAL exit code — do not interpret pass/fail; stdout and stderr = the last lines it printed, at most 20 each.`,
-    { label: `checks:${label}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `checks:${label}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 const proposeAgent = (tag, command) =>
   tryAgent(
     `Save a fix that is about to be taken back after ${tag} in the git repo at ${repoRoot}, so that a person can look at it later. Run EXACTLY the command below and nothing else. It writes only inside the git directory: it changes neither the working tree nor the index, and it moves no branch. Return a single results[] row: command = the word save (do not copy the command text); exitCode = its REAL exit code; stdout = EVERYTHING it printed, every line, copied character for character. The script reads the lines it prints and counts them, so a shortened or summarised stdout counts as not saved.
 ${fence(command)}`,
-    { label: `propose:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `propose:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 
 const restoreAgent = (tag, files, snapshot) => {
@@ -1745,7 +1775,7 @@ ${fence(putBack)}
 compare:
 ${fence(compare)}
 Return two results[] rows, one per command. In each: command = just its name above (put-back or compare) — do not copy the command text; exitCode = its REAL exit code; stdout = EVERYTHING it printed, copied character for character ("" only if it truly printed nothing). The script reads the line compare prints, so a summary or a paraphrase in stdout counts as a failed restore.`,
-    { label: `restore:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
+    { label: `restore:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
 }
 
@@ -1762,7 +1792,7 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
   if (!(setup.toolchain || []).some(t => t.test)) {
     const boot = await tryAgent(
       `The repo at ${repoRoot} has confirmed bugs to fix via TDD but NO test runner was discovered. Scaffold a MINIMAL runner ONLY (Vitest for TS/JS, pytest for Python, etc.) per the "Test-harness bootstrap" rule in ${SKILL}: add the dev dependency, a test script, and a minimal config. Confirm the runner works with a THROWAWAY sample test, then DELETE that sample — do NOT author any tests for the actual bugs (the per-bug fix agents write those). Leave the test directory empty. If the repo is genuinely untestable, return testCommand="". Return the exact test command and runner.`,
-      { label: 'bootstrap', phase: 'Fix', schema: BOOT_SCHEMA, model },
+      { label: 'bootstrap', phase: 'Fix', schema: BOOT_SCHEMA, model: models.fix },
     )
     if (boot && boot.testCommand) {
       setup.toolchain = [...(setup.toolchain || []), { package: 'scaffolded', test: boot.testCommand, runner: boot.runner }]
@@ -2272,6 +2302,7 @@ return {
   scope: scope || 'full repo',
   issueRef: issueRef || undefined,
   mode: fromLedger ? 'fix-from-ledger' : fromFindings ? 'verify-from-findings' : fix ? 'discover+fix' : 'discover',
+  models: stageModelNames(models),
   ledgerPath,
   confirmedBugs,
   deferred,

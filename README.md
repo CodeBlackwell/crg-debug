@@ -223,6 +223,7 @@ whose exit code the script reads — committing each validated wave on a `crg-de
 /crg-debug --detect-only         # read-only: confirmed-bug ledger, no edits
 /crg-debug --from-ledger .crg-debug/ledger.json   # fix-only over a prior ledger
 /crg-debug --model haiku         # model for the run (default haiku)
+/crg-debug --discover-model haiku --verify-model sonnet   # one model per stage; also --fix-model
 /crg-debug --prose               # force prose orchestration
 ```
 
