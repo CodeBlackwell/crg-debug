@@ -304,9 +304,30 @@ const newFailures = (now, baselineIds, redCommands) => {
   const before = new Set(baselineIds || [])
   return (now || []).filter(t => !before.has(t.id) && !(redCommands || []).some(c => commandNamesTest(c, t.id)))
 }
+// An agent asked to echo a long command back does not reliably do it: a live run answered
+// with the labels "restore command" and "compare command". So the script never recognises
+// a relayed row by its command TEXT. Each baseline command gets a short id — c1, c2, … —
+// the brief asks for that id in `command`, and a row is matched to its command by the id
+// (or by the text, if the agent echoed it after all). -1 = not a baseline command.
+const commandId = i => `c${i + 1}`
+const baselineIndexOf = (command, commands) => {
+  const m = /^\W*c(\d+)\b/i.exec(String(command || ''))
+  if (m && Number(m[1]) >= 1 && Number(m[1]) <= (commands || []).length) return Number(m[1]) - 1
+  return (commands || []).findIndex(c => norm(c) === norm(command))
+}
+// A re-run relay with each row's `command` put back to the baseline's own text, so the
+// rows of the two runs compare like with like whatever the agent wrote there.
+const resolveRuns = (relay, commands) =>
+  relay && {
+    ...relay,
+    runs: (relay.runs || []).filter(Boolean).map(run => {
+      const i = baselineIndexOf(run.command, commands)
+      return i < 0 ? run : { ...run, command: commands[i] }
+    }),
+  }
 // A gate REPORTED only if it relayed at least one run and every command it was told to
-// repeat is among them. A dead relay, an empty one, or one that skipped a baseline
-// command is no evidence the tests still pass.
+// repeat is among them (pass a re-run relay through resolveRuns first). A dead relay, an
+// empty one, or one that skipped a baseline command is no evidence the tests still pass.
 const regressionReported = (relay, commands) => {
   const ran = new Set(((relay && relay.runs) || []).map(r => norm(r && r.command)).filter(Boolean))
   return ran.size > 0 && (commands || []).every(c => ran.has(norm(c)))
@@ -333,21 +354,35 @@ const shellQuote = s => `'${String(s).replace(/'/g, `'\\''`)}'`
 const scratchIndexSetup = root => `G="$(git -C ${shellQuote(root)} rev-parse --absolute-git-dir)"`
 const USE_SCRATCH_INDEX = 'export GIT_INDEX_FILE="$G/crg-debug-wave.index"'
 const SEED_SCRATCH_INDEX = 'cp "$G/index" "$G/crg-debug-wave.index"'
+// Both verdict-bearing commands PRINT their verdict on a line of their own, and the script
+// reads that line out of the relayed stdout. Nothing rests on the relayed command text, and
+// an empty stdout is never success — a relay that ran nothing is empty too.
+const RESTORE_POINT_LINE = 'crg-restore-point'
+const RESTORE_OK_LINE = 'crg-restore-ok'
+const printedLines = relay =>
+  ((relay && relay.results) || []).flatMap(x => String((x && x.stdout) || '').split('\n').map(l => l.trim())).filter(Boolean)
 const snapshotCommand = root =>
-  `( ${scratchIndexSetup(root)} && ${SEED_SCRATCH_INDEX} && ${USE_SCRATCH_INDEX} && git -C ${shellQuote(root)} add -A && git -C ${shellQuote(root)} write-tree )`
+  `( ${scratchIndexSetup(root)} && ${SEED_SCRATCH_INDEX} && ${USE_SCRATCH_INDEX} && git -C ${shellQuote(root)} add -A && T="$(git -C ${shellQuote(root)} write-tree)" && echo "${RESTORE_POINT_LINE} $T" )`
 // The tree id a snapshot relay carries, or '' — a relay that died, exited non-zero, or
-// printed anything other than an object id is no restore point.
+// printed no restore-point line is no restore point. The id is read from the line the
+// command printed (a bare id on its own line is taken too); only hex ever leaves here.
 const snapshotOf = relay => {
   const rows = (relay && relay.results) || []
-  const id = String((rows[rows.length - 1] || {}).stdout || '').trim().split(/\s+/).pop()
-  return rows.length > 0 && rows.every(x => x && x.exitCode === 0) && /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(id) ? id : ''
+  const ids = new Set(
+    printedLines(relay)
+      .map(l => /^(?:crg-restore-point )?([0-9a-f]{40}|[0-9a-f]{64})$/.exec(l))
+      .filter(Boolean)
+      .map(m => m[1]),
+  )
+  return rows.length > 0 && rows.every(x => x && x.exitCode === 0) && ids.size === 1 ? [...ids][0] : ''
 }
 // The exact commands that put a set of files back to a restore point, then prove it.
 // 1. Load the snapshot into the scratch index; write out every named file it holds (as it
 //    was, uncommitted content included); remove the named files it does not hold — the ones
 //    the wave created. Only the named paths are touched, and never the real index.
 // 2. Re-read the working tree into the scratch index and list the named paths that still
-//    differ from the snapshot. It must list nothing and exit 0.
+//    differ from the snapshot. If none does it prints `crg-restore-ok <snapshot>`; otherwise
+//    it prints the paths and exits 1.
 // --literal-pathspecs keeps `*` and `:/` in a path from widening either step.
 const restoreCommands = (root, files, snapshot) => {
   const git = `git -C ${shellQuote(root)}`
@@ -355,15 +390,15 @@ const restoreCommands = (root, files, snapshot) => {
   const paths = (files || []).map(shellQuote).join(' ')
   return [
     `( ${scratchIndexSetup(root)} && ${USE_SCRATCH_INDEX} && ${git} read-tree ${snapshot} && ${literal} ls-files -z -- ${paths} | ${git} checkout-index -f -z --stdin && ${literal} clean -f -q -- ${paths} )`,
-    `( ${scratchIndexSetup(root)} && ${SEED_SCRATCH_INDEX} && ${USE_SCRATCH_INDEX} && ${git} add -A && ${literal} diff --cached --name-only --exit-code ${snapshot} -- ${paths} )`,
+    `( ${scratchIndexSetup(root)} && ${SEED_SCRATCH_INDEX} && ${USE_SCRATCH_INDEX} && ${git} add -A && ${literal} diff --cached --name-only --exit-code ${snapshot} -- ${paths} && echo "${RESTORE_OK_LINE} ${snapshot}" )`,
   ]
 }
-// A restore is CONFIRMED only when every command exited 0 and the comparison against the
-// snapshot listed no file. A relay that never came back is not a restore.
-const restoreOk = r => {
+// A restore is CONFIRMED only when every relayed command exited 0 and the comparison's own
+// success line, carrying THIS snapshot's id, is in what it printed. A relay that never came
+// back, printed nothing, or printed the line for another snapshot is not a restore.
+const restoreOk = (r, snapshot) => {
   const rows = (r && r.results) || []
-  const compared = rows.filter(x => /diff --cached --name-only --exit-code/.test((x && x.command) || ''))
-  return rows.length > 0 && rows.every(x => x && x.exitCode === 0) && compared.length > 0 && compared.every(x => !String(x.stdout || '').trim())
+  return !!snapshot && rows.length > 0 && rows.every(x => x && x.exitCode === 0) && printedLines(r).includes(`${RESTORE_OK_LINE} ${snapshot}`)
 }
 // The paragraph a fixer gets when a fix for one of its bugs was taken back. `strikes` maps
 // bugId -> the tests that fix broke. '' when none of these bugs has one, so a run the gate
@@ -1315,7 +1350,9 @@ const uncommitAgent = () =>
 // Regression gate agents. The baseline works out the blast-radius test commands ONCE, the
 // way the final gate does, and every later run repeats those exact strings — so the script
 // compares like with like. File paths and commands that came from another agent are fenced.
-const REGRESSION_ROWS = `Return one runs[] row per command actually run: {command, exitCode, failing}. command = the exact string you ran. exitCode = its REAL exit code — do not interpret pass/fail. failing = one {id, output} for EVERY test the runner reported as failed or errored (a file that failed to import or collect counts, under the path the runner printed): id = the runner's own test id exactly as it printed it, with no status word and no message; output = the last lines of that test's failure output, at most 20. A command where every test passed has failing: [].`
+const regressionRows = commandRule => `Return one runs[] row per command actually run: {command, exitCode, failing}. ${commandRule} exitCode = its REAL exit code — do not interpret pass/fail. failing = one {id, output} for EVERY test the runner reported as failed or errored (a file that failed to import or collect counts, under the path the runner printed): id = the runner's own test id exactly as it printed it, with no status word and no message; output = the last lines of that test's failure output, at most 20. A command where every test passed has failing: [].`
+const BASELINE_COMMAND_RULE = 'command = the exact string you ran, complete and unabbreviated: it is run again, character for character, after every fix wave, so a label or a shortened form here breaks every later check.'
+const RERUN_COMMAND_RULE = 'For a step-1 command, command = JUST its id (c1, c2, …) — do not copy the command text. For a step-2 command, command = the exact string you ran.'
 const RUN_TO_COMPLETION = 'TO COMPLETION — never stop at the first failure: no -x, --exitfirst, --maxfail, --bail or other fail-fast flag'
 const fileList = files => {
   const unique = [...new Set((files || []).filter(Boolean))]
@@ -1331,21 +1368,21 @@ Files about to be fixed (blast-radius roots):
 ${fileList(files)}
 Toolchain:
 ${tcLine()}
-${REGRESSION_ROWS}`,
+${regressionRows(BASELINE_COMMAND_RULE)}`,
     { label: 'regress:baseline', phase: 'Fix', schema: REGRESSION_SCHEMA, model },
   )
 
-const regressionRerunAgent = (tag, commands, touched, pass) =>
+const regressionRerunAgent = (tag, commands, touched, alreadyFailing, pass) =>
   tryAgent(
     `Re-run the regression gate for the repo at ${repoRoot} after ${tag}. Do NOT edit any file.
-1. Run EXACTLY these ${commands.length} command(s), each verbatim and ${RUN_TO_COMPLETION}; add no flag and drop none:
-${commands.map(c => fence(c)).join('\n')}
+1. Run EXACTLY these ${commands.length} command(s), each verbatim and ${RUN_TO_COMPLETION}; add no flag and drop none. Each is given under a short id:
+${commands.map((c, i) => `${commandId(i)}:\n${fence(c)}`).join('\n')}
 2. Then run the tests for the files touched in ${tag} that step 1 did not already run: a touched test file is run itself, and for a touched source file take its covering tests from the graph (query_graph_tool(pattern="tests_for")). Whole test files, also to completion. Skip this step when step 1 already ran them all.
 Files touched:
 ${fileList(touched)}
 Toolchain:
-${tcLine()}
-${REGRESSION_ROWS}`,
+${tcLine()}${alreadyFailing.length ? `\nThese tests were already failing before any fix. When one of them fails again, write its id exactly as it is written here:\n${fence(alreadyFailing.join('\n'))}` : ''}
+${regressionRows(RERUN_COMMAND_RULE)}`,
     { label: `regress:${tag.replace(/\s+/g, '')}${pass ? `:${pass}` : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model },
   )
 
@@ -1363,17 +1400,23 @@ For each failing test, read the test and the diffs, and name the bugId(s) whose 
 
 const snapshotAgent = tag =>
   tryAgent(
-    `Record a restore point for the git repo at ${repoRoot} before ${tag}. Run EXACTLY the command below and nothing else. It writes only inside the git directory: it changes neither the working tree nor the index. Report its REAL exit code and its stdout (one object id) as a single results[] row.
+    `Record a restore point for the git repo at ${repoRoot} before ${tag}. Run EXACTLY the command below and nothing else. It writes only inside the git directory: it changes neither the working tree nor the index. It prints one line. Return a single results[] row: command = the word snapshot (do not copy the command text); exitCode = its REAL exit code; stdout = the line it printed, copied character for character.
 ${fence(snapshotCommand(repoRoot))}`,
     { label: `snapshot:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
   )
 
-const restoreAgent = (tag, files, snapshot) =>
-  tryAgent(
-    `Take back the edits ${tag} made to ${files.length} file(s) in the git repo at ${repoRoot} — a test that passed before fails with them in place. The commands below put those files back exactly as they stood before ${tag}, then compare them. Run EXACTLY these, in order, each on its own, and nothing else: do not edit, stash, reset, checkout or clean anything by hand. Report the REAL exit code and stdout of each as a results[] row (stdout "" when it prints nothing).
-${restoreCommands(repoRoot, files, snapshot).map(c => fence(c)).join('\n')}`,
+const restoreAgent = (tag, files, snapshot) => {
+  const [putBack, compare] = restoreCommands(repoRoot, files, snapshot)
+  return tryAgent(
+    `Take back the edits ${tag} made to ${files.length} file(s) in the git repo at ${repoRoot} — a test that passed before fails with them in place. Two commands follow. The first puts those files back exactly as they stood before ${tag}; the second checks them and prints the result. Run EXACTLY these two, in this order, each on its own, and nothing else: do not edit, stash, reset, checkout or clean anything by hand.
+put-back:
+${fence(putBack)}
+compare:
+${fence(compare)}
+Return two results[] rows, one per command. In each: command = just its name above (put-back or compare) — do not copy the command text; exitCode = its REAL exit code; stdout = EVERYTHING it printed, copied character for character ("" only if it truly printed nothing). The script reads the line compare prints, so a summary or a paraphrase in stdout counts as a failed restore.`,
     { label: `restore:${tag.replace(/\s+/g, '')}`, phase: 'Fix', schema: GATE_SCHEMA, model },
   )
+}
 
 let fixResult = null
 if (fix && confirmedBugs.some(b => !b.conflicted)) {
@@ -1479,6 +1522,9 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   const baselineCommands = regression.baselineReported ? [...new Set(baseline.runs.map(r => r && r.command).filter(Boolean))] : []
   const baselineFailing = failingTests(baseline).map(t => t.id)
   regression.baselineFailures = baselineFailing.length
+  // The real test ids among them (not the stand-in for a red command that named none):
+  // every re-run brief lists these so the agent writes a repeat failure the same way twice.
+  const baselineNamed = failingTests({ runs: ((baseline && baseline.runs) || []).filter(r => r && (r.failing || []).length) }).map(t => t.id)
   if (regression.baselineReported) {
     log(`Fix: regression baseline — ${baselineCommands.length} command(s), ${baselineFailing.length} test(s) already failing`)
   } else {
@@ -1499,13 +1545,13 @@ if (fix && confirmedBugs.some(b => !b.conflicted)) {
   }
   // null = the gate did not report. Otherwise the tests that fail now and did not before.
   const regressionCheck = async (tag, touched, pass) => {
-    const relay = await regressionRerunAgent(tag, baselineCommands, touched, pass)
+    const relay = resolveRuns(await regressionRerunAgent(tag, baselineCommands, touched, baselineNamed, pass), baselineCommands)
     if (!regressionReported(relay, baselineCommands)) return null
     return newFailures(failingTests(relay), baselineFailing, [...redCommands.values()])
   }
   // Put files back as they stood at the wave's restore point. False = not confirmed.
   const takeBack = async (tag, files, snapshot) => {
-    if (!restoreOk(await restoreAgent(tag, files, snapshot))) {
+    if (!restoreOk(await restoreAgent(tag, files, snapshot), snapshot)) {
       halted = `the restore after ${tag} was not confirmed`
       log(`Fix ${tag}: restore NOT confirmed — ${files.join(', ')} may still hold an edit that breaks a test; inspect the tree. No further fix is attempted.`)
       return false

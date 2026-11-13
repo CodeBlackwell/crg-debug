@@ -14,7 +14,7 @@ const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
 const H = new Function(
-  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, regressionReported, regressionReason, blamedBugIds, shellQuote, snapshotCommand, snapshotOf, restoreCommands, restoreOk, regressionNote, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
+  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, commandId, baselineIndexOf, resolveRuns, regressionReported, regressionReason, blamedBugIds, shellQuote, snapshotCommand, snapshotOf, restoreCommands, restoreOk, printedLines, regressionNote, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
 )()
 
 // ---- the script's own comparisons ------------------------------------------------
@@ -58,11 +58,38 @@ test('an open bug\'s own red test is not a regression, but a whole-file command 
 })
 
 test('a gate has reported only when it relayed runs and repeated every baseline command', () => {
-  const runs = [{ command: 'pytest  tests/alpha.py', exitCode: 0, failing: [] }]
-  assert.equal(H.regressionReported({ runs }, ['pytest tests/alpha.py']), true, 'whitespace differences are not a different command')
-  assert.equal(H.regressionReported({ runs }, ['pytest tests/alpha.py', 'pytest tests/bravo.py']), false, 'a skipped command is no evidence')
+  const runs = [{ command: 'pytest  tests/a.py', exitCode: 0, failing: [] }]
+  assert.equal(H.regressionReported({ runs }, ['pytest tests/a.py']), true, 'whitespace differences are not a different command')
+  assert.equal(H.regressionReported({ runs }, ['pytest tests/a.py', 'pytest tests/b.py']), false, 'a skipped command is no evidence')
   assert.equal(H.regressionReported({ runs: [] }, []), false)
   assert.equal(H.regressionReported(null, []), false)
+})
+
+test('a re-run row is matched to its baseline command by a short id, not by echoing the command', () => {
+  const commands = ['docker run --rm -v "$PWD":/w img sh -lc \'python -m pytest tests/test_core.py tests/test_options.py -q\'', 'pytest tests/test_termui.py']
+  assert.deepEqual(commands.map((_, i) => H.commandId(i)), ['c1', 'c2'])
+  for (const [written, index] of [['c1', 0], ['C2', 1], ['c2: the termui tests', 1], ['[c1]', 0], [' c1 ', 0], [commands[1], 1], ['pytest   tests/test_termui.py', 1]]) {
+    assert.equal(H.baselineIndexOf(written, commands), index, written)
+  }
+  for (const written of ['c3', 'c0', 'c1x', 'cd tests && pytest', 'the first baseline command', 'c99 -o t t.c', '', undefined]) {
+    assert.equal(H.baselineIndexOf(written, commands), -1, String(written))
+  }
+
+  // Ids where the commands were asked for, and an extra step-2 command in full: complete.
+  const byId = H.resolveRuns({ runs: [{ command: 'c2', exitCode: 0, failing: [] }, { command: 'c1 (core + options)', exitCode: 0, failing: [] }, { command: 'pytest tests/test_new.py', exitCode: 0, failing: [] }] }, commands)
+  assert.deepEqual(byId.runs.map(r => r.command), [commands[1], commands[0], 'pytest tests/test_new.py'])
+  assert.equal(H.regressionReported(byId, commands), true, 'a relay that did not echo the commands still reported')
+  // A paraphrase with no id cannot be tied to a command, and one command missing is still missing.
+  assert.equal(H.regressionReported(H.resolveRuns({ runs: [{ command: 'c1', exitCode: 0, failing: [] }, { command: 'the termui command', exitCode: 0, failing: [] }] }, commands), commands), false)
+  assert.equal(H.regressionReported(H.resolveRuns({ runs: [{ command: 'c1', exitCode: 0, failing: [] }] }, commands), commands), false)
+  assert.equal(H.resolveRuns(null, commands), null)
+})
+
+test('a command that is red without naming a test is the same failure under its id as under its text', () => {
+  const commands = ['pytest tests']
+  const before = H.failingTests({ runs: [{ command: 'pytest tests', exitCode: 2, failing: [] }] }).map(t => t.id)
+  const again = H.failingTests(H.resolveRuns({ runs: [{ command: 'c1', exitCode: 2, failing: [] }] }, commands))
+  assert.deepEqual(H.newFailures(again, before, []), [], 'the id must not make an old failure look new')
 })
 
 test('blame is a claim limited to the bugs the wave actually attempted', () => {
@@ -76,27 +103,45 @@ test('the unfixed reason names the test the fix broke', () => {
   assert.equal(H.regressionReason([{ id: 't::a' }, { id: 't::b' }, { id: 't::c' }]), 'fix breaks existing test t::a (+2 more)')
 })
 
-test('a restore point is an object id from a relay that exited clean, and nothing else', () => {
+test('a restore point is the id on the line the command printed, whatever the relay called the command', () => {
   const id = 'fa866b8dee299454452b36fcb5557d1fe0155771'
-  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: `${id}\n` }] }), id)
-  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: 'f'.repeat(64) }] }), 'f'.repeat(64), 'a sha-256 repository')
-  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 128, stdout: id }] }), '', 'a failed command is no restore point')
-  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: 'done, the tree is saved' }] }), '', 'prose is not an object id')
-  assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: `${id}; rm -rf .` }] }), '', 'nothing but the id may reach a command line')
+  const relay = (stdout, exitCode = 0, command = 'snapshot') => ({ results: [{ command, exitCode, stdout }] })
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${id}\n`)), id)
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${id}`, 0, 'I ran the snapshot command')), id, 'the command field is not read')
+  assert.equal(H.snapshotOf(relay(`${id}\n`)), id, 'a bare id on its own line is still an id')
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${'f'.repeat(64)}`)), 'f'.repeat(64), 'a sha-256 repository')
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${id}`, 128)), '', 'a failed command is no restore point')
+  assert.equal(H.snapshotOf(relay('done, the tree is saved')), '', 'prose is not an object id')
+  assert.equal(H.snapshotOf(relay('')), '', 'an empty stdout is never a restore point')
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${id}; rm -rf .`)), '', 'nothing but the id may reach a command line')
+  assert.equal(H.snapshotOf(relay(`crg-restore-point ${id}\ncrg-restore-point ${'0'.repeat(40)}`)), '', 'two different ids is no answer')
   assert.equal(H.snapshotOf({ results: [] }), '')
   assert.equal(H.snapshotOf(null), '')
 })
 
-test('a restore is confirmed only by clean exit codes and a comparison that lists no file', () => {
-  const rows = (stdout, exitCode = 0) => ({ results: [
-    { command: '( … read-tree abc && … checkout-index -f -z --stdin && … clean -f -q -- a )', exitCode: 0 },
-    { command: '( … add -A && … diff --cached --name-only --exit-code abc -- a )', exitCode, stdout },
-  ] })
-  assert.equal(H.restoreOk(rows('')), true)
-  assert.equal(H.restoreOk(rows('src/a.py\n', 1)), false, 'a file that still differs is not restored')
-  assert.equal(H.restoreOk(rows('src/a.py\n', 0)), false, 'a listed file outweighs a kind exit code')
-  assert.equal(H.restoreOk({ results: rows('').results.slice(0, 1) }), false, 'no comparison, no confirmation')
-  assert.equal(H.restoreOk(null), false, 'a restore that never reported is not a restore')
+const SNAP = 'df36759feac9f37a1208353c46d05951052b410e'
+// What a live restore agent sent back: it ran both commands and named them instead of echoing them.
+const labelled = compareStdout => ({ results: [
+  { command: 'restore command', exitCode: 0, stdout: '', stderr: '' },
+  { command: 'compare command', exitCode: 0, stdout: compareStdout, stderr: '' },
+] })
+
+test('a restore that ran is confirmed by the line it printed, not by an echoed command', () => {
+  assert.equal(H.restoreOk(labelled(`crg-restore-ok ${SNAP}\n`), SNAP), true, 'paraphrased command fields must not cost a good restore')
+  assert.equal(H.restoreOk({ results: [{ command: 'both', exitCode: 0, stdout: `crg-restore-ok ${SNAP}` }] }, SNAP), true, 'however the rows are cut')
+})
+
+test('a restore relay without the success line is not confirmed, whatever its exit codes say', () => {
+  assert.equal(H.restoreOk(labelled(''), SNAP), false, 'empty stdout is what a relay that ran nothing returns too')
+  assert.equal(H.restoreOk(labelled('restored, nothing differs'), SNAP), false, 'a summary is not the line')
+  assert.equal(H.restoreOk(labelled(`crg-restore-ok ${'0'.repeat(40)}`), SNAP), false, 'the line for another restore point is not this restore')
+  assert.equal(H.restoreOk(labelled('src/a.py\n'), SNAP), false, 'a listed file is a file that still differs')
+  const failed = labelled(`crg-restore-ok ${SNAP}`)
+  failed.results[1].exitCode = 1
+  assert.equal(H.restoreOk(failed, SNAP), false, 'a non-zero exit is never confirmed')
+  assert.equal(H.restoreOk(labelled(`crg-restore-ok ${SNAP}`), ''), false)
+  assert.equal(H.restoreOk({ results: [] }, SNAP), false)
+  assert.equal(H.restoreOk(null, SNAP), false, 'a restore that never reported is not a restore')
 })
 
 // A real repository, and a "wave" played by the test: snapshot, edit, restore, compare.
@@ -118,6 +163,9 @@ const withRepo = run => {
   }
 }
 const restore = (repo, files, snapshot) => H.restoreCommands(repo, files, snapshot).map(sh)
+// Take a restore point the way the workflow does: run the command, read the line it prints.
+const snapshotIn = repo => H.snapshotOf({ results: [{ command: 'snapshot', exitCode: 0, stdout: sh(H.snapshotCommand(repo)) }] })
+const confirmed = (snapshot, [putBack, compared]) => H.restoreOk({ results: [{ command: 'put-back', exitCode: 0, stdout: putBack }, { command: 'compare', exitCode: 0, stdout: compared }] }, snapshot)
 
 test('a restored file keeps the uncommitted edit the user had in it before the wave', () => {
   withRepo(({ repo, git, write, read }) => {
@@ -125,12 +173,12 @@ test('a restored file keeps the uncommitted edit the user had in it before the w
     git('add', '-A')
     git('commit', '-qm', 'init')
     write('src/core.py', 'def f():\n    return 1\n\n# my half-finished idea\n') // the user's own, uncommitted
-    const snapshot = sh(H.snapshotCommand(repo)).trim()
-    assert.equal(H.snapshotOf({ results: [{ command: 'c', exitCode: 0, stdout: snapshot }] }), snapshot)
+    assert.match(sh(H.snapshotCommand(repo)), /^crg-restore-point [0-9a-f]{40}\n$/, 'the command says what the id is, on one line')
+    const snapshot = snapshotIn(repo)
+    assert.match(snapshot, /^[0-9a-f]{40}$/)
 
     write('src/core.py', 'def f():\n    return 2\n\n# my half-finished idea\n') // the wave's fix, which broke a test
-    const [, compared] = restore(repo, ['src/core.py'], snapshot)
-    assert.equal(compared, '', 'the comparison must list nothing')
+    assert.equal(confirmed(snapshot, restore(repo, ['src/core.py'], snapshot)), true, 'the comparison must print its success line')
     assert.equal(read('src/core.py'), 'def f():\n    return 1\n\n# my half-finished idea\n', 'the user\'s edit is still there, and the wave\'s is gone')
   })
 })
@@ -150,7 +198,7 @@ test('a restore puts back exactly what the wave began with — staged, untracked
     write('tests/test_earlier_fix.py', 'an earlier wave\'s test, never committed\n')
     const indexBefore = readFileSync(join(repo, '.git/index'))
     const statusBefore = git('status', '--porcelain')
-    const snapshot = sh(H.snapshotCommand(repo)).trim()
+    const snapshot = snapshotIn(repo)
     assert.deepEqual(readFileSync(join(repo, '.git/index')), indexBefore, 'taking a restore point must not touch the index')
     assert.equal(git('status', '--porcelain'), statusBefore, 'nor the working tree')
 
@@ -163,8 +211,7 @@ test('a restore puts back exactly what the wave began with — staged, untracked
     write('tests/test_created.py', 'created by the wave\n')
 
     const named = ['src/a.py', 'src/b*.py', "src/it's.py", 'src/staged.py', 'notes.txt', 'tests/test_earlier_fix.py', 'tests/test_a.py', 'src/removed.py', 'run.sh', 'tests/new/test_added.py', 'tests/test_created.py', 'src/never_existed.py']
-    const [, compared] = restore(repo, named, snapshot)
-    assert.equal(compared, '')
+    assert.equal(confirmed(snapshot, restore(repo, named, snapshot)), true)
     for (const f of ['src/a.py', 'src/b*.py', "src/it's.py", 'tests/test_a.py', 'src/removed.py']) assert.equal(read(f), 'committed\n', f)
     assert.equal(read('src/staged.py'), 'staged\nand then edited\n')
     assert.equal(read('notes.txt'), 'untracked, mine\n', 'an untracked file that existed is put back, not deleted')
@@ -183,12 +230,12 @@ test('the comparison notices a named file that is not what it was', () => {
     write('src/a.py', 'committed\n')
     git('add', '-A')
     git('commit', '-qm', 'init')
-    const snapshot = sh(H.snapshotCommand(repo)).trim()
+    const snapshot = snapshotIn(repo)
     const [, compare] = H.restoreCommands(repo, ['src/a.py', 'tests/test_new.py'], snapshot)
-    assert.equal(sh(compare), '', 'nothing has changed yet')
+    assert.equal(sh(compare), `crg-restore-ok ${snapshot}\n`, 'nothing has changed yet, and it says so in words')
     write('src/a.py', 'still edited\n')
     write('tests/test_new.py', 'still here\n')
-    assert.throws(() => sh(compare), err => err.status === 1 && err.stdout.toString() === 'src/a.py\ntests/test_new.py\n', 'exit 1 and both files named')
+    assert.throws(() => sh(compare), err => err.status === 1 && err.stdout.toString() === 'src/a.py\ntests/test_new.py\n', 'exit 1, both files named, and no success line')
   })
 })
 
@@ -201,6 +248,7 @@ test('a path cannot become a command or widen the restore', () => {
   }
   assert.ok(putBack.includes(`git --literal-pathspecs -C '/repo' ls-files -z -- 'a b.py'`) && putBack.includes(`git --literal-pathspecs -C '/repo' clean -f -q -- 'a b.py'`))
   assert.ok(compare.includes(`git --literal-pathspecs -C '/repo' diff --cached --name-only --exit-code abc123 -- 'a b.py'`))
+  assert.ok(compare.endsWith(` && echo "crg-restore-ok abc123" )`), 'the success line is printed only when the comparison exits 0')
   assert.equal(H.shellQuote(`it's`), `'it'\\''s'`)
 })
 
@@ -257,10 +305,15 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
       const committedFiles = [...prompt.match(/add -- (.*?) {3}\(EXACTLY/)[1].matchAll(/"([^"]+)"/g)].map(m => m[1])
       return { commitHash: `c0ffee${calls.filter(c => c.label === label).length}`, committedFiles, results: [{ command: 'git commit', exitCode: 0 }] }
     }
-    if (kind === 'regress') return { runs: [{ command: 'pytest tests/test_alpha.py tests/test_bravo.py', exitCode: 0, failing: [] }] }
+    // Like a live agent: the baseline names its command in full, a re-run answers with the id.
+    if (kind === 'regress') return { runs: [{ command: label === 'regress:baseline' ? 'pytest tests/test_alpha.py tests/test_bravo.py' : 'c1', exitCode: 0, failing: [] }] }
     if (kind === 'blame') return { causes: [] }
-    if (kind === 'snapshot') return { results: [{ command: fenced(prompt)[0], exitCode: 0, stdout: `${'5'.repeat(39)}${nth}\n` }] }
-    if (kind === 'restore') return { results: fenced(prompt).map(command => ({ command, exitCode: 0, stdout: '' })) }
+    // Neither echoes its command back: the script must read what the command PRINTED.
+    if (kind === 'snapshot') return { results: [{ command: 'snapshot', exitCode: 0, stdout: `crg-restore-point ${'5'.repeat(39)}${nth}\n` }] }
+    if (kind === 'restore') {
+      const id = /--exit-code ([0-9a-f]+) --/.exec(prompt)[1]
+      return { results: [{ command: 'put-back', exitCode: 0, stdout: '' }, { command: 'compare', exitCode: 0, stdout: `crg-restore-ok ${id}\n` }] }
+    }
     return { results: [{ command: 'ok', exitCode: 0, stdout: '', stderr: '' }] }
   }
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -364,11 +417,15 @@ test('a clean run takes a baseline, checks each wave before its commit, and repo
 
   const snapshot = calls.find(c => c.label === 'snapshot:wave1')
   assert.ok(snapshot.prompt.includes(H.fence(H.snapshotCommand('/tmp/crg-fixture'))), 'the restore point is taken by the script\'s own command')
+  assert.match(snapshot.prompt, /command = the word snapshot \(do not copy the command text\)/)
   assert.deepEqual(snapshot.opts.schema.required, ['results'])
 
   const rerun = calls.find(c => c.label === 'regress:wave1')
   assert.ok(rerun.prompt.includes(`Run EXACTLY these 1 command(s)`))
-  assert.ok(rerun.prompt.includes(H.fence(BASE_CMD)), 'the baseline command is repeated verbatim, as data')
+  assert.ok(rerun.prompt.includes(`c1:\n${H.fence(BASE_CMD)}`), 'the baseline command is repeated verbatim, as data, under a short id')
+  assert.match(rerun.prompt, /For a step-1 command, command = JUST its id \(c1, c2, …\) — do not copy the command text\./)
+  assert.equal(rerun.prompt.includes('already failing before any fix'), false, 'nothing to list when the baseline was clean')
+  assert.match(baseline.prompt, /command = the exact string you ran, complete and unabbreviated/)
   assert.ok(rerun.prompt.includes(H.fence('src/alpha.py\ntests/test_alpha.py\nsrc/bravo.py\ntests/test_bravo.py')), 'plus the tests for the files this wave touched')
 })
 
@@ -394,7 +451,10 @@ test('a fix that breaks a passing test is restored before the commit, and tried 
   ])
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.deepEqual(restore.opts.schema.required, ['results'])
-  assert.ok(restore.prompt.includes(H.restoreCommands('/tmp/crg-fixture', ['src/alpha.py', 'tests/test_alpha.py'], WAVE1).map(c => H.fence(c)).join('\n')), 'only the blamed fixer\'s files go back, to wave 1\'s restore point')
+  const [putBack, compare] = H.restoreCommands('/tmp/crg-fixture', ['src/alpha.py', 'tests/test_alpha.py'], WAVE1)
+  assert.ok(restore.prompt.includes(`put-back:\n${H.fence(putBack)}\ncompare:\n${H.fence(compare)}`), 'only the blamed fixer\'s files go back, to wave 1\'s restore point')
+  assert.match(restore.prompt, /command = just its name above \(put-back or compare\) — do not copy the command text/)
+  assert.equal(/restore command|compare command/.test(restore.prompt), false, 'the brief must not hand the agent a label to answer with')
   assert.ok(calls.find(c => c.label === 'blame:wave1').prompt.includes(`git -C /tmp/crg-fixture diff ${WAVE1} -- <its files>`), 'the blame agent reads this wave\'s edits, not everything since HEAD')
   assert.equal(restore.prompt.includes('src/bravo.py'), false)
 
@@ -502,6 +562,61 @@ test('a restore that is not confirmed stops the Fix phase and says which files t
     assert.deepEqual(result.fix.unfixed.map(b => b.reason), [...Array(4).fill('the restore after wave 1 was not confirmed'), 'not attempted — the restore after wave 1 was not confirmed'])
     assert.ok(logs.some(l => /restore NOT confirmed — src\/alpha\.py, tests\/test_alpha\.py may still hold an edit/.test(l)))
   }
+})
+
+test('a restore agent that answers with labels is believed when its output carries the success line', async () => {
+  // The relay a live run sent back, with the line the compare command now prints.
+  const labels = ({ prompt }) => ({ results: [
+    { command: 'restore command', exitCode: 0, stdout: '', stderr: '' },
+    { command: 'compare command', exitCode: 0, stdout: `crg-restore-ok ${/--exit-code ([0-9a-f]+) --/.exec(prompt)[1]}\n`, stderr: '' },
+  ] })
+  const { result, labels: called } = await fixRun(SRC, {
+    bugs: TWO,
+    on: { regress: script(runs(), runs(EXISTING)), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }), restore: labels },
+  })
+  assert.equal(result.fix.halted, undefined, 'a restore that worked must not stop the fix phase')
+  assert.ok(called.includes('regress:wave1:recheck') && called.includes('commit:wave'))
+  assert.deepEqual(names(result.fix.fixed), ['b2', 'b1'])
+})
+
+test('the same labelled relay with nothing printed is not a confirmed restore', async () => {
+  const silent = () => ({ results: [
+    { command: 'restore command', exitCode: 0, stdout: '', stderr: '' },
+    { command: 'compare command', exitCode: 0, stdout: '', stderr: '' },
+  ] })
+  const { result, logs } = await fixRun(SRC, {
+    bugs: TWO,
+    on: { regress: script(runs(), runs(EXISTING)), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }), restore: silent },
+  })
+  assert.equal(result.fix.halted, 'the restore after wave 1 was not confirmed')
+  assert.deepEqual(result.fix.commits, [])
+  assert.ok(logs.some(l => /restore NOT confirmed — src\/alpha\.py, tests\/test_alpha\.py may still hold an edit/.test(l)))
+})
+
+test('a wave gate that answers with ids instead of echoing the commands has reported', async () => {
+  const CORE = `docker run --rm -v "$PWD":/w img sh -lc 'python -m pytest tests/test_alpha.py -q'`
+  const TERM = 'python -m pytest tests/test_bravo.py -q'
+  const OLD = { id: 'tests/test_bravo.py::test_already_red', output: 'was red before any fix' }
+  const baseline = { runs: [{ command: CORE, exitCode: 0, failing: [] }, { command: TERM, exitCode: 1, failing: [OLD] }] }
+  const byId = { runs: [
+    { command: 'C2 — the bravo tests', exitCode: 1, failing: [OLD] },
+    { command: 'c1', exitCode: 0, failing: [] },
+    { command: 'python -m pytest tests/test_extra.py -q', exitCode: 0, failing: [] },
+  ] }
+  const { result, calls } = await fixRun(SRC, { bugs: TWO, on: { regress: script(baseline, byId) } })
+  assert.deepEqual(result.fix.regressionGate.waves, [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }])
+  assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
+  assert.equal(result.fix.commits.length, 1)
+  const rerun = calls.find(c => c.label === 'regress:wave1')
+  assert.ok(rerun.prompt.includes(`c1:\n${H.fence(CORE)}\nc2:\n${H.fence(TERM)}`), 'each baseline command goes out under its id')
+  assert.ok(rerun.prompt.includes(`write its id exactly as it is written here:\n${H.fence(OLD.id)}`), 'and the tests already failing are listed for the agent to copy')
+})
+
+test('a wave gate that names neither the id nor the command has not reported', async () => {
+  const vague = { runs: [{ command: 'the baseline tests', exitCode: 0, failing: [] }] }
+  const { result } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), vague) } })
+  assert.deepEqual(result.fix.commits, [])
+  assert.deepEqual(result.fix.unfixed.map(b => b.reason), Array(2).fill(H.REGRESSION_UNREPORTED))
 })
 
 test('an open bug\'s own red test is left to its own gate — it does not take anything back', async () => {
