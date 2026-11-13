@@ -240,7 +240,10 @@ Classify real-bug vs intentional per ${skill}: "intentional" requires POSITIVE e
 ${untrusted}`
 
 // Survivor rule: kept only if >=1 reviewer confirms AND none refutes.
-// Conflicts (one confirms, one refutes) -> kept but flagged. Intentional -> deferred.
+// Conflicts (one confirms, one refutes) -> kept but flagged `conflicted`, which Fix holds.
+// A reviewer who confirmed outranks one who said "intentional": the finding is kept, carries
+// the objection as `dissent`, and Fix takes it. "Intentional" with no confirm beside it ->
+// deferred. A verdict that is both confirmed and "intentional" speaks as "intentional".
 // Takes the {f, refute, confirm} rows Verify collected; a null row or reviewer is a dead agent.
 const bucketVerdicts = verified => {
   const confirmedBugs = []
@@ -253,15 +256,15 @@ const bucketVerdicts = verified => {
       continue
     }
     const intentional = verdicts.find(v => v.classification === 'intentional')
-    if (intentional) {
+    const confirms = verdicts.filter(v => v.confirmed && v.classification !== 'intentional')
+    if (intentional && !confirms.length) {
       deferred.push({ ...f, deferReason: intentional.reason })
       continue
     }
-    const confirms = verdicts.filter(v => v.confirmed)
-    const refutes = verdicts.filter(v => !v.confirmed)
+    const refutes = verdicts.filter(v => !v.confirmed && v.classification !== 'intentional')
     if (confirms.length && !refutes.length) {
       const adj = confirms.map(v => v.adjustedSeverity).find(Boolean)
-      confirmedBugs.push({ ...f, ...(adj ? { severity: adj } : null) })
+      confirmedBugs.push({ ...f, ...(adj ? { severity: adj } : null), ...(intentional ? { dissent: intentional.reason } : null) })
     } else if (confirms.length && refutes.length) {
       confirmedBugs.push({ ...f, conflicted: true, conflictNote: refutes.map(v => v.reason).join(' | ') })
     } else {
@@ -270,6 +273,11 @@ const bucketVerdicts = verified => {
   }
   confirmedBugs.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9))
   return { confirmedBugs, deferred, rejected }
+}
+
+const verifyLine = ({ confirmedBugs, deferred, rejected }) => {
+  const overDissent = confirmedBugs.filter(b => 'dissent' in b).length
+  return `Verify: ${confirmedBugs.length} confirmed${overDissent ? ` (${overDissent} over an "intentional" dissent)` : ''} · ${deferred.length} deferred (intentional) · ${rejected.length} rejected`
 }
 
 // ---- regression gate ----------------------------------------------------------
@@ -1501,7 +1509,7 @@ const buckets = bucketVerdicts(verified)
 confirmedBugs = buckets.confirmedBugs
 deferred = buckets.deferred
 rejected = buckets.rejected
-log(`Verify: ${confirmedBugs.length} confirmed · ${deferred.length} deferred (intentional) · ${rejected.length} rejected`)
+log(verifyLine(buckets))
 
 // ---- Persist the confirmed ledger: the serialized detect->fix hand-off -------
 // Detection's output as a self-describing file — review it, cluster it for
@@ -1841,7 +1849,8 @@ if (fix && !fixRefused && confirmedBugs.some(b => !b.conflicted)) {
   const waveLog = []
   const touchedFiles = new Set() // every source/test file edited across waves — the final gate's blast-radius roots
   // Conflicting verdicts → keep unfixed, log both (methodology Phase 2). They stay
-  // in confirmedBugs for the report but never enter the fix queue.
+  // in confirmedBugs for the report but never enter the fix queue. A row with a
+  // `dissent` is not conflicted: it is queued like any other confirmed bug.
   const heldConflicted = confirmedBugs.filter(b => b.conflicted).length
   if (heldConflicted) log(`Fix: holding ${heldConflicted} conflicted finding(s) unfixed (mixed verdicts)`)
   let queue = confirmedBugs.filter(b => !b.conflicted).map((b, i) => ({ ...b, bugId: b.bugId || `b${i}` }))
