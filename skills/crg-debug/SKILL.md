@@ -122,6 +122,7 @@ rows its `counts` say, when a row in any bucket has no `file` or no `rootCause` 
 a finding), or when the read did not come back whole after one more try. Relay the reason as given;
 do not retry with an edited file. To fix only some confirmed bugs, narrow the ledger with
 `crg-debug.ledger-slice.mjs`, which keeps `counts` true; rows deleted by hand leave it false. A
+narrowed ledger holds no `unreviewed` rows, so a fix run from it reviews nothing. A
 ledger written before `counts` existed is accepted, and the run logs that it could not be checked.
 
 **Tests that were already failing.** When `fix.finalGate.alreadyFailing` is not empty, name every

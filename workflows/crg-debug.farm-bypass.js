@@ -421,7 +421,10 @@ const stageFix = async (triaged, candidate) => {
     // above (clean+fixed, regression cap, tier cap) fires well before this.
     for (let attempt = 0; attempt < 6 && !outcome; attempt++) {
       note(candidate.repo, `fix pass ${attempt + 1} at tier ${tier}: TDD waves (RED→GREEN), gated by exit codes`)
-      fixRet = await workflow({ scriptPath: crgDebugPath }, { repoRoot: triaged.repoRoot, fromLedger: ledgerPath, fix: true, model: tier, methodologyPath, ...(priorFailure ? { priorFailure } : {}) })
+      // fixOnly: the first pass takes the detection ledger as it is, and that ledger may list
+      // findings nobody reviewed. A fix run would review them and fix what it confirmed —
+      // bugs the security screen above never saw, in a PR nobody reads before it opens.
+      fixRet = await workflow({ scriptPath: crgDebugPath }, { repoRoot: triaged.repoRoot, fromLedger: ledgerPath, fix: true, fixOnly: true, model: tier, methodologyPath, ...(priorFailure ? { priorFailure } : {}) })
       const fx = (fixRet && fixRet.fix) || { fixed: [], unfixed: [], finalGate: { clean: false } }
       const clean = !!(fx.finalGate && fx.finalGate.clean)
       const unfixed = fx.unfixed || []

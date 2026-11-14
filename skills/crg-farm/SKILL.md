@@ -202,9 +202,17 @@ skip `gate-asked` — nothing is shown.
 Under `--auto-bypass`: skip the ask — take `select-bugs` (confirmed non-conflicted set) at the
 complexity-recommended tier, logged with `bypass:true`.
 
-If the human narrows to a subset, slice the ledger to that subset before fixing:
+**Only what was picked is fixed.** Always slice the ledger to the selection before fixing, also
+when the selection is every confirmed bug and also under `--auto` / `--auto-bypass`:
 `node $HOME/.claude/workflows/crg-debug.ledger-slice.mjs <ledger.json> < keep.json > <scoped.json>`
-(keep.json = the chosen bugs or their `keyOf`s).
+(keep.json = the chosen bugs or their `keyOf`s). The fix run takes `<scoped.json>`, never the
+detection ledger itself. A detection ledger can list findings nobody reviewed (`unreviewed`, when
+the run met its agent limit or both reviewers of a finding returned nothing), and a fix run from a
+ledger reviews those first and fixes what it confirms: bugs this gate never showed and Step 2a never
+classified. The slice carries no `unreviewed` rows, and Step 3 passes `fixOnly: true` as well, so
+the run fixes the picked bugs and nothing else. When the detection return's `unreviewed` is not
+empty, say so at GATE-TRIAGE with the count: they are not on offer here, and
+`/crg-debug --from-ledger <ledger.json> --detect-only` reviews them for a later run.
 
 ## Step 2a — Security classification → GATE-SECURITY-ROUTE
 
@@ -307,11 +315,12 @@ after `GATE-DISPATCH-CHANNEL` is a genuine fork, not two flavors of the same rep
 
 ## Step 3 — FIX + escalation → GATE-ESCALATE
 
-Fix from the (possibly sliced) ledger at the chosen `startTier`:
+Fix from the sliced ledger at the chosen `startTier`. `fixOnly: true` goes on every fix
+invocation, the escalations included: the run fixes the ledger's confirmed rows and reviews nothing.
 
 ```
 Workflow({ scriptPath: '$HOME/.claude/workflows/crg-debug.js',
-  args: { repoRoot, fromLedger: '<abs ledger path>', fix: true, model: '<tier>',
+  args: { repoRoot, fromLedger: '<abs sliced ledger path>', fix: true, fixOnly: true, model: '<tier>',
           methodologyPath: '$HOME/.claude/workflows/crg-debug.methodology.md' } })
 ```
 

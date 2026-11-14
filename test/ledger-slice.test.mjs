@@ -67,3 +67,20 @@ test('a sliced ledger says how many confirmed rows it kept', () => {
 test('a ledger with no counts gets none from a slice', () => {
   assert.equal('counts' in sliceLedger(LEDGER, [bug('b.py:3', 'inverted guard')]), false)
 })
+
+// A slice is the bugs somebody chose to fix. A fix run from a ledger reviews its unreviewed
+// rows and fixes what it confirms, so the slice carries none.
+test('a sliced ledger carries no unreviewed rows; the ledger it was cut from keeps them', () => {
+  const held = [{ file: 'u.py:1', rootCause: 'nobody read this', unreviewedReason: 'agent limit' }]
+  const whole = { ...LEDGER, counts: { confirmedBugs: 3, deferred: 1, rejected: 0, unreviewed: 1 }, unreviewed: held }
+  const out = sliceLedger(whole, whole.confirmedBugs)
+  assert.deepEqual(out.unreviewed, [])
+  assert.equal(out.counts.unreviewed, 0)
+  assert.deepEqual(out.confirmedBugs, whole.confirmedBugs, 'keeping every confirmed bug is still a slice')
+  assert.deepEqual(whole.unreviewed, held)
+  assert.equal(whole.counts.unreviewed, 1)
+  assert.deepEqual(Object.keys(out), Object.keys(whole))
+  // No counts: the rows go all the same. No bucket: none is added.
+  assert.deepEqual(sliceLedger({ ...LEDGER, unreviewed: held }, []).unreviewed, [])
+  assert.equal('unreviewed' in sliceLedger(LEDGER, []), false)
+})

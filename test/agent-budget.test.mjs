@@ -548,6 +548,58 @@ test('a ledger with nothing unreviewed is fixed from as before, and with fix off
   assert.deepEqual(old.result.fix.fixed.map(b => b.bugId), ['b1'], 'a ledger written before the bucket existed reads as having none')
 })
 
+// crg-farm's human picks the bugs to fix and the ledger is cut to that choice. A fix run
+// reviews a ledger's unreviewed rows and fixes what it confirms, so a cut ledger holds none:
+// nothing the human never saw reaches the fix phase.
+test('a fix run from a sliced ledger starts no reviewer and fixes only the bugs that were kept', async () => {
+  const whole = PRIOR({ confirmedBugs: [bug('b1', 'src/alpha.py'), bug('b2', 'src/bravo.py')], counts: { confirmedBugs: 2, deferred: 1, rejected: 2, unreviewed: 4 } })
+  const sliced = sliceLedger(whole, [whole.confirmedBugs[0]])
+  assert.deepEqual(sliced.unreviewed, [], 'the slice carries no unreviewed rows')
+  assert.deepEqual(sliced.counts, { confirmedBugs: 1, deferred: 1, rejected: 2, unreviewed: 0 }, 'and says so')
+  assert.equal(whole.unreviewed.length, 4, 'the ledger it was cut from keeps them')
+
+  const { result, labels, logs, disk } = await fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => sliced, ...REVIEW } })
+  assert.ok(!labels.some(l => /^(refute|confirm|persist)/.test(l)), 'no reviewer is started, and the ledger is not written')
+  assert.deepEqual(labels.slice(0, 4), ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline'])
+  assert.deepEqual(result.confirmedBugs.map(b => b.file), ['src/alpha.py:10'])
+  assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10'], 'm100, which a review would have confirmed, is not fixed')
+  assert.deepEqual(result.unreviewed, [])
+  assert.ok(logs.includes('Ingested ledger: 1 confirmed · 1 deferred · 2 rejected · 1 toolchain pkg'))
+  assert.deepEqual(onDisk(disk), sliced)
+
+  // The same choice made of every confirmed bug: still a slice, still nothing to review.
+  const all = await fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => sliceLedger(whole, whole.confirmedBugs), ...REVIEW } })
+  assert.ok(!all.labels.some(l => /^(refute|confirm|persist)/.test(l)))
+  assert.deepEqual(all.result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/bravo.py:10'])
+})
+
+// The same line held by the run itself, for a caller that hands over a ledger it did not cut.
+test('fixOnly fixes the confirmed rows of the ledger and reviews nothing: the unreviewed stay as the ledger has them', async () => {
+  const { result, labels, logs, disk } = await fixRun(SRC, { bugs: [], args: { fixOnly: true }, on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
+  assert.ok(!labels.some(l => /^(refute|confirm|persist)/.test(l)), 'no reviewer is started, and the ledger is not written')
+  assert.deepEqual(labels.slice(0, 4), ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline'])
+  assert.equal(result.mode, 'fix-from-ledger')
+  assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10'])
+  assert.deepEqual(result.unreviewed, PRIOR().unreviewed, 'returned as they were, reasons and all')
+  assert.equal(result.stats.unreviewed, 4)
+  assert.equal(result.ledgerSaved, undefined, 'this run wrote no ledger')
+  assert.deepEqual(onDisk(disk), PRIOR(), 'and the file is as it was')
+  assert.ok(logs.includes('Ingest: 4 unreviewed finding(s) are left as the ledger has them (fixOnly) — this run reviews nothing and fixes only the 1 confirmed'))
+
+  // Said only where it means something: a value that is not a boolean, or a run that
+  // would not fix from a ledger, is refused before any agent starts.
+  const refused = async (args, why) => {
+    const run = await fixRun(SRC, { bugs: [], args, on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } }).then(() => null, error => error)
+    assert.match(run.message, why)
+  }
+  await refused({ fixOnly: 'true' }, /^Unusable fixOnly "true" — it must be true or false$/)
+  await refused({ fixOnly: true, fix: false }, /^fixOnly fixes exactly the confirmed rows of a ledger — it needs fromLedger and fix:true$/)
+  await refused({ fixOnly: true, fromLedger: '' }, /^fixOnly fixes exactly the confirmed rows of a ledger — it needs fromLedger and fix:true$/)
+  // false is the run as it was.
+  const off = await fixRun(SRC, { bugs: [], args: { fixOnly: false }, on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
+  assert.deepEqual(off.result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/m100.py:101'])
+})
+
 test('a re-save that fails says the file still lists the reviewed rows as unreviewed, and the fix goes on', async () => {
   const { result, logs, disk } = await fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => PRIOR(), ...REVIEW, persist: ({ label }) => (label === 'persist:1' ? 'written' : undefined) } })
   assert.equal(result.ledgerSaved, false)

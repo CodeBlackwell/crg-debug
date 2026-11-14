@@ -566,6 +566,26 @@ database) either way.
 
 ---
 
+## Only what was picked is fixed
+
+Nothing reaches the fix phase that GATE-TRIAGE did not select (under `--auto-bypass`: that the
+security screen did not see). `crg-debug --from-ledger` with `fix:true` would otherwise review the
+ledger's `unreviewed` findings first and fix what it confirmed. Two things hold the line, and the
+skill does both:
+
+- every fix run takes a ledger cut by `lib/crg-debug.ledger-slice.mjs` to the selection, even when
+  the selection is every confirmed bug. A slice carries no `unreviewed` rows;
+- every fix invocation passes `fixOnly: true`, which makes crg-debug fix exactly the ledger's
+  confirmed rows and review nothing.
+
+The bypass harness (`crg-debug.farm-bypass.js`) has no gate to cut for: its first pass takes the
+detection ledger as it is, and `fixOnly: true`, passed in code on every pass, is what keeps that
+ledger's unreviewed findings out. Its retry ledgers hold only the unfixed bugs.
+
+The detection ledger on disk keeps its `unreviewed` rows.
+`/crg-debug --from-ledger <ledger.json> --detect-only` reviews them; a later farm run can then
+triage what that confirms.
+
 ## Escalation (orchestrator-driven; zero Workflow changes)
 
 `crg-debug --from-ledger` re-fixes **every** `confirmedBugs` entry in the ingested ledger and

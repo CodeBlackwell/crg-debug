@@ -119,8 +119,12 @@ Approved fixes:
 
 ```
 Workflow({ scriptPath: '~/.claude/workflows/crg-debug.js',
-  args: { repoRoot, fix: true, fromLedger: '<repoRoot>/.crg-debug/ledger.json', model, methodologyPath } })
+  args: { repoRoot, fix: true, fixOnly: true, fromLedger: '<repoRoot>/.crg-debug/ledger.json', model, methodologyPath } })
 ```
+
+`fixOnly: true` is required: the run fixes the confirmed bugs GATE-SWEEP showed and reviews
+nothing. Without it a fix run from a ledger first reviews any findings the sweep left `unreviewed`
+and fixes what it confirms, which the gate never saw.
 
 (crg-debug commits its fix waves on the current branch's `crg-debug/fix-*` — report both branches.)
 

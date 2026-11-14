@@ -40,6 +40,11 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   rejected, unreviewed}`, written by the script when it builds the ledger and again when a run
   from a ledger saves it. `crg-debug.ledger-slice.mjs` keeps the confirmed count true for the
   ledger it narrows, and adds no `counts` to a ledger that had none.
+- **`fixOnly`, for a caller whose bugs were chosen at a gate** (`crg-debug.js`). With
+  `fromLedger` and `fix:true`, `fixOnly: true` fixes exactly the ledger's confirmed rows: its
+  `unreviewed` rows are not reviewed, are returned as they were, and the file is not rewritten.
+  It is refused before any agent starts when it is not a boolean or when the run would not
+  fix from a ledger. A run that does not pass it is unchanged.
 - **The return says what a run used and whether its ledger was written** (`crg-debug.js`):
   `agents: {started, limit}`, `ledgerSaved`, `unreviewed`, and `stats.deferred`,
   `stats.rejected`, `stats.unreviewed`.
@@ -60,6 +65,9 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 - **A run from a ledger returns only the deferred and rejected rows it moved there itself**
   (`crg-debug.js`); the ledger's totals are in `stats`. It used to return every such row,
   which meant relaying them.
+- **A sliced ledger carries no unreviewed rows** (`crg-debug.ledger-slice.mjs`). The slice's
+  `unreviewed` is empty and its `counts.unreviewed` is 0; the ledger it was cut from is not
+  touched. A slice is a choice of bugs to fix, so a fix run from one has nothing to review.
 - **Writing the ledger takes two agents where it took one, for a ledger that fits one piece**
   (`crg-debug.js`): the writer, and the command that checks and assembles (`persist:1`,
   `persist:assemble`). Reading a small ledger is still one agent.
@@ -95,6 +103,15 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   deferred and rejected rows at all: it counts them, and its re-save lays the changed
   sections over the file. `ledger.json` is still one JSON document with the fields it had,
   plus `unreviewed` and `counts`. `node` must now be on the PATH of the agents' shell.
+- **crg-farm and crg-ralph fix only the bugs their gate showed** (the two skills, the farm
+  methodology, `crg-debug.farm-bypass.js`). Since a run from a ledger began to review the
+  ledger's `unreviewed` findings before fixing, a fix run handed a detection ledger could
+  confirm a bug and fix it in the same breath: past GATE-TRIAGE, past the security
+  classification, and in the bypass harness on into an unattended draft PR. crg-farm now
+  always cuts the ledger to the selection, also when that is every confirmed bug, and every
+  fix invocation in crg-farm, crg-ralph and the bypass harness passes `fixOnly: true`. The
+  bypass harness's first pass took the detection ledger as it was; its retry ledgers held
+  only the unfixed bugs and never carried unreviewed rows.
 - **A hollow ledger stops a run from a ledger; it is no longer an empty one** (`crg-debug.js`).
   A fix run was handed a 148 KB ledger of 33 confirmed bugs. The agent that returned it was
   cut off part-way, and on its second try submitted no confirmed rows, no rejected rows and

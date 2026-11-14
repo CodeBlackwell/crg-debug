@@ -101,6 +101,24 @@ test('b2: the recommended start tier is clamped to maxTier and the cap ends esca
   assert.match(res.handedOff[0].reason, /tier cap/)
 })
 
+// The first fix pass takes the detection ledger as it is, and that ledger may list findings
+// nobody reviewed. A fix run from a ledger reviews those and fixes what it confirms — bugs
+// the security screen never saw, on their way to a public draft PR. Every pass says fixOnly.
+test('every fix pass is fixOnly, so nothing the detection run left unreviewed is reviewed and fixed unseen', async () => {
+  const calls = []
+  await runWorkflow({
+    args: { ...baseArgs, maxTier: 'opus' },
+    agent: makeAgent({}),
+    // The first pass leaves the bug unfixed, the retry on the sliced ledger closes it.
+    workflow: makeWorkflow(n => ({ fix: n === 2 ? { fixed: [], unfixed: [BUG], finalGate: { clean: true } } : { fixed: [BUG], unfixed: [], finalGate: { clean: true } } }), calls),
+  })
+  const fixPasses = calls.filter(c => c.fix)
+  assert.equal(fixPasses.length, 2, 'the detection ledger, then the retry ledger')
+  assert.notEqual(fixPasses[0].fromLedger, fixPasses[1].fromLedger)
+  for (const c of fixPasses) assert.equal(c.fixOnly, true, `fix pass from ${c.fromLedger} would review that ledger's unreviewed rows`)
+  assert.equal('fixOnly' in calls[0], false, 'the detection run is a sweep')
+})
+
 // b7 — a best-effort telemetry close must never annihilate the run's only report of what shipped.
 test('b7: a failing run-close log does not discard the run result', async () => {
   const res = await runWorkflow({
