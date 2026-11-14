@@ -103,6 +103,20 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   deferred and rejected rows at all: it counts them, and its re-save lays the changed
   sections over the file. `ledger.json` is still one JSON document with the fields it had,
   plus `unreviewed` and `counts`. `node` must now be on the PATH of the agents' shell.
+- **Verify no longer discards every verdict** (`crg-debug.js`). A live sweep of 115 findings
+  started 230 reviewers, received 230 verdicts, and filed all 115 findings as unreviewed
+  with `no verdict`; a run from that ledger did the same again. The script matched each
+  finding to its reviewers' answers by the finding object it had sent into `parallel()`,
+  and the runtime hands back a copy, so no lookup ever matched. Findings are now matched by
+  their place in the list, a number carried out of the thunk (`verdictRows`), and
+  `firstToReview` returns places, not findings. The test doubles had returned the very
+  objects they were given, which is why the suite could not see it: in every test that
+  drives a whole run, `parallel()` now returns a JSON copy, and in the crg-debug run tests
+  so does every agent.
+- **A proposal carries the fixer's stated ground again** (`crg-debug.js`). The same mistake in
+  the fix phase, found once the doubles returned copies: the fixer's result was looked up by
+  the array of bugs it had been given, so on a live run `needsDecision[].fixerClaim` always
+  read "none given". It is looked up by file.
 - **crg-farm and crg-ralph fix only the bugs their gate showed** (the two skills, the farm
   methodology, `crg-debug.farm-bypass.js`). Since a run from a ledger began to review the
   ledger's `unreviewed` findings before fixing, a fix run handed a detection ledger could

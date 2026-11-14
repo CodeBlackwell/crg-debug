@@ -54,7 +54,7 @@ test('code-kind baseline failure does NOT trigger unfarmable — proceeds into M
     runWorkflow({
       args: { ...baseArgs, env: 'container' },
       agent: setupReturning([{ command: 'tsc', error: 'src/x.ts:3 TS2322 type error', kind: 'code' }], trace),
-      parallel: async thunks => Promise.all(thunks.map(t => t())),
+      parallel: async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))),
     }),
     NO_TARGETS,
   )
@@ -78,7 +78,7 @@ test('a failed Phase 0 recovers through the prose-free schema and keeps going', 
         if (opts.label === 'map' || opts.label === 'map-retry') return null
         return {}
       },
-      parallel: async thunks => Promise.all(thunks.map(t => t())),
+      parallel: async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))),
     }),
     NO_TARGETS, // reached Phase 1 — so Phase 0 recovered rather than aborting
   )
@@ -91,7 +91,7 @@ test('both setup attempts failing still aborts with the Phase 0 message', async 
     runWorkflow({
       args: baseArgs,
       agent: async (_p, opts = {}) => { trace.push(opts.label); return null },
-      parallel: async thunks => Promise.all(thunks.map(t => t())),
+      parallel: async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))),
     }),
     /Phase 0 \(Graph\) setup agent failed/,
   )
@@ -107,7 +107,7 @@ test('a failed Map falls back to the single-property retry before giving up', as
     runWorkflow({
       args: baseArgs,
       agent: setupReturning([], trace),
-      parallel: async thunks => Promise.all(thunks.map(t => t())),
+      parallel: async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))),
     }),
     NO_TARGETS,
   )
@@ -129,7 +129,7 @@ test('clean baseline (no failures) proceeds normally', async () => {
     runWorkflow({
       args: { ...baseArgs, env: 'container' },
       agent: setupReturning([], trace),
-      parallel: async thunks => Promise.all(thunks.map(t => t())),
+      parallel: async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))),
     }),
     NO_TARGETS,
   )

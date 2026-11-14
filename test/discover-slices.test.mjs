@@ -12,7 +12,7 @@ const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.m
 const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { ledgerDisk }`)()
 const DISK = ledgerDisk(SRC)
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
-const parallel = async thunks => Promise.all(thunks.map(t => t()))
+const parallel = async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows)))
 
 const names = (prefix, count) => Array.from({ length: count }, (_, i) => `${prefix}_${i}`)
 // backend-logic: 14 + 10 fill one slice, 30 is over the cap alone, then two small files.
@@ -42,7 +42,7 @@ const sweep = async ({ answer = () => ({ audited: [], findings: [] }), args = {}
     return 'written'
   }
   const res = await new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC)(
-    { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, agent, parallel, m => logs.push(m), undefined, () => {},
+    { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), parallel, m => logs.push(m), undefined, () => {},
   )
   return { calls, logs, res, finders: calls.filter(c => c.label.startsWith('find:')) }
 }

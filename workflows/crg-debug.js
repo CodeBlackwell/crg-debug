@@ -270,6 +270,15 @@ ${untrusted}`
 // Takes the {f, refute, confirm} rows Verify collected; a null reviewer is a dead agent.
 // A finding nobody reviewed ({f, unreviewed: why}) or whose reviewers both returned nothing
 // is `unreviewed`, never rejected or deferred: a null verdict is not a verdict.
+// One row per finding, in the findings' order, for bucketVerdicts. `reviewed` is what
+// came back from the reviewers: rows of { i, refute, confirm }, i being the finding's place
+// in `findings`. A finding is matched to its verdicts by that number alone. One that was
+// chosen and has no row got no verdict; one that was not chosen was never asked about.
+const verdictRows = (findings, chosen, reviewed) => {
+  const rowAt = new Map((reviewed || []).filter(row => row && Number.isInteger(row.i)).map(row => [row.i, row]))
+  return findings.map((f, i) =>
+    rowAt.has(i) ? { f, refute: rowAt.get(i).refute, confirm: rowAt.get(i).confirm } : { f, unreviewed: chosen.has(i) ? NO_VERDICT_REASON : AGENT_LIMIT_REASON })
+}
 const bucketVerdicts = verified => {
   const confirmedBugs = []
   const deferred = []
@@ -324,7 +333,7 @@ const firstToReview = (findings, n) => new Set(
     .map((f, i) => [f, i])
     .sort(([a, i], [b, j]) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || (CONFIDENCE_RANK[a.confidence] ?? 9) - (CONFIDENCE_RANK[b.confidence] ?? 9) || i - j)
     .slice(0, n)
-    .map(([f]) => f),
+    .map(([, i]) => i),
 )
 // Why a finding is in `unreviewed`: nobody was asked, or nobody answered. The first is
 // also why a bug is left unfixed when the fix phase runs out of agents.
@@ -1501,16 +1510,18 @@ const reviewFindings = async (findings, fixed) => {
   const writeAgents = ledgerWriteAgents(ledgerBound(fixed, findings))
   const chosen = firstToReview(findings, reviewsThatFit(findings.length, agentsLeft(agentsStarted), writeAgents))
   agentsHeld = writeAgents
+  // A thunk hands back the finding's place in `findings`, never the finding: what
+  // parallel() returns is a copy of what the thunk resolved with, so an object that went
+  // in does not come out the same object and cannot be looked up by it.
   const reviewed = await parallel(
-    findings.filter(f => chosen.has(f)).map(f => () =>
+    findings.map((f, i) => [f, i]).filter(([, i]) => chosen.has(i)).map(([f, i]) => () =>
       Promise.all([
         reviewer(f, REFUTE_STANCE, `refute:${shortFile(f.file)}`),
         reviewer(f, REPRODUCE_STANCE, `confirm:${shortFile(f.file)}`),
-      ]).then(([refute, confirm]) => ({ f, refute, confirm })),
+      ]).then(([refute, confirm]) => ({ i, refute, confirm })),
     ),
   )
-  const rowOf = new Map((reviewed || []).filter(Boolean).map(row => [row.f, row]))
-  return bucketVerdicts(findings.map(f => rowOf.get(f) || { f, unreviewed: chosen.has(f) ? NO_VERDICT_REASON : AGENT_LIMIT_REASON }))
+  return bucketVerdicts(verdictRows(findings, chosen, reviewed))
 }
 
 // ---- Dirty-tree guard: before the first write of a run that means to fix --------
@@ -2363,7 +2374,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     }
 
     const results = (await parallel(groups.map(([file, bugs]) => () =>
-      fixAgent(file, bugs).then(r => ({ bugs, r }))))).filter(Boolean)
+      fixAgent(file, bugs).then(r => ({ file, bugs, r }))))).filter(Boolean)
     for (const { r } of results) for (const f of (r && r.filesTouched) || []) touchedFiles.add(f)
 
     // Flatten the per-bug rows, then run a per-bug close gate for each claimed fix.
@@ -2430,7 +2441,9 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
       // A fixer that held several bugs: nobody's own attempt, so nobody's strike and no
       // proposal. Each bug now gets an attempt to itself, and that one counts.
       if (bugs.length > 1) return
-      const ground = ((results.find(x => x.bugs === bugs) || {}).r || {}).ground
+      // Found by file, the wave's key for a fixer: `results` came back from parallel(), so
+      // its `bugs` are copies and are not the array held here.
+      const ground = ((results.find(x => x.file === file) || {}).r || {}).ground
       const done = await strikeOrPropose(waveTag, waveNum, file, culprits.filter(b => !settled.has(b.bugId)), strike, filesOf(bugs), snapshot, ground)
       done.forEach(b => settled.add(b.bugId))
     }

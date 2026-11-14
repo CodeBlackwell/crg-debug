@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.farm-bypass.js', import.meta.url)), 'utf8')
   .replace(/^export\s+const\s+meta/m, 'const meta')
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
-const runWorkflow = ({ args, agent, workflow, parallel = async thunks => Promise.all(thunks.map(t => t())), log = () => {}, phase = () => {} }) =>
+const runWorkflow = ({ args, agent, workflow, parallel = async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), log = () => {}, phase = () => {} }) =>
   new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC)(args, agent, parallel, log, workflow, phase)
 
 const REPO = 'acme/widget'

@@ -115,7 +115,7 @@ const sweep = async (args, dead = []) => {
     if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'traced it', classification: 'real-bug' }
     return 'written'
   }
-  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {})
+  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {})
   return { calls, logs, result }
 }
 const assertByPhase = (calls, want) => {

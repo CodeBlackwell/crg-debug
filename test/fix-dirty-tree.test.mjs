@@ -187,7 +187,7 @@ const sweep = async (args, status) => {
   }
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC.replace(/^export\s+const\s+meta/m, 'const meta'))
-  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, agent, thunks => Promise.all(thunks.map(t => t())), () => {}, undefined, () => {})
+  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), () => {}, undefined, () => {})
   return { result, calls }
 }
 

@@ -13,11 +13,11 @@ const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix
 const DISK = ledgerDisk(SRC)
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 const runWorkflow = ({ args = {}, agent, parallel, log = () => {}, workflow, phase = () => {} }) =>
-  new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC)(args, agent, parallel, log, workflow, phase)
+  new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC)(args, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), parallel, log, workflow, phase)
 
 const REPO = '/tmp/crg-fixture'
 const fixArgs = { repoRoot: REPO, methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: '/tmp/ledger.json' }
-const parallel = async thunks => Promise.all(thunks.map(t => t()))
+const parallel = async thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows)))
 const RETRY_CAP = 'agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output'
 
 // A fix-from-ledger run with exactly one bug that fixes, gates green and commits.

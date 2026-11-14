@@ -85,7 +85,7 @@ const pinTranscript = async (source, args, sha) => {
   }
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', source.replace(/^export\s+const\s+meta/m, 'const meta'))
-  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {})
+  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {})
   return [...lines, `logs ${sha(logs.join('\n'))}`, `return ${sha(JSON.stringify(result))}`]
 }
 // <<< pin-harness
@@ -203,7 +203,7 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
     return 'written'
   }
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC.replace(/^export\s+const\s+meta/m, 'const meta'))
-  const res = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', discover: 'units', ...args }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {})
+  const res = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', discover: 'units', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {})
   return { calls, logs, res, labels: calls.map(c => c.label) }
 }
 

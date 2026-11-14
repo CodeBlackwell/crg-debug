@@ -38,7 +38,7 @@ const declOf = (text, name) => {
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 // The runtime resolves a failed parallel() thunk to null — hence the `.filter(Boolean)`
 // idiom at every call site. Mirror that, so this test isolates the top-level sites.
-const parallel = thunks => Promise.all(thunks.map(t => Promise.resolve().then(t).catch(() => null)))
+const parallel = thunks => Promise.all(thunks.map(t => Promise.resolve().then(t).catch(() => null))).then(rows => JSON.parse(JSON.stringify(rows)))
 const runWorkflow = (args, agent, log = () => {}) =>
   new AsyncFunction('args', 'agent', 'log', 'parallel', src.replace('export const meta', 'const meta'))(
     args, agent, log, parallel,

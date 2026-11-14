@@ -13,7 +13,7 @@ import { sliceLedger } from '../lib/crg-debug.ledger-slice.mjs'
 
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
-const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, cutPieces, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerPieceOf, ledgerPayloadOf, ledgerDoubt, isFindingRow, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA }`)()
+const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, verdictRows, NO_VERDICT_REASON, AGENT_LIMIT_REASON, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, cutPieces, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerPieceOf, ledgerPayloadOf, ledgerDoubt, isFindingRow, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA }`)()
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, bug, ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, bug, ledgerDisk }`)()
 
@@ -43,7 +43,9 @@ test('the findings reviewed first are ranked by severity, then confidence, then 
     finding(0, { severity: 'Low' }), finding(1, { severity: 'High', confidence: 'low' }), finding(2, { severity: 'Critical', confidence: 'medium' }),
     finding(3, { severity: 'High', confidence: 'high' }), finding(4, { severity: 'High', confidence: 'high' }), finding(5, { severity: 'unheard of' }),
   ]
-  const order = n => rows.filter(f => H.firstToReview(rows, n).has(f)).map(f => rows.indexOf(f))
+  // The places of the findings, not the findings: a place is a number, and a number is the
+  // same on both sides of parallel().
+  const order = n => [...H.firstToReview(rows, n)].sort((a, b) => a - b)
   assert.deepEqual(order(1), [2])
   assert.deepEqual(order(2), [2, 3])
   assert.deepEqual(order(3), [2, 3, 4], 'a tie keeps the order the findings have')
@@ -325,10 +327,68 @@ test('the stand-in disk the stubbed runs use prints what the real shell prints',
   }
 })
 
-// ---- a sweep bigger than the limit ----------------------------------------------------
+// ---- verdicts come back as copies -------------------------------------------------------
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC.replace(/^export\s+const\s+meta/m, 'const meta'))
+
+// The runtime hands the script a copy of whatever a parallel() thunk resolved with. A live
+// run of 115 findings got 230 verdicts and filed every finding as 'no verdict': the script
+// had looked each finding up by the object it sent in, and no copy is that object.
+test('a finding is matched to its verdicts by its place in the list, so a copied result still finds it', () => {
+  const rows = [finding(0), finding(1), finding(2), finding(3)]
+  const yes = { confirmed: true, reason: 'traced', classification: 'real-bug' }
+  const no = { confirmed: false, reason: 'guarded', classification: 'real-bug' }
+  const chosen = new Set([0, 1, 3])
+  // Out of order, with a dead thunk, a row that names no place, and as copies.
+  const back = JSON.parse(JSON.stringify([{ i: 3, refute: no, confirm: no }, null, { i: 0, refute: yes, confirm: yes }, { refute: yes, confirm: yes }]))
+  const out = H.verdictRows(rows, chosen, back)
+  assert.deepEqual(out, [
+    { f: rows[0], refute: yes, confirm: yes },
+    { f: rows[1], unreviewed: H.NO_VERDICT_REASON },
+    { f: rows[2], unreviewed: H.AGENT_LIMIT_REASON },
+    { f: rows[3], refute: no, confirm: no },
+  ])
+  assert.ok(out.every((row, i) => row.f === rows[i]), 'each row holds the script\'s own finding, in the script\'s own order')
+  assert.deepEqual(H.verdictRows(rows, new Set(), null).map(r => r.unreviewed), Array(4).fill(H.AGENT_LIMIT_REASON))
+  const buckets = H.bucketVerdicts(out)
+  assert.deepEqual([buckets.confirmedBugs.length, buckets.rejected.length, buckets.unreviewed.length], [1, 1, 2])
+})
+
+// The two doubles a whole run is driven through, as the runtime behaves: what an agent
+// returns and what parallel() returns reach the script as copies (a JSON round trip).
+const copyOf = value => (value === undefined ? value : JSON.parse(JSON.stringify(value)))
+const copyingParallel = thunks => Promise.all(thunks.map(t => t())).then(copyOf)
+
+test('two findings, four verdicts, copies back from parallel: one row per finding and none unreviewed', async () => {
+  const two = [finding(0), finding(1)]
+  const disk = ledgerDisk(SRC)
+  const logs = []
+  const labels = []
+  const agent = async (prompt, opts = {}) => {
+    labels.push(opts.label)
+    if (opts.label === 'setup') return { graphStats: '1 file', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
+    // m0 is a real bug to both reviewers, m1 is refuted by both.
+    if (opts.phase === 'Verify' && /^(refute|confirm):/.test(opts.label)) return { confirmed: opts.label.endsWith('m0.py'), reason: `traced ${opts.label}`, classification: 'real-bug' }
+    const onDisk = disk.answer(prompt)
+    return onDisk !== undefined ? onDisk : 'ok'
+  }
+  const result = await run(
+    { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fromFindings: two },
+    (prompt, opts) => agent(prompt, opts).then(copyOf), copyingParallel, m => logs.push(m), undefined, () => {},
+  )
+  assert.deepEqual(labels.filter(l => /^(refute|confirm):/.test(l)), ['refute:m0.py', 'confirm:m0.py', 'refute:m1.py', 'confirm:m1.py'], 'both reviewers of both findings answered')
+  assert.deepEqual(result.unreviewed, [], 'a finding with two verdicts is not unreviewed')
+  assert.deepEqual(result.confirmedBugs, [two[0]])
+  assert.deepEqual(result.rejected, [{ ...two[1], refutationReason: 'traced refute:m1.py | traced confirm:m1.py' }])
+  assert.deepEqual(result.deferred, [])
+  assert.ok(logs.includes('Verify: 1 confirmed · 0 deferred (intentional) · 1 rejected'), logs.filter(l => l.startsWith('Verify')).join(' / '))
+  const ledger = JSON.parse(disk.files.get('/tmp/crg-fixture/.crg-debug/ledger.json'))
+  assert.deepEqual(ledger.counts, { confirmedBugs: 1, deferred: 0, rejected: 1, unreviewed: 0 })
+})
+
+// ---- a sweep bigger than the limit ----------------------------------------------------
+
 const CAP_REACHED = 'Workflow agent() call cap reached (1000)'
 // A sweep whose two finders return `perFinder` findings each. The runtime's own limit is
 // played too: the 1001st agent throws, as it does live. `verdict(label)` answers a reviewer.
@@ -352,7 +412,7 @@ const sweep = async ({ args = {}, perFinder = 300, verdict = () => ({ confirmed:
     if (opts.phase === 'Verify') return verdict(label)
     return 'ok'
   }
-  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {})
+  const result = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', ...args }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {})
   const onDiskNow = disk.files.get('/tmp/crg-fixture/.crg-debug/ledger.json')
   return { calls, logs, result, ledger: onDiskNow && JSON.parse(onDiskNow), labels: calls.map(c => c.label) }
 }
@@ -652,7 +712,7 @@ const fromLedger = async (file, ingest = (prompt, disk) => disk.answer(prompt)) 
     if (opts.label.startsWith('ingest-ledger')) return ingest(prompt, disk)
     return relayOf('')
   }
-  const outcome = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: LEDGER }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {}).then(result => ({ result }), error => ({ error }))
+  const outcome = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: LEDGER }, (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {}).then(result => ({ result }), error => ({ error }))
   return { ...outcome, labels, logs }
 }
 const NO_READ = { name: 'Error', message: /^fix-from-ledger: could not read\/parse ledger at \/tmp\/ledger\.json — / }

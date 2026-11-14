@@ -22,7 +22,7 @@ const runWorkflow = (args, agent, log = () => {}) =>
   new Function(
     'args', 'agent', 'log', 'parallel',
     `return (async () => {\n${src.replace('export const meta', 'const meta')}\n})()`,
-  )(args, agent, log, thunks => Promise.all(thunks.map(t => t())))
+  )(args, agent, log, thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))))
 
 const ARGS = {
   repoRoot: '/repo',

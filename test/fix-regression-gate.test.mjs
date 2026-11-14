@@ -397,7 +397,7 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', source.replace(/^export\s+const\s+meta/m, 'const meta'))
   const result = await run(
     { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: '/tmp/ledger.json', ...args },
-    agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {},
+    (prompt, opts) => Promise.resolve(agent(prompt, opts)).then(r => (r === undefined ? r : JSON.parse(JSON.stringify(r)))), thunks => Promise.all(thunks.map(t => t())).then(rows => JSON.parse(JSON.stringify(rows))), m => logs.push(m), undefined, () => {},
   )
   return { result, calls, logs, labels: calls.map(c => c.label), disk }
 }
