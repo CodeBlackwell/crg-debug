@@ -575,9 +575,9 @@ const yes = { confirmed: true, classification: 'real-bug', reason: 'reproduced' 
 const no = { confirmed: false, classification: 'real-bug', reason: 'guard upstream' }
 const row = (refute, confirm, over) => ({ f: { ...FINDING, ...over }, refute, confirm })
 
-test('bucketVerdicts: nothing verified yields three empty buckets', () => {
-  assert.deepEqual(H.bucketVerdicts([]), { confirmedBugs: [], deferred: [], rejected: [] })
-  assert.deepEqual(H.bucketVerdicts(null), { confirmedBugs: [], deferred: [], rejected: [] })
+test('bucketVerdicts: nothing verified yields four empty buckets', () => {
+  assert.deepEqual(H.bucketVerdicts([]), { confirmedBugs: [], deferred: [], rejected: [], unreviewed: [] })
+  assert.deepEqual(H.bucketVerdicts(null), { confirmedBugs: [], deferred: [], rejected: [], unreviewed: [] })
 })
 
 // A pair whose thunk died arrives as null; it has no finding to bucket and must not throw.
@@ -585,13 +585,31 @@ test('bucketVerdicts: a null row is skipped', () => {
   assert.deepEqual(H.bucketVerdicts([null, row(yes, yes)]).confirmedBugs, [FINDING])
 })
 
-// A dead reviewer is not a verdict: two dead reviewers never confirm a bug by silence.
-test('bucketVerdicts: two dead reviewers reject the finding with the no-verdict reason', () => {
+// A dead reviewer is not a verdict: two dead reviewers neither confirm a bug by silence nor
+// reject it. A live run filed 70 findings nobody had read as rejected this way.
+test('bucketVerdicts: a finding whose reviewers both returned nothing is unreviewed, not rejected', () => {
   assert.deepEqual(H.bucketVerdicts([row(null, null)]), {
     confirmedBugs: [],
     deferred: [],
-    rejected: [{ ...FINDING, refutationReason: 'both reviewers failed to return a verdict' }],
+    rejected: [],
+    unreviewed: [{ ...FINDING, unreviewedReason: 'no verdict' }],
   })
+})
+
+test('bucketVerdicts: a finding nobody was asked about is unreviewed, with the reason it was given', () => {
+  assert.deepEqual(H.bucketVerdicts([{ f: FINDING, unreviewed: 'agent limit' }]).unreviewed, [{ ...FINDING, unreviewedReason: 'agent limit' }])
+  const out = H.bucketVerdicts([{ f: FINDING, unreviewed: 'agent limit' }, row(yes, yes), row(no, no), row(null, null)])
+  assert.deepEqual([out.confirmedBugs.length, out.deferred.length, out.rejected.length, out.unreviewed.length], [1, 0, 1, 2])
+  assert.deepEqual(out.unreviewed.map(r => r.unreviewedReason), ['agent limit', 'no verdict'])
+})
+
+test('bucketVerdicts: a stored reason is one line of at most 600 characters', () => {
+  const long = { ...no, reason: `line one\nline two\t${'x'.repeat(900)}` }
+  const stored = H.bucketVerdicts([row(long, null)]).rejected[0].refutationReason
+  assert.equal(stored.length, 600)
+  assert.ok(stored.startsWith('line one line two xxx'))
+  assert.equal(H.bucketVerdicts([row({ ...long, classification: 'intentional' }, yes)]).deferred[0].deferReason.length, 600)
+  assert.equal(H.bucketVerdicts([row(long, yes)]).confirmedBugs[0].conflictNote.length, 600)
 })
 
 test('bucketVerdicts: one dead reviewer leaves the survivor’s verdict standing alone', () => {
@@ -604,13 +622,13 @@ test('bucketVerdicts: one dead reviewer leaves the survivor’s verdict standing
 test('bucketVerdicts: an intentional classification defers even alongside a confirm', () => {
   const intentional = { confirmed: false, classification: 'intentional', reason: 'documented fallback' }
   const out = H.bucketVerdicts([row(intentional, yes)])
-  assert.deepEqual(out, { confirmedBugs: [], deferred: [{ ...FINDING, deferReason: 'documented fallback' }], rejected: [] })
+  assert.deepEqual(out, { confirmedBugs: [], deferred: [{ ...FINDING, deferReason: 'documented fallback' }], rejected: [], unreviewed: [] })
   const confirmedAndIntentional = { confirmed: true, classification: 'intentional', reason: 'by design' }
   assert.deepEqual(H.bucketVerdicts([row(yes, confirmedAndIntentional)]).deferred, [{ ...FINDING, deferReason: 'by design' }])
 })
 
 test('bucketVerdicts: confirms with no refute keep the finding unflagged', () => {
-  assert.deepEqual(H.bucketVerdicts([row(yes, yes)]), { confirmedBugs: [FINDING], deferred: [], rejected: [] })
+  assert.deepEqual(H.bucketVerdicts([row(yes, yes)]), { confirmedBugs: [FINDING], deferred: [], rejected: [], unreviewed: [] })
 })
 
 test('bucketVerdicts: a confirming reviewer’s adjustedSeverity replaces the finding’s', () => {
@@ -627,7 +645,7 @@ test('bucketVerdicts: a confirm against a refute is kept, flagged, and carries t
 
 test('bucketVerdicts: refutes with no confirm reject, joining both reasons', () => {
   const out = H.bucketVerdicts([row(no, { ...no, reason: 'unreachable' })])
-  assert.deepEqual(out, { confirmedBugs: [], deferred: [], rejected: [{ ...FINDING, refutationReason: 'guard upstream | unreachable' }] })
+  assert.deepEqual(out, { confirmedBugs: [], deferred: [], rejected: [{ ...FINDING, refutationReason: 'guard upstream | unreachable' }], unreviewed: [] })
 })
 
 test('bucketVerdicts: confirmed bugs sort by severity, ties in input order, unknown last', () => {

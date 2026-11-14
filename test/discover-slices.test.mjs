@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
   .replace(/^export\s+const\s+meta/m, 'const meta')
+const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
+const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { ledgerDisk }`)()
+const DISK = ledgerDisk(SRC)
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 const parallel = async thunks => Promise.all(thunks.map(t => t()))
 
@@ -33,6 +36,8 @@ const sweep = async ({ answer = () => ({ audited: [], findings: [] }), args = {}
     if (label === 'setup') return { graphStats: '6 files', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (label === 'map') return { overview: 'o', targets: TARGETS }
     if (label.startsWith('find:')) return answer(label)
+    const onDisk = DISK.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'r', classification: 'real-bug' }
     return 'written'
   }

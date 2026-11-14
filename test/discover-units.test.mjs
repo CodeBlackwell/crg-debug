@@ -18,8 +18,48 @@ const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 // Re-pinned once since, the persist and return lines alone: the ledger and the return gained
 // `models`, the model of every phase. Every other line, each agent's model among them, and
 // the log are as they were.
+// Re-pinned a second time, the same lines: the ledger is written as a piece and a command
+// that assembles it (persist:1, persist:assemble) where one agent wrote it whole, and the
+// return gained unreviewed, ledgerSaved, agents and three counts. The log did not move.
 // >>> pin-harness
+// (the same stand-in as the fix harness in fix-regression-gate.test.mjs carries)
+// A stand-in for the disk and for node: the script's own two ledger programs, run over files
+// held in memory. `answer` is what an agent with a shell would return to a ledger brief (a
+// part to write, or a command to relay); undefined for any other brief, and for a script
+// that has no such programs.
+const ledgerDisk = source => {
+  const block = source.slice(source.indexOf('// >>> pure-helpers'), source.indexOf('// <<< pure-helpers'))
+  const known = new Function(`${block}\nreturn typeof LEDGER_READ_PROGRAM === 'string'`)()
+  const files = new Map()
+  const fs = {
+    readFileSync: f => {
+      if (!files.has(f)) throw new Error(`ENOENT ${f}`)
+      return files.get(f)
+    },
+    writeFileSync: (f, text) => files.set(f, text),
+    renameSync: (from, to) => (files.set(to, files.get(from)), files.delete(from)),
+    unlinkSync: f => files.delete(f),
+  }
+  const run = (program, argv) => {
+    const out = []
+    let exitCode = 0
+    try {
+      new Function('require', 'process', 'console', program)(() => fs, { argv: ['node', ...argv], exit: code => { throw (exitCode = code) } }, { log: (...words) => out.push(words.join(' ')) })
+    } catch (err) {
+      exitCode = exitCode || 1
+    }
+    return { results: [{ command: 'relay', exitCode, stdout: out.join('\n') }] }
+  }
+  const answer = prompt => {
+    const part = /to (\S+\.part-\d+) as the ENTIRE contents[\s\S]*<<<UNTRUSTED\n([\s\S]*)\nUNTRUSTED>>>/.exec(prompt)
+    if (known && part) return files.set(part[1], `${part[2]}\n`) && 'written'
+    const command = /<<<UNTRUSTED\nnode -e '([\s\S]*)' -- '([^']*)' (.*)\nUNTRUSTED>>>/.exec(prompt)
+    return known && command ? run(command[1], [command[2], ...command[3].split(' ')]) : undefined
+  }
+  return { files, answer }
+}
 const pinTranscript = async (source, args, sha) => {
+  const disk = ledgerDisk(source)
   const fns = (prefix, count) => Array.from({ length: count }, (_, i) => `${prefix}_${i}`)
   const targets = [
     { file: 'src/core.py', concern: 'backend-logic', functions: fns('core', 20) },
@@ -33,6 +73,8 @@ const pinTranscript = async (source, args, sha) => {
   const agent = async (prompt, opts = {}) => {
     const label = opts.label || ''
     lines.push(`${label} ${sha(`${prompt}\n${JSON.stringify(opts)}`)}`)
+    const onDisk = disk.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (label === 'setup') return { graphStats: '4 files', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [{ command: 'mypy', error: 'src/z.py:1 bad type', file: 'src/z.py', kind: 'code' }] }
     if (label === 'map') return { overview: 'o', targets }
     if (label.startsWith('find:')) return { audited: [{ file: 'f', function: 'core_0', intended: 'i', verdict: 'matches' }], findings: [finding(label)] }
@@ -46,6 +88,7 @@ const pinTranscript = async (source, args, sha) => {
   return [...lines, `logs ${sha(logs.join('\n'))}`, `return ${sha(JSON.stringify(result))}`]
 }
 // <<< pin-harness
+const DISK = ledgerDisk(SRC)
 
 const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newline', issueRef: 'gh#12', discoveryRounds: 2, model: 'sonnet' }
 const PINNED = {
@@ -68,9 +111,10 @@ const PINNED = {
     'confirm:find_residual.py ac06bda651f2',
     'refute:z.py db2c9964acd7',
     'confirm:z.py dc045b6c9657',
-    'persist d443691f50a2',
+    'persist:1 8f930e61e981',
+    'persist:assemble bd3aff46dd5c',
     'logs b2c32a3098cb',
-    'return 4673c2dac9c1',
+    'return 913946507b44',
   ],
   rich: [
     'setup 90104e291d00',
@@ -102,9 +146,10 @@ const PINNED = {
     'confirm:find_residual_.py 4936854aef5b',
     'refute:z.py 15d8818032f8',
     'confirm:z.py 95c83502b9c2',
-    'persist 3075e8d71c7c',
+    'persist:1 7d472e327ad8',
+    'persist:assemble 95d230649cc5',
     'logs 262e32d7f1a6',
-    'return f138002e0116',
+    'return 7b7e5dbb2b3c',
   ],
 }
 
@@ -151,6 +196,8 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
       const rows = findings(label)
       return rows === null ? null : { findings: rows }
     }
+    const onDisk = DISK.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'r', classification: 'real-bug' }
     return 'written'
   }
@@ -165,7 +212,7 @@ test('units mode lists each mapped source file once, then runs one finder per fu
     'setup', 'map',
     'units:src/core.py', 'units:src/auth.py', 'units:src/empty.py',
     'unit:core.py:Command.invoke', 'unit:core.py:Context.exit', 'unit:core.py:main', 'unit:auth.py:sign', 'unit:auth.py:check_token',
-    'refute:auth.py', 'confirm:auth.py', 'persist',
+    'refute:auth.py', 'confirm:auth.py', 'persist:1', 'persist:assemble',
   ], 'no concern finder, residual pass or test-file lister; a single finding skips the dedup agent')
 })
 

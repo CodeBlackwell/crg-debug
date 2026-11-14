@@ -297,7 +297,43 @@ test('both regression schemas submit a single property', () => {
 // The block is self-contained: fix-wave-commit.test.mjs evaluates it too, because a shared
 // module anywhere under test/ would be run by `node --test` as a test of its own.
 // >>> fix-harness
+// A stand-in for the disk and for node: the script's own two ledger programs, run over files
+// held in memory. `answer` is what an agent with a shell would return to a ledger brief (a
+// part to write, or a command to relay); undefined for any other brief, and for a script
+// that has no such programs.
+const ledgerDisk = source => {
+  const block = source.slice(source.indexOf('// >>> pure-helpers'), source.indexOf('// <<< pure-helpers'))
+  const known = new Function(`${block}\nreturn typeof LEDGER_READ_PROGRAM === 'string'`)()
+  const files = new Map()
+  const fs = {
+    readFileSync: f => {
+      if (!files.has(f)) throw new Error(`ENOENT ${f}`)
+      return files.get(f)
+    },
+    writeFileSync: (f, text) => files.set(f, text),
+    renameSync: (from, to) => (files.set(to, files.get(from)), files.delete(from)),
+    unlinkSync: f => files.delete(f),
+  }
+  const run = (program, argv) => {
+    const out = []
+    let exitCode = 0
+    try {
+      new Function('require', 'process', 'console', program)(() => fs, { argv: ['node', ...argv], exit: code => { throw (exitCode = code) } }, { log: (...words) => out.push(words.join(' ')) })
+    } catch (err) {
+      exitCode = exitCode || 1
+    }
+    return { results: [{ command: 'relay', exitCode, stdout: out.join('\n') }] }
+  }
+  const answer = prompt => {
+    const part = /to (\S+\.part-\d+) as the ENTIRE contents[\s\S]*<<<UNTRUSTED\n([\s\S]*)\nUNTRUSTED>>>/.exec(prompt)
+    if (known && part) return files.set(part[1], `${part[2]}\n`) && 'written'
+    const command = /<<<UNTRUSTED\nnode -e '([\s\S]*)' -- '([^']*)' (.*)\nUNTRUSTED>>>/.exec(prompt)
+    return known && command ? run(command[1], [command[2], ...command[3].split(' ')]) : undefined
+  }
+  return { files, answer }
+}
 const fixRun = async (source, { bugs, args = {}, on = {} }) => {
+  const disk = ledgerDisk(source)
   const fileOf = b => b.file.split(':')[0]
   const testFileOf = file => `tests/test_${file.split('/').pop()}`
   const fenced = prompt => [...prompt.matchAll(/<<<UNTRUSTED\n([\s\S]*?)\nUNTRUSTED>>>/g)].map(m => m[1])
@@ -310,9 +346,18 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
     const nth = (seen[label] = (seen[label] || 0) + 1)
     calls.push({ label, prompt, opts })
     const custom = on[kind] ? await on[kind]({ label, prompt, nth, fenced: fenced(prompt) }) : undefined
+    // The ledger is a file: a handler for ingest-ledger answers with what the file holds, and
+    // the script's own read program relays it. A handler may still answer with a relay.
+    if (kind === 'ingest-ledger' && (custom === undefined || (custom && custom.confirmedBugs))) {
+      const held = custom || { confirmedBugs: bugs, deferred: [], rejected: [], toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
+      disk.files.set(/ -- '([^']*)' /.exec(prompt)?.[1], JSON.stringify(held))
+      const relay = disk.answer(prompt)
+      return relay === undefined ? held : relay
+    }
     if (custom !== undefined) return custom
+    const onDisk = disk.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (kind === 'tree-status') return { results: [{ command: 'status', exitCode: 0, stdout: '\ncrg-tree-status 0\n' }] }
-    if (kind === 'ingest-ledger') return { confirmedBugs: bugs, deferred: [], rejected: [], toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (kind === 'fix-branch') return { branch: 'crg-debug/fix-abc123', results: [{ command: 'git checkout -b crg-debug/fix-abc123', exitCode: 0 }] }
     if (kind === 'fix') {
       const ids = [...prompt.matchAll(/^bugId: (\S+)$/gm)].map(m => m[1])
@@ -354,7 +399,7 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
     { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: '/tmp/ledger.json', ...args },
     agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {},
   )
-  return { result, calls, logs, labels: calls.map(c => c.label) }
+  return { result, calls, logs, labels: calls.map(c => c.label), disk }
 }
 const bug = (bugId, file) => ({ bugId, file: `${file}:10`, rootCause: `${bugId} root`, symptom: `${bugId} symptom`, whyRepro: 'in -> out', severity: 'High' })
 // Everything the Fix phase asked of the agents it had BEFORE the regression gate existed:
@@ -393,9 +438,11 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // gained its bug count ("Fix a bug in core.py"); every other line is 6b6b8d7's.
 // The closing `gate` line of each list is gone: the final gate no longer sends that brief.
 // It re-runs the baseline's own commands by id (checks:final, regress:allfixes) instead.
+// Re-pinned again, the ingest-ledger line alone: the ledger is now read by a fixed command
+// whose output the script checks, not returned whole by the agent.
 const PINNED = {
   two: [
-    'ingest-ledger d5d30dc0ee06',
+    'ingest-ledger 4cbfd3e1ebdb',
     'fix-branch f0bdaf259764',
     'fix:alpha.py b415b3942d78',
     'fix:bravo.py 88b62555c23d',
@@ -404,7 +451,7 @@ const PINNED = {
     'commit:wave ba51438170a9',
   ],
   busy: [
-    'ingest-ledger 7c6ef2de9d29',
+    'ingest-ledger 6ae8b08bc609',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 594763207490',
     'fix:bravo.py 64b6079ba126',

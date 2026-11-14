@@ -39,7 +39,9 @@ skill's directory):
   fix to the final gate.
 - **fix**: `true` by default. `--detect-only` sets `fix=false` (read-only ledger, no edits).
 - **fromLedger**: `--from-ledger <path>` ingests a prior run's `.crg-debug/ledger.json` and skips
-  Discover/Verify — Phase 4 fixes the already-confirmed bugs. Implies `fix=true`; pass the absolute path.
+  Discover. If the ledger lists findings as `unreviewed`, the run reviews those first and saves the
+  ledger again; then Phase 4 fixes the confirmed bugs. Implies `fix=true`; pass the absolute path.
+  With `--detect-only` as well (`fix=false`) it only finishes the review.
 
 ## Resolve the issue (only if an issue ref was given)
 
@@ -82,6 +84,7 @@ When `issueContext` is set it is the focus: an empty `scope` is resolved from th
    an issue was given; set `methodologyPath` to the installed methodology's absolute path
    (`$HOME/.claude/workflows/crg-debug.methodology.md`) so the workflow's agents can read it. It
    runs in the background; tell the user they can watch live progress with `/workflows`.
+   The Workflow writes and reads the ledger with a `node` command, so `node` must be on the PATH.
 
 2. Otherwise (no workflow installed, or `--prose`) → **read `methodology.md` from this skill's
    directory and execute it as the main-loop orchestrator** — parallel `Agent` waves per its
@@ -94,11 +97,23 @@ To upgrade prose → deterministic, run the bundled `crg-deterministic` command 
 
 ## After it returns
 
-Relay the ledger: confirmed bugs by severity, deferred (intentional), rejected false positives, the
-fix-wave outcome (fixed / unfixed / needs-human), the fix branch + wave commits, and the final gate
+Relay the ledger: confirmed bugs by severity, deferred (intentional), rejected false positives,
+findings left unreviewed, the fix-wave outcome (fixed / unfixed / needs-human), the fix branch + wave commits, and the final gate
 status. When a stage flag was given, say which model each stage ran on (`models` in the return).
 Nothing was pushed. Offer to merge the fix branch back (or run `/cpdv`), and note any
 leftover uncommitted work (a failed or opted-out commit) still sitting in the tree.
+
+**Findings nobody reviewed.** A Workflow run may start 1,000 agents. When that is not enough to give
+every finding its two reviewers, the highest-ranked are reviewed and the others come back in
+`unreviewed`, each with an `unreviewedReason`: `agent limit`, or `no verdict` when both of its
+reviewers returned nothing. They are in no other bucket: not confirmed, not rejected, not deferred.
+When `unreviewed` is not empty, say how many there are and why, and that
+`/crg-debug --from-ledger <ledgerPath> --detect-only` reviews them (without `--detect-only` it then
+fixes what is confirmed). A fix run from a ledger reviews them first on its own. Bugs in
+`fix.unfixed` whose `reason` is `agent limit` were not attempted, not failed: the same
+`--from-ledger` run fixes them. When `ledgerSaved` is `false`, say first that the ledger was not
+written, with the reason from the run's log: there is then no file to run again from, and whatever
+is at `ledgerPath` may be a prior run's.
 
 **Tests that were already failing.** When `fix.finalGate.alreadyFailing` is not empty, name every
 test in it, with its command, beside the final gate status, as failing before the first fix. A

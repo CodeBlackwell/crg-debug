@@ -11,6 +11,8 @@ const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< 
 const H = new Function(`${block}\nreturn { STAGE_KEYS, stageModelsOf, stageModelNames, stageModelsNote }`)()
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, bug } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, bug }`)()
+const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { ledgerDisk }`)()
+const DISK = ledgerDisk(SRC)
 
 const every = model => ({ graph: model, map: model, discover: model, verify: model, fix: model })
 
@@ -75,10 +77,11 @@ const CODE = SRC.slice(SRC.indexOf('// <<< pure-helpers')).split('\n').filter(li
 const SESSION_RETRIES = ["'setup-retry'", "'map-retry'"]
 
 test('every agent call takes the model of the phase it names', () => {
-  const calls = CODE.join('\n').match(/\btryAgent\(/g).length
+  const calls = CODE.join('\n').match(/\bstartAgent\(/g).length
   assert.equal(CODE.join('\n').match(/\bagent\(/g).length, 1, 'the only bare agent() call is the one inside tryAgent')
+  assert.equal(CODE.join('\n').match(/\btryAgent\(/g).length, 1, 'and tryAgent is called only by startAgent, which counts it')
   const options = CODE.filter(line => /\bphase: '/.test(line))
-  assert.equal(options.length, calls, 'every tryAgent call carries one options line that names its phase')
+  assert.equal(options.length, calls, 'every startAgent call carries one options line that names its phase')
   for (const line of options) {
     const found = /\bphase: '(\w+)'(?:, schema: [\w()]+)?, model: (\S+) \}/.exec(line)
     assert.ok(found, `phase and model must sit together on the options line: ${line.trim()}`)
@@ -107,6 +110,8 @@ const sweep = async (args, dead = []) => {
     if (/^map/.test(opts.label)) return { overview: 'o', targets: [{ file: 'src/a.py', concern: 'security', functions: ['check'] }] }
     if (opts.label.startsWith('find:')) return { audited: [], findings: [{ ...FINDING, rootCause: opts.label }] }
     if (opts.label === 'dedup') return { duplicateGroups: [] }
+    const onDisk = DISK.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'traced it', classification: 'real-bug' }
     return 'written'
   }
@@ -116,7 +121,8 @@ const sweep = async (args, dead = []) => {
 const assertByPhase = (calls, want) => {
   for (const call of calls) assert.equal(call.model, want[call.phase.toLowerCase()], `${call.label} ran in ${call.phase}`)
 }
-const ledgerOf = calls => JSON.parse(calls.find(c => c.label === 'persist').prompt.split('\n\n').slice(1).join('\n\n'))
+// The ledger the last run wrote, as the script's own write program left it on the stand-in disk.
+const ledgerOf = () => JSON.parse(DISK.files.get('/tmp/crg-fixture/.crg-debug/ledger.json'))
 const phasesOf = calls => [...new Set(calls.map(c => c.phase))]
 
 test('with no stageModels every agent runs on haiku and nothing is said about stages', async () => {
@@ -124,8 +130,8 @@ test('with no stageModels every agent runs on haiku and nothing is said about st
   assert.deepEqual(phasesOf(calls), ['Graph', 'Map', 'Discover', 'Verify'])
   assertByPhase(calls, every('haiku'))
   assert.deepEqual(result.models, every('haiku'))
-  assert.equal(ledgerOf(calls).model, 'haiku')
-  assert.deepEqual(ledgerOf(calls).models, every('haiku'))
+  assert.equal(ledgerOf().model, 'haiku')
+  assert.deepEqual(ledgerOf().models, every('haiku'))
   assert.ok(!logs.some(line => line.includes('stage models')))
 })
 
@@ -144,10 +150,10 @@ test('a haiku finder and a sonnet verify: each phase runs on its own model', asy
   const want = { ...every('opus'), discover: 'haiku', verify: 'sonnet' }
   assertByPhase(calls, want)
   assert.ok(calls.some(c => c.label.startsWith('find:')) && calls.some(c => c.label === 'dedup'), 'the finders and the merge both ran')
-  assert.deepEqual(calls.filter(c => c.phase === 'Verify').map(c => c.label), ['refute:a.py', 'confirm:a.py', 'refute:a.py', 'confirm:a.py', 'persist'])
+  assert.deepEqual(calls.filter(c => c.phase === 'Verify').map(c => c.label), ['refute:a.py', 'confirm:a.py', 'refute:a.py', 'confirm:a.py', 'persist:1', 'persist:assemble'])
   assert.deepEqual(result.models, want)
-  assert.deepEqual(ledgerOf(calls).models, want)
-  assert.equal(ledgerOf(calls).model, 'opus', 'the run model is still recorded beside them')
+  assert.deepEqual(ledgerOf().models, want)
+  assert.equal(ledgerOf().model, 'opus', 'the run model is still recorded beside them')
   assert.match(logs[0], / · model: opus · stage models: graph opus, map opus, discover haiku, verify sonnet, fix opus/)
 })
 
@@ -190,7 +196,7 @@ test('a fix-from-ledger run reads the ledger on the graph model and fixes on the
 
 test('a Verify replay over supplied findings reviews on the verify model', async () => {
   const { calls, result } = await sweep({ fromFindings: [FINDING], stageModels: { verify: 'sonnet' } })
-  assert.deepEqual(calls.map(c => `${c.label} ${c.model}`), ['setup haiku', 'refute:a.py sonnet', 'confirm:a.py sonnet', 'persist sonnet'])
+  assert.deepEqual(calls.map(c => `${c.label} ${c.model}`), ['setup haiku', 'refute:a.py sonnet', 'confirm:a.py sonnet', 'persist:1 sonnet', 'persist:assemble sonnet'])
   assert.equal(result.mode, 'verify-from-findings')
   assert.deepEqual(result.models, { ...every('haiku'), verify: 'sonnet' })
 })

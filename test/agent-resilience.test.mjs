@@ -151,8 +151,11 @@ test('crg-debug.js adds no new agent() call outside tryAgent', () => {
   )
 })
 
-test('tryAgent is defined before the first call site', () => {
-  assert.ok(src.indexOf('const tryAgent = ') < src.indexOf('await tryAgent('), 'tryAgent used before definition')
+// Every agent is started by startAgent, which counts it and hands it to tryAgent.
+test('tryAgent and the counter that calls it are defined before the first call site', () => {
+  assert.ok(src.indexOf('const tryAgent = ') < src.indexOf('const startAgent = '), 'startAgent defined before tryAgent')
+  assert.ok(src.indexOf('const startAgent = ') < src.indexOf('await startAgent('), 'startAgent used before definition')
+  assert.equal([...src.matchAll(/\btryAgent\(/g)].length, 1, 'tryAgent is called in one place: by startAgent, so no agent goes uncounted')
 })
 
 // ---- the Map fallback -----------------------------------------------------------

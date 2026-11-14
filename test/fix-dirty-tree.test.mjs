@@ -15,6 +15,8 @@ const H = new Function(`${block}\nreturn { fence, treeStatusCommand, treeStatusO
 // The stubbed fix run is the block fix-regression-gate.test.mjs marks as its harness.
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, bug } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, bug }`)()
+const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { ledgerDisk }`)()
+const DISK = ledgerDisk(SRC)
 
 const relay = (stdout, exitCode = 0) => ({ results: [{ command: 'status', exitCode, stdout }] })
 const printed = (...rows) => relay(`${rows.join('\n')}\ncrg-tree-status ${rows.length}\n`)
@@ -178,6 +180,8 @@ const sweep = async (args, status) => {
     if (label === 'map') return { overview: 'o', targets: [{ file: 'src/core.py', concern: 'backend-logic', functions: ['f'] }] }
     if (label.startsWith('find:')) return { audited: [], findings: [{ file: 'src/core.py:7', concern: 'backend-logic', symptom: `${label} symptom`, rootCause: `${label} root`, severity: 'High', whyRepro: 'in -> out', confidence: 'high' }] }
     if (label === 'dedup') return { duplicateGroups: [] }
+    const onDisk = DISK.answer(prompt)
+    if (onDisk !== undefined) return onDisk
     if (opts.phase === 'Verify' && opts.schema) return { confirmed: true, reason: 'reproduced', classification: 'real-bug' }
     return 'written'
   }

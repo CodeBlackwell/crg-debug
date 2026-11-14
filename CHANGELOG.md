@@ -30,6 +30,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   combined with `fromLedger` or `fix:true`, and an unusable list is refused whole rather
   than trimmed, so a replay never reviews a finding the original run did not produce.
 
+- **A run from a ledger finishes the review** (`crg-debug.js`, the skill). `fromLedger` no
+  longer needs `fix:true`. If the ledger lists findings under `unreviewed`, the run reviews
+  them first (the same reviewers, the same rule), moves each row to the bucket it earns and
+  saves the ledger again; with `fix:true` it then fixes what is confirmed, and with fix off
+  that is all it does (`mode: 'review-from-ledger'`). A ledger with nothing unreviewed goes
+  straight to the fix phase as before.
+- **The return says what a run used and whether its ledger was written** (`crg-debug.js`):
+  `agents: {started, limit}`, `ledgerSaved`, `unreviewed`, and `stats.deferred`,
+  `stats.rejected`, `stats.unreviewed`.
+
 ### Changed
 - **Verify's reviewers now see the run context, and a change under review no longer vouches
   for itself** (`crg-debug.js`). When a run carries `issueContext`, each reviewer receives it
@@ -40,6 +50,47 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `bucketVerdicts`) inside the pure-helpers block. No wording or bucketing rule changed: the
   prompt is pinned byte for byte and the precedence between `intentional`, confirm and refute
   is covered branch by branch.
+- **Stored reasons are one line of at most 600 characters** (`crg-debug.js`): `deferReason`,
+  `refutationReason` and `conflictNote`. The size of the ledger Verify will produce has to be
+  known before Verify runs, to set the right number of agents aside for writing it.
+- **A run from a ledger returns only the deferred and rejected rows it moved there itself**
+  (`crg-debug.js`); the ledger's totals are in `stats`. It used to return every such row,
+  which meant relaying them.
+- **Writing the ledger takes two agents where it took one, for a ledger that fits one piece**
+  (`crg-debug.js`): the writer, and the command that checks and assembles (`persist:1`,
+  `persist:assemble`). Reading a small ledger is still one agent.
+
+### Fixed
+- **A run bigger than the Workflow's 1,000 agents no longer loses its findings or its ledger**
+  (`crg-debug.js`). A sweep of 300 findings reached the limit inside Verify: the runtime
+  refused the remaining reviewers, 70 findings nobody had read were filed as rejected with
+  "both reviewers failed to return a verdict", the agent that writes the ledger was refused
+  too, and the fix run that followed ingested nothing and fixed nothing. The script now counts
+  every agent it starts and never asks for one the run cannot have.
+  - Verify reviews as many findings as two reviewers each allow once the ledger write is set
+    aside, highest severity first, then highest confidence. The others are returned and
+    saved in a new bucket, `unreviewed`, each with `unreviewedReason: 'agent limit'`.
+  - A finding whose reviewers both returned nothing is `unreviewed` with `'no verdict'`. It
+    is never rejected or deferred: a null verdict is not a verdict. A finding with one live
+    reviewer is judged as before.
+  - The fix phase starts no wave it could not finish in the worst case with the final gate
+    still to run. It keeps the fixers that fit; the bugs left are in `fix.unfixed` with the
+    reason `agent limit`, not as failed fixes. When not even one wave fits it does not
+    start, and writes nothing.
+  - Discover cannot use the agents the ledger write needs: 64 are held back while it runs,
+    and a finder past that is not started and is logged as such.
+- **The ledger is no longer handed to one agent whole, in either direction** (`crg-debug.js`).
+  A live ledger was 409 KB; one agent wrote all of it byte for byte and one agent returned all
+  of it. It now travels in pieces of at most 16,000 characters. Agents write a piece, or relay
+  what a fixed `node` command printed; the script decides that a write or a read was whole
+  from lengths, seals and row counts the agent was never shown. A part that is not what was
+  sent is written once more and a piece that fails its seal is read once more; after that
+  the write is reported as failed, in the words it always was, and a read that is not whole
+  stops the run. The file is written only when the assembled text has the seal the script
+  computed, so a failed write leaves whatever was there. A run from a ledger no longer relays
+  deferred and rejected rows at all: it counts them, and its re-save lays the changed
+  sections over the file. `ledger.json` is still one JSON document with the fields it had,
+  plus `unreviewed`. `node` must now be on the PATH of the agents' shell.
 
 ## [0.31.2] - 2026-08-13
 

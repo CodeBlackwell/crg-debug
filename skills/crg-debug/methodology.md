@@ -68,7 +68,7 @@ Each discovery agent (use `Explore`): gets its concern + scoped file list, an in
 
 **Residual pass (not optional):** always run a smaller second wave over the surface no agent claimed (knowledge-gaps + unowned flows). Treat any finding surfaced by only ONE agent as lower-confidence — single static reads miss things (a baseline run validated this: lone agents missed a JWT-expiry gap, a missing `enabled` query guard, and a typecheck error). The residual pass plus the adversarial verification below are the nets for those misses; skipping it leaves blind spots.
 
-**Adversarial verification (2 independent reviewer items):** each reviewer independently confirms or refutes every candidate by re-tracing the graph. A candidate survives only if ≥1 reviewer reproduces the violation AND none refutes it. Conflicting verdicts → keep unfixed, log both.
+**Adversarial verification (2 independent reviewer items):** each reviewer independently confirms or refutes every candidate by re-tracing the graph. A candidate survives only if ≥1 reviewer reproduces the violation AND none refutes it. Conflicting verdicts → keep unfixed, log both. A candidate no reviewer returned a verdict on (both died, or you ran out of agents before reaching it) is **unreviewed**: list it as such with the reason, never as rejected or deferred, and never queue it for fixing. When not every candidate can be reviewed, review the highest severity first, then the highest confidence. Starting from a prior run's ledger, review whatever it lists as `unreviewed` before fixing anything.
 
 **Dedupe + classify (orchestrator):** merge by `(file, root-cause)`. Classify each survivor **real-bug vs intentional-scaffold** (see rules). Scaffold items go to the report's "Deferred (intentional)" section and are NEVER queued for fixing.
 
@@ -187,6 +187,7 @@ Waves: <W>  ·  Audit agents: <A>  ·  False-positives rejected: <F>  ·  Scaffo
 
 ## Quality findings (report-only)  (principle violated · evidence · maintenance cost · suggested refactor)
 ## Rejected false positives   (finding · why refuted · reviewer)
+## Unreviewed                  (finding · why nobody reviewed it: agent limit / no verdict)
 ## Deferred (intentional)      (area · what · positive evidence it's deliberate · why by-design)
 ## Needs human                 (bug · why un-auto-fixable · suggested approach)
 ## Verification results        (build/typecheck/test per package; residual risks from detect_changes)
