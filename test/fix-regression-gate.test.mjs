@@ -439,10 +439,11 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // The closing `gate` line of each list is gone: the final gate no longer sends that brief.
 // It re-runs the baseline's own commands by id (checks:final, regress:allfixes) instead.
 // Re-pinned again, the ingest-ledger line alone: the ledger is now read by a fixed command
-// whose output the script checks, not returned whole by the agent.
+// whose output the script checks, not returned whole by the agent. (And once more when that
+// command began to print how many rows are findings and what the ledger says it holds, under a seal.)
 const PINNED = {
   two: [
-    'ingest-ledger 4cbfd3e1ebdb',
+    'ingest-ledger 8a26eb6a7f87',
     'fix-branch f0bdaf259764',
     'fix:alpha.py b415b3942d78',
     'fix:bravo.py 88b62555c23d',
@@ -451,7 +452,7 @@ const PINNED = {
     'commit:wave ba51438170a9',
   ],
   busy: [
-    'ingest-ledger 6ae8b08bc609',
+    'ingest-ledger 4e3597cb76bc',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 594763207490',
     'fix:bravo.py 64b6079ba126',

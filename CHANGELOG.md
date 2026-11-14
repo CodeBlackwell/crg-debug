@@ -36,6 +36,10 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   saves the ledger again; with `fix:true` it then fixes what is confirmed, and with fix off
   that is all it does (`mode: 'review-from-ledger'`). A ledger with nothing unreviewed goes
   straight to the fix phase as before.
+- **The ledger carries its own row counts** (`crg-debug.js`): `counts: {confirmedBugs, deferred,
+  rejected, unreviewed}`, written by the script when it builds the ledger and again when a run
+  from a ledger saves it. `crg-debug.ledger-slice.mjs` keeps the confirmed count true for the
+  ledger it narrows, and adds no `counts` to a ledger that had none.
 - **The return says what a run used and whether its ledger was written** (`crg-debug.js`):
   `agents: {started, limit}`, `ledgerSaved`, `unreviewed`, and `stats.deferred`,
   `stats.rejected`, `stats.unreviewed`.
@@ -90,7 +94,26 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   computed, so a failed write leaves whatever was there. A run from a ledger no longer relays
   deferred and rejected rows at all: it counts them, and its re-save lays the changed
   sections over the file. `ledger.json` is still one JSON document with the fields it had,
-  plus `unreviewed`. `node` must now be on the PATH of the agents' shell.
+  plus `unreviewed` and `counts`. `node` must now be on the PATH of the agents' shell.
+- **A hollow ledger stops a run from a ledger; it is no longer an empty one** (`crg-debug.js`).
+  A fix run was handed a 148 KB ledger of 33 confirmed bugs. The agent that returned it was
+  cut off part-way, and on its second try submitted no confirmed rows, no rejected rows and
+  one deferred row holding a note that the ledger had not been copied. That satisfied the
+  schema, so the run logged "0 confirmed · 1 deferred · 0 rejected" and finished clean with
+  nothing fixed. Ingest now stops, with an error that names the path and the reason, when:
+  - the answer is not the output of the read command (an object shaped like a ledger is not);
+  - the row counts, the count of rows that are findings, or the ledger's own `counts` come
+    back without the seal the command printed for those three lines;
+  - a row in any bucket has no `file` or no `rootCause`: it is a note, not a finding, and is
+    refused rather than counted;
+  - the file does not hold the rows its `counts` say it holds, in any bucket;
+  - the confirmed and unreviewed rows do not arrive whole.
+  The read that reports the counts is asked once more before the run gives up, as each piece
+  already was. A ledger written before `counts` existed is accepted on its rows and seals
+  alone, and the run logs that it could not be checked against counts. Rows deleted from a
+  ledger by hand leave its `counts` false and the ledger refused; `ledger-slice` is the way
+  to narrow one. A `ledger-slice` installed before this change does not update `counts`, so
+  re-run `bin/crg-deterministic` before crg-farm's next scoped fix.
 
 ## [0.31.2] - 2026-08-13
 

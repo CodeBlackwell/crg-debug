@@ -21,6 +21,7 @@ const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 // Re-pinned a second time, the same lines: the ledger is written as a piece and a command
 // that assembles it (persist:1, persist:assemble) where one agent wrote it whole, and the
 // return gained unreviewed, ledgerSaved, agents and three counts. The log did not move.
+// And a third, the two persist lines alone: the ledger carries its own row counts.
 // >>> pin-harness
 // (the same stand-in as the fix harness in fix-regression-gate.test.mjs carries)
 // A stand-in for the disk and for node: the script's own two ledger programs, run over files
@@ -111,8 +112,8 @@ const PINNED = {
     'confirm:find_residual.py ac06bda651f2',
     'refute:z.py db2c9964acd7',
     'confirm:z.py dc045b6c9657',
-    'persist:1 8f930e61e981',
-    'persist:assemble bd3aff46dd5c',
+    'persist:1 dcc55a3d6294',
+    'persist:assemble c767d9118782',
     'logs b2c32a3098cb',
     'return 913946507b44',
   ],
@@ -146,8 +147,8 @@ const PINNED = {
     'confirm:find_residual_.py 4936854aef5b',
     'refute:z.py 15d8818032f8',
     'confirm:z.py 95c83502b9c2',
-    'persist:1 7d472e327ad8',
-    'persist:assemble 95d230649cc5',
+    'persist:1 dc4311085911',
+    'persist:assemble 7488a6662ee0',
     'logs 262e32d7f1a6',
     'return 7b7e5dbb2b3c',
   ],

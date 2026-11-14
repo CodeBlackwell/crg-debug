@@ -115,6 +115,15 @@ fixes what is confirmed). A fix run from a ledger reviews them first on its own.
 written, with the reason from the run's log: there is then no file to run again from, and whatever
 is at `ledgerPath` may be a prior run's.
 
+**A ledger that is not what it says.** The ledger carries `counts`, the number of rows in each of
+its four buckets, written by the Workflow. A `--from-ledger` run stops before any work, with
+`fix-from-ledger: could not read/parse ledger at <path> — <why>`, when the file does not hold the
+rows its `counts` say, when a row in any bucket has no `file` or no `rootCause` (that is a note, not
+a finding), or when the read did not come back whole after one more try. Relay the reason as given;
+do not retry with an edited file. To fix only some confirmed bugs, narrow the ledger with
+`crg-debug.ledger-slice.mjs`, which keeps `counts` true; rows deleted by hand leave it false. A
+ledger written before `counts` existed is accepted, and the run logs that it could not be checked.
+
 **Tests that were already failing.** When `fix.finalGate.alreadyFailing` is not empty, name every
 test in it, with its command, beside the final gate status, as failing before the first fix. A
 green final gate does not cover them: a test that was already failing cannot show that a fix broke

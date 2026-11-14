@@ -73,8 +73,10 @@ test('a commit with stray files is undone and reported; an undo that never confi
 })
 
 test('a wave with nothing recorded to commit is refused out loud, not skipped', async () => {
-  // A bug with no file, fixed by an agent that reports no test file and no touched file.
-  const nameless = { ...bug('b1', ''), file: '' }
+  // A bug whose file is a line number and no path (a row with no file at all is not a
+  // finding, and the ledger read refuses it), fixed by an agent that reports no test file
+  // and no touched file.
+  const nameless = bug('b1', '')
   const fix = () => ({ filesTouched: [], fixes: [{ bugId: 'b1', testCommand: 'pytest -k b1', redObserved: true, greenObserved: true }] })
   const { result, calls, logs } = await fixRun(SRC, { bugs: [nameless], on: { fix } })
   assert.equal(commitsOf(calls).length, 0)

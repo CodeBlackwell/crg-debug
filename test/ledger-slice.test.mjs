@@ -52,3 +52,18 @@ test('accepts a Set of keys', () => {
 test('empty/absent confirmedBugs → empty result, no throw', () => {
   assert.deepEqual(sliceLedger({}, ['whatever::key']).confirmedBugs, [])
 })
+
+// crg-debug refuses a ledger that does not hold what its own counts say, so a slice has to
+// say how many confirmed rows it kept; the other buckets are untouched and so are their counts.
+test('a sliced ledger says how many confirmed rows it kept', () => {
+  const counted = { ...LEDGER, counts: { confirmedBugs: 3, deferred: 1, rejected: 0, unreviewed: 0 }, unreviewed: [] }
+  const out = sliceLedger(counted, [bug('b.py:3', 'inverted guard')])
+  assert.deepEqual(out.counts, { confirmedBugs: 1, deferred: 1, rejected: 0, unreviewed: 0 })
+  assert.deepEqual(counted.counts.confirmedBugs, 3, 'the ledger it was given is not changed')
+  assert.deepEqual(Object.keys(out), Object.keys(counted), 'no field is added, dropped or moved')
+  assert.deepEqual(sliceLedger(counted, []).counts.confirmedBugs, 0)
+})
+
+test('a ledger with no counts gets none from a slice', () => {
+  assert.equal('counts' in sliceLedger(LEDGER, [bug('b.py:3', 'inverted guard')]), false)
+})

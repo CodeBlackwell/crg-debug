@@ -9,10 +9,11 @@ import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { sliceLedger } from '../lib/crg-debug.ledger-slice.mjs'
 
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
-const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, cutPieces, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerPieceOf, ledgerPayloadOf, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA }`)()
+const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, cutPieces, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerPieceOf, ledgerPayloadOf, ledgerDoubt, isFindingRow, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA }`)()
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, bug, ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, bug, ledgerDisk }`)()
 
@@ -144,18 +145,29 @@ test('a write is whole only when every part and the rows of the file are what th
   assert.deepEqual(H.ledgerWriteOf({ confirmed: true, reason: 'looks written' }, PARTS, COUNTS), { bad: null, ok: false }, 'nor is an agent saying so')
 })
 
-const TEXT = JSON.stringify({ toolchain: [], baselineFailures: [], confirmedBugs: [{ a: 1 }, { a: 2 }], unreviewed: [{ b: 1 }] })
+const F = n => ({ file: `f${n}.py:1`, rootCause: `root ${n}` })
+const TEXT = JSON.stringify({ toolchain: [], baselineFailures: [], confirmedBugs: [F(1), F(2)], unreviewed: [F(3)] })
 const CUT = [TEXT.slice(0, 40), TEXT.slice(40)]
-const manifestText = (pieces, rows = '2 5 7 1') =>
-  `crg-ledger-rows ${rows}\n${pieces.map((p, i) => `crg-ledger-piece ${i + 1} ${p.length} ${H.textSeal(p)}`).join('\n')}\ncrg-ledger-pieces ${pieces.length} ${pieces.join('').length} ${H.textSeal(pieces.join(''))}`
+const headText = (rows, findings, says) => [`crg-ledger-rows ${rows}`, `crg-ledger-findings ${findings}`, `crg-ledger-says ${says}`]
+const manifestText = (pieces, rows = '2 5 7 1', findings = rows, says = rows) =>
+  `${headText(rows, findings, says).join('\n')}\ncrg-ledger-head ${H.textSeal(headText(rows, findings, says).join('|'))}\n${pieces.map((p, i) => `crg-ledger-piece ${i + 1} ${p.length} ${H.textSeal(p)}`).join('\n')}\ncrg-ledger-pieces ${pieces.length} ${pieces.join('').length} ${H.textSeal(pieces.join(''))}`
 
 test('a manifest is believed only when it lists exactly the pieces it counted', () => {
   const manifest = H.ledgerManifestOf(relayOf(manifestText(CUT)))
   assert.deepEqual(manifest.counts, { confirmedBugs: 2, deferred: 5, rejected: 7, unreviewed: 1 })
+  // The counts are numbers an agent copied: they are believed only under the program's seal.
+  assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT).replace('crg-ledger-rows 2 5 7 1', 'crg-ledger-rows 2 6 7 1'))), null, 'a miscopied count')
+  assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT).replace('crg-ledger-says 2 5 7 1', 'crg-ledger-says nothing'))), null, 'counts an agent left out')
+  assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT).replace(/crg-ledger-head .*\n/, ''))), null, 'no seal for them at all')
   assert.deepEqual(manifest.pieces, CUT.map(p => ({ length: p.length, seal: H.textSeal(p) })))
   assert.equal(manifest.seal, H.textSeal(TEXT))
   const lines = manifestText(CUT).split('\n')
-  assert.equal(H.ledgerManifestOf(relayOf(lines.filter((_, i) => i !== 2).join('\n'))), null, 'a piece line lost on the way')
+  assert.deepEqual([manifest.findings, manifest.says], [manifest.counts, manifest.counts])
+  assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT, '2 5 7 1', '2 5 7 1', 'nothing'))).says, null, 'a ledger that says nothing of itself')
+  assert.equal(H.ledgerManifestOf(relayOf(lines.filter((_, i) => i !== 4).join('\n'))), null, 'a piece line lost on the way')
+  assert.equal(H.ledgerManifestOf(relayOf(lines.filter((_, i) => i !== 1).join('\n'))), null, 'no count of the rows that are findings')
+  assert.equal(H.ledgerManifestOf(relayOf(lines.filter((_, i) => i !== 2).join('\n'))), null, 'no word on what the ledger says of itself')
+  assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT, '2 5 7 1', '2 5 7 1', 'undefined 5 7 1'))), null, 'counts that are not numbers')
   assert.equal(H.ledgerManifestOf(relayOf(lines.filter((_, i) => i !== 0).join('\n'))), null, 'no row counts')
   assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT).replace(`crg-ledger-piece 1 ${CUT[0].length}`, `crg-ledger-piece 1 ${CUT[0].length + 1}`))), null, 'lengths that do not add up')
   assert.equal(H.ledgerManifestOf(relayOf(manifestText(CUT), 1)), null, 'a non-zero exit')
@@ -169,7 +181,7 @@ test('a piece counts only with the length and the seal the manifest gave for it'
   const want = { length: CUT[1].length, seal: H.textSeal(CUT[1]) }
   assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 2 [${CUT[1]}]`), 2, want), CUT[1])
   assert.equal(H.ledgerPieceOf(relayOf(`  crg-ledger-text 2 [${CUT[1]}]  \n`), 2, want), CUT[1], 'space around the line is not part of the piece')
-  assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 2 [${CUT[1].replace('"b"', '"c"')}]`), 2, want), null, 'one character changed')
+  assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 2 [${CUT[1].replace('root 3', 'root 4')}]`), 2, want), null, 'one character changed')
   assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 2 [${CUT[1].slice(0, -3)}]`), 2, want), null, 'shortened')
   assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 1 [${CUT[1]}]`), 2, want), null, 'another piece')
   assert.equal(H.ledgerPieceOf(relayOf(`crg-ledger-text 2 [${CUT[1]}]`, 1), 2, want), null)
@@ -184,12 +196,28 @@ test('the rows are taken only when every piece arrived and they are as many as t
   assert.equal(H.ledgerPayloadOf([CUT[0], null], manifest), null, 'a piece that never arrived')
   assert.equal(H.ledgerPayloadOf([CUT[0]], manifest), null)
   assert.equal(H.ledgerPayloadOf([CUT[1], CUT[0]], manifest), null, 'pieces in the wrong order')
-  assert.equal(H.ledgerPayloadOf([CUT[0], CUT[1].replace('"b":1', '"b":2')], manifest), null, 'rows that parse and count the same, and are not the file’s')
+  assert.equal(H.ledgerPayloadOf([CUT[0], CUT[1].replace('root 3', 'root 4')], manifest), null, 'rows that parse and count the same, and are not the file’s')
+  const hollow = [JSON.stringify({ toolchain: [], baselineFailures: [], confirmedBugs: [F(1), { note: 'INCOMPLETE RESULT' }], unreviewed: [F(3)] })]
+  assert.equal(H.ledgerPayloadOf(hollow, H.ledgerManifestOf(relayOf(manifestText(hollow)))), null, 'a row with no file or rootCause is not a finding, whatever was counted')
   assert.equal(H.ledgerPayloadOf(CUT, H.ledgerManifestOf(relayOf(manifestText(CUT, '3 5 7 1')))), null, 'fewer confirmed rows than the file was counted to hold')
   assert.equal(H.ledgerPayloadOf(CUT, H.ledgerManifestOf(relayOf(manifestText(CUT, '2 5 7 0')))), null)
   const notJson = ['{"toolchain":[', 'oops']
   assert.equal(H.ledgerPayloadOf(notJson, H.ledgerManifestOf(relayOf(manifestText(notJson)))), null)
   assert.equal(H.ledgerPayloadOf(CUT, null), null)
+})
+
+test('a ledger is doubted when it does not hold what it says, or holds a row that is not a finding', () => {
+  const of = (rows, findings = rows, says = rows) => H.ledgerManifestOf(relayOf(manifestText(CUT, rows, findings, says)))
+  assert.equal(H.ledgerDoubt(of('2 5 7 1')), '')
+  assert.equal(H.ledgerDoubt(of('2 5 7 1', '2 5 7 1', 'nothing')), '', 'a ledger from before the counts cannot be checked, and is not doubted for that')
+  assert.equal(H.ledgerDoubt(of('0 1 0 0', '0 1 0 0', '33 62 4 0')), 'it says it holds 33 confirmed · 62 deferred · 4 rejected · 0 unreviewed, and the file holds 0 confirmed · 1 deferred · 0 rejected · 0 unreviewed')
+  assert.equal(H.ledgerDoubt(of('2 5 7 1', '2 5 7 1', '2 5 7 2')).startsWith('it says it holds'), true, 'one bucket off is enough')
+  assert.equal(H.ledgerDoubt(of('0 1 0 0', '0 0 0 0', 'nothing')), '1 row(s) of deferred are not findings (a finding has a file and a rootCause)', 'said first, and caught with no counts at all')
+  assert.equal(H.ledgerDoubt(of('3 5 7 1', '2 5 6 1')), '1 row(s) of confirmedBugs, 1 row(s) of rejected are not findings (a finding has a file and a rootCause)')
+  for (const row of [null, 'a note', 7, [], {}, { note: 'INCOMPLETE RESULT: the ledger was not copied' }, { file: 'a.py' }, { rootCause: 'r' }, { file: '', rootCause: 'r' }, { file: 'a.py', rootCause: '' }, { file: 3, rootCause: 'r' }]) {
+    assert.equal(H.isFindingRow(row), false, JSON.stringify(row))
+  }
+  assert.equal(H.isFindingRow({ file: 'a.py:3', rootCause: 'r' }), true)
 })
 
 test('the log says what is known of a write that failed, and counts the unreviewed by reason', () => {
@@ -213,6 +241,7 @@ const sh = command => {
 const bigRow = (i, extra) => finding(i, { symptom: `“quoted” \\ back\\slash 😀 ${'x'.repeat(700)}`, whyRepro: `in -> out ${'y'.repeat(300)}  `, ...extra })
 const BIG = {
   repoRoot: '/r', scope: 'full repo', model: 'haiku', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [],
+  counts: { confirmedBugs: 57, deferred: 173, rejected: 72, unreviewed: 12 },
   confirmedBugs: Array.from({ length: 57 }, (_, i) => bigRow(i)),
   deferred: Array.from({ length: 173 }, (_, i) => bigRow(1000 + i, { deferReason: 'DEFERRED-ROW '.repeat(40) })),
   rejected: Array.from({ length: 72 }, (_, i) => bigRow(2000 + i, { refutationReason: 'no' })),
@@ -235,6 +264,7 @@ test('in a real shell a ledger of 400 KB is written in pieces, read back in piec
   put(parts)
   assert.deepEqual(H.ledgerWriteOf(sh(H.ledgerWriteCommand(path, parts)), parts, H.sectionCounts(BIG)), { bad: [], ok: true })
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), BIG, 'the file is the ledger, as one JSON document')
+  assert.equal(H.ledgerDoubt(H.ledgerManifestOf(sh(H.ledgerReadCommand(path, 0)))), '', 'and it holds what its counts say')
   assert.equal(existsSync(H.ledgerPartPath(path, 1)), false, 'the part files are gone')
   assert.ok(readFileSync(path, 'utf8').startsWith('{\n  "repoRoot": "/r",'), 'laid out as it always was')
 
@@ -270,6 +300,14 @@ test('in a real shell a one-line ledger, an old one with no unreviewed field, an
   assert.equal(manifest.pieces.length, 1)
   assert.deepEqual(H.ledgerPayloadOf([H.ledgerPieceOf(first, 1, manifest.pieces[0])], manifest).confirmedBugs, old.confirmedBugs, 'a small ledger arrives whole with the manifest: one agent, as before')
   assert.equal(H.ledgerManifestOf(sh(H.ledgerReadCommand(join(dir, 'gone.json'), 0))), null)
+  // The hollow ledger a live run was handed, as a file: no counts, and a note for a row.
+  writeFileSync(join(dir, 'hollow.json'), JSON.stringify({ confirmedBugs: [], rejected: [], deferred: [{ note: 'INCOMPLETE RESULT: the ledger was not copied' }] }))
+  const hollow = H.ledgerManifestOf(sh(H.ledgerReadCommand(join(dir, 'hollow.json'), 0)))
+  assert.deepEqual([hollow.counts.deferred, hollow.findings.deferred, hollow.says], [1, 0, null])
+  assert.equal(H.ledgerDoubt(hollow), '1 row(s) of deferred are not findings (a finding has a file and a rootCause)')
+  // And one that carries counts it does not hold.
+  writeFileSync(join(dir, 'short.json'), JSON.stringify({ counts: { confirmedBugs: 33, deferred: 62, rejected: 4, unreviewed: 0 }, confirmedBugs: [], deferred: [], rejected: [] }))
+  assert.match(H.ledgerDoubt(H.ledgerManifestOf(sh(H.ledgerReadCommand(join(dir, 'short.json'), 0)))), /^it says it holds 33 confirmed · 62 deferred · 4 rejected · 0 unreviewed, and the file holds 0 confirmed/)
   writeFileSync(join(dir, 'broken.json'), '{"confirmedBugs": [')
   assert.equal(H.ledgerManifestOf(sh(H.ledgerReadCommand(join(dir, 'broken.json'), 0))), null)
 })
@@ -366,7 +404,8 @@ test('a run that fits says nothing of any of this: every finding reviewed, one p
   assert.equal(calls.filter(c => /^(refute|confirm):/.test(c.label)).length, 8)
   assert.deepEqual(result.unreviewed, [])
   assert.deepEqual(ledger.unreviewed, [])
-  assert.deepEqual(Object.keys(ledger), ['repoRoot', 'scope', 'model', 'models', 'toolchain', 'baselineFailures', 'confirmedBugs', 'deferred', 'rejected', 'unreviewed'])
+  assert.deepEqual(Object.keys(ledger), ['repoRoot', 'scope', 'model', 'models', 'toolchain', 'baselineFailures', 'counts', 'confirmedBugs', 'deferred', 'rejected', 'unreviewed'])
+  assert.deepEqual(ledger.counts, { confirmedBugs: 4, deferred: 0, rejected: 0, unreviewed: 0 }, 'the ledger says how many rows each bucket holds')
   assert.ok(logs.includes('Verify: 4 confirmed · 0 deferred (intentional) · 0 rejected'), 'the Verify line is the one it was')
   assert.ok(!logs.some(l => /unreviewed|agent limit/.test(l)))
   assert.deepEqual(result.agents, { started: calls.length, limit: 1000 })
@@ -462,7 +501,8 @@ test('a run from a ledger with fix off finishes the review: each row moves to th
   assert.deepEqual(now.deferred, [...PRIOR().deferred, ...result.deferred], 'rows the run never read are kept, and the new ones follow them')
   assert.deepEqual(now.rejected, [...PRIOR().rejected, ...result.rejected])
   assert.deepEqual(now.unreviewed, result.unreviewed)
-  assert.deepEqual(Object.keys(now), Object.keys(PRIOR()))
+  assert.deepEqual(Object.keys(now), [...Object.keys(PRIOR()), 'counts'], 'a ledger that carried no counts gains them')
+  assert.deepEqual(now.counts, { confirmedBugs: 2, deferred: 2, rejected: 3, unreviewed: 1 })
   assert.ok(!('unreviewedReason' in now.confirmedBugs[1]))
 
   // Deferred and rejected rows are counted, and reach no agent in either direction.
@@ -534,6 +574,103 @@ test('a big ledger is read in pieces; a piece that fails its seal is read once m
   await assert.rejects(fixRun(SRC, { bugs: [], args: { fix: false }, on: { 'ingest-ledger': mangleOnce(2) } }), /fix-from-ledger: could not read\/parse ledger at \/tmp\/ledger\.json/)
   await assert.rejects(fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => null } }), /could not read\/parse ledger/, 'a dead read is not an empty ledger')
   await assert.rejects(fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => relayOf('crg-ledger-rows 0 0 0 0') } }), /could not read\/parse ledger/, 'nor is a relay that only counts nothing')
+})
+
+// ---- a ledger that is not what it says ------------------------------------------------
+// A live fix run logged "Ingested ledger: 0 confirmed · 1 deferred · 0 rejected" and fixed
+// nothing. The ledger held 33 confirmed bugs. The agent that was to return it was cut off
+// partway, said it would not submit an empty one, and then did: no confirmed row, and one
+// `deferred` row that was a note. The schema accepted it and so did the script.
+
+const COUNTED = (extra = {}) => {
+  const ledger = PRIOR({ confirmedBugs: Array.from({ length: 33 }, (_, i) => bug(`b${i}`, `src/f${i}.py`)), deferred: Array.from({ length: 62 }, (_, i) => finding(500 + i, { deferReason: 'meant' })), rejected: Array.from({ length: 4 }, (_, i) => finding(700 + i)), unreviewed: [] })
+  return { ...ledger, counts: H.sectionCounts(ledger), ...extra }
+}
+const HOLLOW = { confirmedBugs: [], rejected: [], deferred: [{ note: 'INCOMPLETE RESULT: the ledger was not copied. Do not treat this as the ledger.' }] }
+// A fix run from the ledger `file` holds. `ingest(prompt, disk)` answers the read agents;
+// by default they relay what the read command prints. Every other agent answers like a gate.
+const fromLedger = async (file, ingest = (prompt, disk) => disk.answer(prompt)) => {
+  const disk = ledgerDisk(SRC)
+  disk.files.set(LEDGER, JSON.stringify(file))
+  const labels = []
+  const logs = []
+  const agent = async (prompt, opts = {}) => {
+    labels.push(opts.label)
+    if (opts.label === 'tree-status') return relayOf('crg-tree-status 0')
+    if (opts.label.startsWith('ingest-ledger')) return ingest(prompt, disk)
+    return relayOf('')
+  }
+  const outcome = await run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fix: true, fromLedger: LEDGER }, agent, thunks => Promise.all(thunks.map(t => t())), m => logs.push(m), undefined, () => {}).then(result => ({ result }), error => ({ error }))
+  return { ...outcome, labels, logs }
+}
+const NO_READ = { name: 'Error', message: /^fix-from-ledger: could not read\/parse ledger at \/tmp\/ledger\.json — / }
+
+test('an agent that answers the ledger read with a hollow ledger stops the run: it is not an empty ledger', async () => {
+  const { error, labels, logs } = await fromLedger(COUNTED(), () => HOLLOW)
+  assert.equal(error.message, 'fix-from-ledger: could not read/parse ledger at /tmp/ledger.json — the read command did not report what the file holds')
+  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'ingest-ledger'], 'it is asked once more, and nothing is fixed, branched or committed on the strength of it')
+  assert.ok(!logs.some(l => l.startsWith('Ingested ledger')), 'and no line says a ledger was ingested')
+
+  // The run this came from: the first answer was cut off, the second was the hollow one.
+  // Asked again, an agent that runs the command is believed.
+  let asked = 0
+  const second = await fromLedger(COUNTED(), (prompt, disk) => (asked++ ? disk.answer(prompt) : null))
+  assert.equal(second.error, undefined)
+  assert.equal(second.result.confirmedBugs.length, 33)
+  assert.deepEqual(second.labels.slice(0, 3), ['tree-status', 'ingest-ledger', 'ingest-ledger'])
+
+  // The same answer dressed as a relay, with numbers nobody printed.
+  const dressed = await fromLedger(COUNTED(), () => relayOf(`${headText('0 1 0 0', '0 1 0 0', 'nothing').join('\n')}\ncrg-ledger-head 00000000\ncrg-ledger-pieces 0 0 811c9dc5`))
+  assert.match(dressed.error.message, NO_READ.message)
+  // Honest counts, and rows that are not the file's: the seals are of the file.
+  const swapped = await fromLedger(COUNTED(), (prompt, disk) => {
+    const relay = disk.answer(prompt)
+    return relayOf(relay.results[0].stdout.replace(/b0 root/g, 'b9 root'))
+  })
+  assert.equal(swapped.error.message, 'fix-from-ledger: could not read/parse ledger at /tmp/ledger.json — its confirmed and unreviewed rows did not arrive whole')
+})
+
+test('a ledger file that is itself hollow is refused by its own counts, with the path and both sets of numbers', async () => {
+  const { error, labels } = await fromLedger(COUNTED({ confirmedBugs: [], rejected: [], deferred: HOLLOW.deferred }))
+  assert.equal(error.message, 'fix-from-ledger: could not read/parse ledger at /tmp/ledger.json — 1 row(s) of deferred are not findings (a finding has a file and a rootCause)')
+  assert.deepEqual(labels, ['tree-status', 'ingest-ledger'])
+
+  const emptied = await fromLedger(COUNTED({ confirmedBugs: [] }))
+  assert.equal(emptied.error.message, 'fix-from-ledger: could not read/parse ledger at /tmp/ledger.json — it says it holds 33 confirmed · 62 deferred · 4 rejected · 0 unreviewed, and the file holds 0 confirmed · 62 deferred · 4 rejected · 0 unreviewed')
+
+  const short = await fromLedger(COUNTED({ deferred: COUNTED().deferred.slice(0, 61) }))
+  assert.match(short.error.message, /it says it holds 33 confirmed · 62 deferred .* the file holds 33 confirmed · 61 deferred/, 'a bucket this run never relays is counted too')
+
+  const note = await fromLedger(COUNTED({ rejected: [...COUNTED().rejected.slice(0, 3), { note: 'three more like these' }] }))
+  assert.match(note.error.message, /1 row\(s\) of rejected are not findings/, 'a note among rows the run never reads is still not a finding')
+})
+
+test('a whole ledger with counts is read without remark; one written before the counts is accepted and said to be unchecked', async () => {
+  const counted = await fromLedger(COUNTED())
+  assert.equal(counted.error, undefined)
+  assert.ok(counted.logs.includes('Ingested ledger: 33 confirmed · 62 deferred · 4 rejected · 1 toolchain pkg'))
+  assert.ok(!counted.logs.some(l => l.startsWith('Ingest:')))
+  assert.equal(counted.result.confirmedBugs.length, 33)
+
+  const { counts, ...old } = COUNTED()
+  const before = await fromLedger(old)
+  assert.equal(before.error, undefined)
+  assert.equal(before.result.confirmedBugs.length, 33)
+  assert.ok(before.logs.includes('Ingest: /tmp/ledger.json carries no row counts of its own (it was written before ledgers did), so what was read could not be checked against them'))
+
+  // An old ledger gets no pass on rows that are not findings.
+  const oldHollow = await fromLedger({ ...old, confirmedBugs: [], deferred: HOLLOW.deferred })
+  assert.match(oldHollow.error.message, /1 row\(s\) of deferred are not findings/)
+})
+
+test('a ledger narrowed by the slicer is still the ledger it says it is', async () => {
+  const sliced = await fromLedger(sliceLedger(COUNTED(), COUNTED().confirmedBugs.slice(0, 5)))
+  assert.equal(sliced.error, undefined)
+  assert.equal(sliced.result.confirmedBugs.length, 5)
+  assert.ok(sliced.logs.includes('Ingested ledger: 5 confirmed · 62 deferred · 4 rejected · 1 toolchain pkg'))
+  // What a slicer from before the counts would write: fewer rows under the old number.
+  const stale = await fromLedger({ ...COUNTED(), confirmedBugs: COUNTED().confirmedBugs.slice(0, 5) })
+  assert.match(stale.error.message, /it says it holds 33 confirmed .* the file holds 5 confirmed/)
 })
 
 // ---- the fix phase near the limit -------------------------------------------------------
