@@ -103,6 +103,32 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   deferred and rejected rows at all: it counts them, and its re-save lays the changed
   sections over the file. `ledger.json` is still one JSON document with the fields it had,
   plus `unreviewed` and `counts`. `node` must now be on the PATH of the agents' shell.
+- **A reader that rewrites one row no longer stops a run from a ledger** (`crg-debug.js`). A
+  fix run could not read a 102 KB ledger of 53 confirmed and 42 unreviewed rows: of its seven
+  16,000-character pieces one failed its seal on all four attempts over two runs. The agent
+  relaying it was not miscopying characters. It wrote the piece out again with one row made to
+  look like its neighbours, dropping `"severity":"Low",` from the only row that had it (and
+  once adding it to a row that had none), the same way every time, so asking again changed
+  nothing and the run stopped with nothing fixed.
+  - The read command prints a row to a line, each with its section, its place and a seal
+    over all of it. The script checks every row on its own, so a relay that alters one row
+    loses that row and keeps the others.
+  - Rows travel in batches of at most 16,000 characters. A batch that brings no row is asked
+    for once more; after that each row still missing is asked for alone, twice at most.
+    Alone, a row has no neighbours to be made to look like.
+  - A row that still does not arrive is left out of the run, stays in the file, is logged,
+    and is listed in the return's `unread` as `{bucket, index}`. When the run saves the
+    ledger again it keeps those rows by place (the write command's new `keep`) and records
+    `unread` in the file; before this a row the run did not hold would have been written out
+    of the ledger.
+  - The run still stops, naming the path, when none of the rows it came for arrived, when
+    the toolchain or the baseline failures did not (a fix would be gated against nothing),
+    and when it is `fixOnly` and a confirmed row is missing: that caller chose exactly those
+    bugs and follows each through fixed or unfixed.
+  - `ledger-slice` leaves `unread` out of the ledger it narrows, where the places would
+    point at other rows.
+  The write direction is unchanged: a piece is still written by one agent and checked by
+  seal, with one more try.
 - **Verify no longer discards every verdict** (`crg-debug.js`). A live sweep of 115 findings
   started 230 reviewers, received 230 verdicts, and filed all 115 findings as unreviewed
   with `no verdict`; a run from that ledger did the same again. The script matched each

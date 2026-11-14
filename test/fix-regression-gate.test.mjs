@@ -440,10 +440,11 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // It re-runs the baseline's own commands by id (checks:final, regress:allfixes) instead.
 // Re-pinned again, the ingest-ledger line alone: the ledger is now read by a fixed command
 // whose output the script checks, not returned whole by the agent. (And once more when that
-// command began to print how many rows are findings and what the ledger says it holds, under a seal.)
+// command began to print how many rows are findings and what the ledger says it holds, under a seal,
+// and again when it began to print a row to a line, each under its own seal.)
 const PINNED = {
   two: [
-    'ingest-ledger 8a26eb6a7f87',
+    'ingest-ledger 53e11a083abd',
     'fix-branch f0bdaf259764',
     'fix:alpha.py b415b3942d78',
     'fix:bravo.py 88b62555c23d',
@@ -452,7 +453,7 @@ const PINNED = {
     'commit:wave ba51438170a9',
   ],
   busy: [
-    'ingest-ledger 4e3597cb76bc',
+    'ingest-ledger 6669b5a98551',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 594763207490',
     'fix:bravo.py 64b6079ba126',

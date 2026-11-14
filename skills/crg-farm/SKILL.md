@@ -324,6 +324,11 @@ Workflow({ scriptPath: '$HOME/.claude/workflows/crg-debug.js',
           methodologyPath: '$HOME/.claude/workflows/crg-debug.methodology.md' } })
 ```
 
+A `fixOnly` run that cannot read one of the picked rows whole does not start: it throws
+`fix-from-ledger: could not read/parse ledger at <path> — confirmedBugs[n] did not arrive whole, …`.
+Nothing was changed. Invoke it once more with the same args; if it throws again, hand the repo to
+the human with that message. Do not edit the ledger and do not drop `fixOnly`.
+
 Read `ret.fix = { fixed, unfixed, finalGate:{clean} }`; append an `attempt` record. Then follow
 `methodology.md` (§Escalation) exactly:
 

@@ -119,11 +119,21 @@ is at `ledgerPath` may be a prior run's.
 its four buckets, written by the Workflow. A `--from-ledger` run stops before any work, with
 `fix-from-ledger: could not read/parse ledger at <path> — <why>`, when the file does not hold the
 rows its `counts` say, when a row in any bucket has no `file` or no `rootCause` (that is a note, not
-a finding), or when the read did not come back whole after one more try. Relay the reason as given;
-do not retry with an edited file. To fix only some confirmed bugs, narrow the ledger with
+a finding), when the counts did not come back after one more try, when none of the rows the run is
+there for arrived whole, or when the toolchain did not. Relay the reason as given; do not retry with
+an edited file. To fix only some confirmed bugs, narrow the ledger with
 `crg-debug.ledger-slice.mjs`, which keeps `counts` true; rows deleted by hand leave it false. A
 narrowed ledger holds no `unreviewed` rows, so a fix run from it reviews nothing. A
 ledger written before `counts` existed is accepted, and the run logs that it could not be checked.
+
+**Rows the run could not read.** The ledger is read a row at a time and the script checks each row
+against a seal of its own. A row that does not arrive as written is asked for again, alone; one that
+still does not is left out and the run goes on. Those rows are in the return's `unread`, each as
+`{bucket, index}`: its place in the ledger file (the file as this run saved it, when it saved one,
+and the saved ledger then carries the same list). When `unread` is not empty, say how many rows and
+which, that they are still in the ledger and were neither reviewed nor fixed, and that the same
+`--from-ledger` run picks them up. A run with `fixOnly` stops instead when a confirmed row is among
+them, since its caller chose exactly those bugs.
 
 **Tests that were already failing.** When `fix.finalGate.alreadyFailing` is not empty, name every
 test in it, with its command, beside the final gate status, as failing before the first fix. A

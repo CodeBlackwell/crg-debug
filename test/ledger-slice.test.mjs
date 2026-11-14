@@ -84,3 +84,12 @@ test('a sliced ledger carries no unreviewed rows; the ledger it was cut from kee
   assert.deepEqual(sliceLedger({ ...LEDGER, unreviewed: held }, []).unreviewed, [])
   assert.equal('unreviewed' in sliceLedger(LEDGER, []), false)
 })
+
+test('a slice does not carry the places of rows another run could not read', () => {
+  const saved = { ...LEDGER, unread: [{ bucket: 'confirmedBugs', index: 2 }] }
+  const out = sliceLedger(saved, [bug('b.py:3', 'inverted guard')])
+  assert.equal('unread' in out, false, 'place 2 of the slice is another row, or none')
+  assert.deepEqual(saved.unread, [{ bucket: 'confirmedBugs', index: 2 }])
+  assert.deepEqual(Object.keys(out), Object.keys(LEDGER))
+})
+
