@@ -20,7 +20,7 @@ for the sequential `crg-debugger` agent, which orchestrates itself in one contex
 >
 > Then wait for an explicit "yes" before proceeding. If you cannot complete a mandated step (tool missing, environment blocked), do NOT silently work around it — STOP, report what's blocked, and ask how to proceed. Surfacing a deviation in the final report is NOT a substitute for getting approval BEFORE you take it.
 
-Reproduce a full graph-driven debugging session in one invocation: build the graph → map hotspots → find bugs in parallel → fix them in disjoint waves → verify → document. Each validated wave is committed on a `crg-debug/fix-<topic>` branch off the current HEAD (only the wave's own files, staged by explicit path), followed by `code-review-graph update` so later waves and gates query a graph that matches the tree. **Never push.** The user's original branch is never committed to; pre-existing uncommitted changes stay untouched in the tree.
+Reproduce a full graph-driven debugging session in one invocation: build the graph → map hotspots → find bugs in parallel → fix them in disjoint waves → verify → document. Each validated wave is committed on a `crg-debug/fix-<topic>` branch off the current HEAD, one commit per fixer (only that fixer's own files, staged by explicit path; fixers whose files overlap share a commit), so a reviewer can drop one fix without picking apart the rest, followed by `code-review-graph update` so later waves and gates query a graph that matches the tree. **Never push.** The user's original branch is never committed to; pre-existing uncommitted changes stay untouched in the tree.
 
 ## Execution mode (read first)
 
@@ -56,6 +56,8 @@ Output: confirmed graph stats line + resolved scope + toolchain profile + provis
 Run, at `detail_level="minimal"`: `list_graph_stats_tool`, `get_hub_nodes_tool`, `find_large_functions_tool(min_lines=50)`, `query_graph_tool(pattern="importers_of")` on the top hub files, `get_knowledge_gaps_tool`, `query_graph_tool(pattern="tests_for")` on high-impact functions, `get_suggested_questions_tool`, `get_architecture_overview_tool`.
 
 Output: a short critical overview (Stack / Shape / Hotspots / Coverage gaps / Risks) **and a target map** — ranked files+functions each tagged by concern: `backend-logic`, `security`, `frontend`, `shared-contracts`, `tests`, `design-quality`. This map is the partition input for Phase 2.
+
+**A scope of paths is a file set.** When the scope is nothing but file or directory paths, the map holds only those: a target outside them is dropped, a scoped file the graph did not list is added, and in Phase 2 a finding in any other file is dropped before verification. Do not widen such a scope to dependents. A scope in words is resolved through the graph as above.
 
 ## Phase 2 — Parallel discovery + adversarial verification
 
@@ -97,7 +99,7 @@ Per wave (barriered):
 
 **Dead-code guard (part of the diff review).** A green gate proves the code compiles and passes — it does NOT prove every added line is load-bearing. For each symbol the diff newly declares (function, method, extension, field, type), confirm it has at least one call site in non-test production code reachable from the fix. An added-but-unused helper is not part of a minimal fix (a real farm fix once introduced an extension method the fix never called, alongside a second private helper that did the actual work): **remove it, or wire it in.** This is the minimal-diff rule applied to *additions* — every new symbol must earn its place, the same way every changed line must trace to a finding.
 
-**Full gate:** `typecheck` clean across all touched packages + the full test suite green. Do not proceed to documentation until this passes (or a residual is logged "needs human").
+**Full gate:** `typecheck` clean across all touched packages + the full test suite green. Do not proceed to documentation until this passes (or a residual is logged "needs human"). A test written for a bug that ended unfixed and still fails keeps the full gate red: report it by name as the test of an unfixed bug, never excuse it as a known failure.
 
 ## Phase 5 — Document (orchestrator)
 
@@ -166,7 +168,7 @@ When re-auditing — a second sweep over an already-processed repo, the adversar
 ### Git & safety policy (non-negotiable)
 - Scoped staging only: `git add <explicit paths you changed>`. **Never** `git add -A`, `git add .`, or `git add -u` — generated CRG/AI-tool config and the report must never be swept in.
 - Edit source files only — never stage or hand-edit a generated artifact (`dist/`, `build/`, bundled/minified output, a lockfile) as if it were a fix; its bug lives in the source that produces it.
-- Default deliverable = validated waves committed on a `crg-debug/fix-<short-topic>` branch + the report. Commit each wave only after its gate is green, and stage only that wave's own files by name. After each wave commit, run `code-review-graph update` so the next wave's queries see the change. Never commit on the user's own branch.
+- Default deliverable = validated waves committed on a `crg-debug/fix-<short-topic>` branch + the report. Commit each wave only after its gate is green, one commit per fixer, staging only that fixer's own files by name. After each wave commit, run `code-review-graph update` so the next wave's queries see the change. Never commit on the user's own branch.
 - Create and switch to `crg-debug/fix-<short-topic>` off the current HEAD before the first commit — whatever branch the repo is on. If already on a `crg-debug/fix-*` branch (a resumed or escalated run), stay on it.
 - No AI/Claude/Anthropic attribution in any commit — no co-author trailer, no tool credit, no session link, no emoji. Write commit messages the way the human fixing this bug themselves would: plain prose, ordinary cadence.
 - **Never `git push`.** Confirm before any destructive action (`git reset --hard`, `checkout -- <file>`, `clean`, `rm`, branch deletion, rebase).

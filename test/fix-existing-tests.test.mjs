@@ -351,7 +351,7 @@ test('a fixer that only adds a test to an existing file is untouched', async () 
     assert.equal(labels.some(l => l.startsWith('restore:')), false)
     assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
     assert.deepEqual(result.fix.existingTestEdits, [])
-    assert.equal(result.fix.commits.length, 1)
+    assert.equal(result.fix.commits.length, 2, 'a commit per fixer')
   }
 })
 
@@ -374,7 +374,7 @@ test('an existing test changed by a fixer that did not declare it is put back al
   const { result, labels, calls } = await fixRun(SRC, { bugs: TWO, on: { testedits: printed(...SOURCES, '2\t2\ttests/test_utils.py') } })
   const restore = calls.find(c => c.label === 'restore:wave1')
   assert.ok(restore.prompt.includes(`-- 'tests/test_utils.py' `) && !restore.prompt.includes('alpha') && !restore.prompt.includes('bravo'), 'only the test file goes back')
-  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'regress:allfixes'], 'then the regression gate runs against the original test')
+  assert.deepEqual(labels.slice(9), ['testedits:wave1', 'restore:wave1', 'regress:wave1', 'commit:wave', 'commit:wave', 'regress:allfixes'], 'then the regression gate runs against the original test')
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.deepEqual(result.fix.existingTestEdits, [{ wave: 1, bugs: [], files: [{ path: 'tests/test_utils.py', removed: 2 }] }])
 })

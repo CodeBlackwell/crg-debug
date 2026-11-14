@@ -217,6 +217,26 @@ test('units mode lists each mapped source file once, then runs one finder per fu
   ], 'no concern finder, residual pass or test-file lister; a single finding skips the dedup agent')
 })
 
+test('a scope of paths is kept to: only scoped files are listed and judged, and no finding outside survives', async () => {
+  // A finder that reads beyond its function and reports a bug in a file it was not given.
+  const STRAY = { ...FOUND, file: 'src/core.py:41', rootCause: 'main swallows the exit code' }
+  const findings = label => (label === 'unit:auth.py:check_token' ? [FOUND, STRAY] : [])
+  const relays = { ...RELAYS, 'units:src/new.py': { total: 1, units: [row('run', 3, 'src/new.py')] } }
+  const { labels, logs, calls, res } = await unitsRun({ args: { scope: 'src/auth.py src/new.py' }, relays, findings })
+  assert.deepEqual(labels.filter(l => l.startsWith('units:') || l.startsWith('unit:')), ['units:src/auth.py', 'units:src/new.py', 'unit:auth.py:sign', 'unit:auth.py:check_token', 'unit:new.py:run'])
+  assert.ok(logs.includes('Map: kept to scope (2 path(s)) — 4 target(s) outside it dropped, 1 scoped file(s) the map did not list added (src/new.py)'))
+  assert.ok(logs.includes('Discover: 1 finding(s) outside the scope dropped (src/core.py:41: 1)'))
+  assert.deepEqual(res.confirmedBugs.map(b => b.file), ['src/auth.py:9'])
+  assert.match(calls.find(c => c.label === 'setup').prompt, /The scope is exactly these repo-relative paths: src\/auth\.py src\/new\.py\. Do not widen it/)
+  assert.match(calls.find(c => c.label === 'map').prompt, /Scope: exactly these repo-relative paths, and nothing outside them: src\/auth\.py src\/new\.py\./)
+})
+
+test('a scope in words is resolved by the graph agent as before, and nothing is dropped by the script', async () => {
+  const { logs, calls } = await unitsRun({ args: { scope: 'token handling' } })
+  assert.equal(logs.some(l => /kept to scope|outside the scope/.test(l)), false)
+  assert.match(calls.find(c => c.label === 'setup').prompt, /Resolve this focus to a file set: "token handling"/)
+})
+
 test('a lister is told to transcribe the graph tool for its one file', async () => {
   const { calls } = await unitsRun()
   const lister = calls.find(c => c.label === 'units:src/auth.py')

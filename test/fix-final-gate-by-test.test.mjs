@@ -107,7 +107,7 @@ test('a suite with one test already failing ends green, and names that test', as
   const { result, logs } = await fixRun(SRC, { bugs: TWO, on: { 'ingest-ledger': untyped, checks: missingChecker, regress } })
   assert.deepEqual(result.fix.fixed.map(b => b.bugId), ['b1', 'b2'])
   assert.deepEqual(result.fix.finalGate, {
-    clean: true, verdict: 'green', regressed: [], newFailures: [], fewerPassed: [],
+    clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], fewerPassed: [],
     notChecked: [{ name: 'typecheck', exitCode: 127 }], unreported: [], held: ['tests'],
     alreadyFailing: [{ id: OLD.id, command: BASE_CMD }],
     passedCounts: [{ name: 'tests', before: 1423, after: 1423 }],
@@ -124,6 +124,23 @@ test('a new failure beside the old one is red, and the old one is still named', 
   assert.deepEqual(result.fix.finalGate.newFailures, [NEW.id])
   assert.deepEqual(result.fix.finalGate.alreadyFailing, [{ id: OLD.id, command: BASE_CMD }])
   assert.match(logs.at(-1), / · final gate RED · 1 test already failing before the first fix · regression gate: /)
+})
+
+test('a test of a bug left unfixed that still fails at the end is red, and named apart from regressions', async () => {
+  // The live case (writeup 024, tree B): two bugs in one file, one closes and its commit takes
+  // the shared test file, the other never passes its own gate and its red test stays behind.
+  const OPEN = { id: 'tests/test_alpha.py::test_b2', output: 'AssertionError' }
+  const gate = ({ prompt }) => (prompt.includes('::test_b2') ? { results: [{ command: 'pytest', exitCode: 1 }] } : undefined)
+  const regress = ({ label }) => (label === 'regress:baseline' ? row(label, 40) : row(label, 41, OPEN))
+  const { result, logs } = await fixRun(SRC, { bugs: [bug('b1', 'src/alpha.py'), bug('b2', 'src/alpha.py')], on: { gate, regress } })
+  assert.deepEqual(result.fix.fixed.map(b => b.bugId), ['b1'])
+  assert.deepEqual(result.fix.unfixed.map(b => b.bugId), ['b2'])
+  assert.ok(result.fix.commits[0].files.includes('tests/test_alpha.py'), 'the shared test file was committed with b1')
+  assert.equal(result.fix.finalGate.verdict, 'red', 'the suite fails, so the gate cannot read green')
+  assert.deepEqual(result.fix.finalGate.openBugTests, [OPEN.id])
+  assert.deepEqual(result.fix.finalGate.newFailures, [], 'it is not a regression, and is not called one')
+  assert.ok(logs.includes(`Fix: final gate — 1 test(s) of bugs left unfixed still fail in the tree (${OPEN.id})`))
+  assert.match(logs.at(-1), / · final gate RED · /)
 })
 
 test('fewer tests passing at the end than before the first fix is red, whatever fails by name', async () => {

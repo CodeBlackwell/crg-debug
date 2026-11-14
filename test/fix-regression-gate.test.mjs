@@ -442,6 +442,8 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // whose output the script checks, not returned whole by the agent. (And once more when that
 // command began to print how many rows are findings and what the ledger says it holds, under a seal,
 // and again when it began to print a row to a line, each under its own seal.)
+// Re-pinned the commit:wave lines when a wave began to commit per fixer: one wave commit of
+// two files became one commit for each.
 const PINNED = {
   two: [
     'ingest-ledger 53e11a083abd',
@@ -450,7 +452,8 @@ const PINNED = {
     'fix:bravo.py 88b62555c23d',
     'gate:alpha.py c4a75d839022',
     'gate:bravo.py 675eb1af41ab',
-    'commit:wave ba51438170a9',
+    'commit:wave 35af19a6930e',
+    'commit:wave c8c3477b1c92',
   ],
   busy: [
     'ingest-ledger 6669b5a98551',
@@ -462,7 +465,8 @@ const PINNED = {
     'gate:alpha.py f3d457292a95',
     'gate:alpha.py a945067a9f5e',
     'gate:bravo.py e1397314abe4',
-    'commit:wave ee47d0cf5a4f',
+    'commit:wave 49f580d8c9ff',
+    'commit:wave b657b49ac07e',
     'fix:alpha.py 3f1e3c6c9767',
     'gate:alpha.py 3a4d9c8155d1',
     'gate:alpha.py f3d457292a95',
@@ -481,7 +485,7 @@ test('with a clean gate, every agent the Fix phase already had is asked exactly 
 
 test('a clean run takes a baseline, checks each wave before its commit, and reports the gate', async () => {
   const { result, labels, calls, logs } = await fixRun(SRC, { bugs: TWO })
-  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'commit:wave', 'regress:allfixes'])
+  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'commit:wave', 'commit:wave', 'regress:allfixes'])
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.equal(result.fix.halted, undefined)
   assert.deepEqual(result.fix.regressionGate, {
@@ -729,7 +733,7 @@ test('a wave gate that answers with ids instead of echoing the commands has repo
   const { result, calls } = await fixRun(SRC, { bugs: TWO, on: { regress: script(baseline, byId) } })
   assert.deepEqual(result.fix.regressionGate.waves, [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }])
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
-  assert.equal(result.fix.commits.length, 1)
+  assert.equal(result.fix.commits.length, 2, 'a commit per fixer')
   const rerun = calls.find(c => c.label === 'regress:wave1')
   assert.ok(rerun.prompt.includes(`c1:\n${H.fence(CORE)}\nc2:\n${H.fence(TERM)}`), 'each baseline command goes out under its id')
   assert.ok(rerun.prompt.includes(`write its id exactly as it is written here:\n${H.fence(OLD.id)}`), 'and the tests already failing are listed for the agent to copy')

@@ -1,6 +1,6 @@
 ---
 name: crg-debug
-description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
+description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Each validated fixer's work is committed on its own on a crg-debug/fix-* branch and the graph re-ingested; never pushed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
 argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--from-ledger <path>] [--prose] [--model <name>] [--discover-model <name>] [--verify-model <name>] [--fix-model <name>]"
 user_invocable: true
 ---
@@ -9,7 +9,7 @@ user_invocable: true
 
 Graph-driven debugging in one invocation: build the graph → map hotspots → find bugs in parallel →
 fix them in disjoint waves → verify → document. Each validated wave is committed on a
-`crg-debug/fix-*` branch off the current HEAD (only that wave's own files) and the graph
+`crg-debug/fix-*` branch off the current HEAD, one commit per fixer (only its own files) and the graph
 re-ingested. **Never push**; the user's own branch is never committed to.
 
 This skill has two orchestration modes over **one shared methodology** (`methodology.md`, in this
@@ -25,7 +25,7 @@ skill's directory):
 
 - **repoRoot**: an explicit path or `--repo <path>` wins; else the current `git rev-parse --show-toplevel`.
   If cwd is not a git repo and no path was given, STOP and ask for the repo path.
-- **scope**: any non-flag text — the focus area, file, or issue. Empty = full-repo sweep.
+- **scope**: any non-flag text — the focus area, file, or issue. Empty = full-repo sweep. A scope made only of paths (`src/a.py src/lib/`) is a file set the run keeps to: nothing outside it is audited or reported. A scope in words is resolved through the graph and may take in dependents.
 - **issue**: `--issue <ref>`, OR a GitHub issue auto-detected in the non-flag text — a full
   `https://github.com/<owner>/<repo>/issues/<n>` URL, `<owner>/<repo>#<n>`, or a bare `#<n>`
   (bare resolves against the repo's `origin` remote). See *Resolve the issue* below.
