@@ -92,6 +92,8 @@ const pinTranscript = async (source, args, sha) => {
 const DISK = ledgerDisk(SRC)
 
 const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newline', issueRef: 'gh#12', discoveryRounds: 2, model: 'sonnet' }
+// Re-pinned the rich run's refute/confirm lines when V1 was reverted (2026-11-14): its
+// reviewers no longer get the issue context and the change-under-review rule.
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -131,22 +133,22 @@ const PINNED = {
     'find:tests#2 d190f90dfb34',
     'find:residual#2 47dfe715393b',
     'dedup 11dabb9ca674',
-    'refute:find_backend_logic_.py b632e478d611',
-    'confirm:find_backend_logic_.py 9ddabe5e5843',
-    'refute:find_security.py a0ebf7e05b46',
-    'confirm:find_security.py 3f0c1268a706',
-    'refute:find_tests.py 2ee7f8bddf2f',
-    'confirm:find_tests.py 6b3211a026f8',
-    'refute:find_residual.py 26191b5fd25e',
-    'confirm:find_residual.py 982c8da4a10a',
-    'refute:find_security_.py 838223f13f24',
-    'confirm:find_security_.py 39f40128927a',
-    'refute:find_tests_.py 946d7956454b',
-    'confirm:find_tests_.py 1ad12615dda1',
-    'refute:find_residual_.py e64c73ef38d5',
-    'confirm:find_residual_.py 4936854aef5b',
-    'refute:z.py 15d8818032f8',
-    'confirm:z.py 95c83502b9c2',
+    'refute:find_backend_logic_.py 4ed2e1dfff54',
+    'confirm:find_backend_logic_.py 3d6f13368ff0',
+    'refute:find_security.py f47201bbad60',
+    'confirm:find_security.py db50191d929e',
+    'refute:find_tests.py e48291f5078d',
+    'confirm:find_tests.py 66a66bc5bd3e',
+    'refute:find_residual.py e28759570631',
+    'confirm:find_residual.py 5b07300642ef',
+    'refute:find_security_.py 3b62d1d58c76',
+    'confirm:find_security_.py 8ab6840273c9',
+    'refute:find_tests_.py 37039ecabbc0',
+    'confirm:find_tests_.py 088b2c443995',
+    'refute:find_residual_.py 7fa2eb1b3d93',
+    'confirm:find_residual_.py a4dcbdf22d85',
+    'refute:z.py 1f7e46b1df06',
+    'confirm:z.py dd4717d2929a',
     'persist:1 dc4311085911',
     'persist:assemble e6de595a360f',
     'logs 262e32d7f1a6',
