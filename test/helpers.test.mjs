@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDER_FUNCTION_CAP, sliceTargets, unauditedFunctions, AUDIT_SCHEMA, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -323,75 +323,6 @@ test('gateUnusable: one working gate among several broken ones is enough', () =>
 test('gateUnusable: rows without a test command are ignored, not counted as gates', () => {
   const toolchain = [{ package: 'a', build: 'make' }, { package: 'b', test: '' }]
   assert.equal(H.gateUnusable(toolchain, []), true, 'an empty test string is not a gate')
-})
-
-// ---- Discover: slices and the per-function audit ----------------------------------
-// A finder is handed a bounded list of ranked functions and must say something about each.
-
-const target = (file, count) => ({ file, concern: 'backend-logic', functions: Array.from({ length: count }, (_, i) => `${file}#f${i}`) })
-const weights = slices => slices.map(slice => slice.reduce((sum, t) => sum + Math.max(1, (t.functions || []).length), 0))
-
-test('sliceTargets packs targets in order and never exceeds the cap', () => {
-  const targets = [target('a', 10), target('b', 10), target('c', 5), target('d', 20), target('e', 4), target('f', 1)]
-  const slices = H.sliceTargets(targets, 24)
-  assert.deepEqual(slices.map(slice => slice.map(t => t.file)), [['a', 'b'], ['c'], ['d', 'e'], ['f']])
-  assert.deepEqual(weights(slices), [20, 5, 24, 1])
-  assert.deepEqual(slices.flat(), targets, 'every target lands in exactly one slice, in map order')
-})
-
-test('sliceTargets fills a slice to exactly the cap before opening the next', () => {
-  assert.deepEqual(weights(H.sliceTargets([target('a', 12), target('b', 12), target('c', 1)], 24)), [24, 1])
-})
-
-test('sliceTargets gives a target heavier than the cap a slice to itself', () => {
-  const slices = H.sliceTargets([target('a', 3), target('big', 40), target('c', 3), target('huge', 99)], 24)
-  assert.deepEqual(slices.map(slice => slice.map(t => t.file)), [['a'], ['big'], ['c'], ['huge']])
-  assert.equal(slices[1][0].functions.length, 40, 'an oversized file is never split')
-})
-
-test('sliceTargets counts a file with no ranked function as one', () => {
-  const bare = Array.from({ length: 30 }, (_, i) => ({ file: `f${i}`, concern: 'tests' }))
-  assert.deepEqual(H.sliceTargets(bare, 24).map(slice => slice.length), [24, 6])
-  assert.deepEqual(weights(H.sliceTargets([{ file: 'x', functions: [] }, target('y', 23), { file: 'z' }], 24)), [24, 1])
-})
-
-test('sliceTargets returns no slices for no targets', () => {
-  assert.deepEqual(H.sliceTargets([], 24), [])
-  assert.deepEqual(H.sliceTargets(null, 24), [])
-  assert.deepEqual(H.sliceTargets(undefined, 24), [])
-})
-
-test('the finder cap is 24 ranked functions', () => {
-  assert.equal(H.FINDER_FUNCTION_CAP, 24)
-})
-
-test('unauditedFunctions names the ranked functions that came back with no verdict row', () => {
-  const targets = [{ file: 'a.py', functions: ['parse_args', 'Main.run'] }, { file: 'b.py', functions: ['flush'] }, { file: 'c.py' }]
-  const audited = [
-    { file: 'a.py', function: '  PARSE_ARGS ', intended: 'i', verdict: 'matches' },
-    { file: 'b.py', function: 'helper_nobody_ranked', intended: 'i', verdict: 'defect' },
-  ]
-  assert.deepEqual(H.unauditedFunctions(targets, audited), ['Main.run', 'flush'])
-  assert.deepEqual(H.unauditedFunctions(targets, [...audited, { function: 'main.run' }, { function: 'flush' }]), [])
-})
-
-test('unauditedFunctions treats a missing or broken audit as nothing audited', () => {
-  const targets = [{ file: 'a.py', functions: ['one', 'two'] }]
-  assert.deepEqual(H.unauditedFunctions(targets, undefined), ['one', 'two'])
-  assert.deepEqual(H.unauditedFunctions(targets, [null, {}, { function: '' }]), ['one', 'two'])
-  assert.deepEqual(H.unauditedFunctions([], [{ function: 'one' }]), [])
-  assert.deepEqual(H.unauditedFunctions(null, null), [])
-})
-
-// The order matters: the rows are asked for before the findings they are meant to produce.
-test('AUDIT_SCHEMA asks for the audit first and reuses the findings rows unchanged', () => {
-  assert.deepEqual(H.AUDIT_SCHEMA.required, ['audited', 'findings'])
-  assert.deepEqual(Object.keys(H.AUDIT_SCHEMA.properties), ['audited', 'findings'])
-  assert.equal(H.AUDIT_SCHEMA.properties.findings, H.FINDINGS_SCHEMA.properties.findings)
-  const row = H.AUDIT_SCHEMA.properties.audited.items
-  assert.deepEqual(row.required, ['file', 'function', 'intended', 'verdict'])
-  assert.deepEqual(row.properties.verdict.enum, ['matches', 'defect'])
-  assert.equal(row.properties.intended.description, 'one clause: what the docstring, docs or tests say it does, and which of those you read')
 })
 
 // ---- Discover by unit: listing, ordering, the finder prompt -------------------------
