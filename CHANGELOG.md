@@ -7,6 +7,12 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 ## [Unreleased]
 
 ### Added
+- **Group mode for unit discovery, as an experiment's knob** (`crg-debug.js`).
+  `unitsPerFinder` (with `discover: 'units'`) gives one finder that many functions, grouped by
+  `grouping`: `'related'` (same file and class, the default) or `'order'` (file order). Each
+  function gets its own row with the command run and what it printed; the run logs, per group,
+  how many rows show real work, and the output tokens spent across Discover. Nothing acts on
+  those numbers yet. Absent, units mode is one function per finder as before.
 - **Each stage of `/crg-debug` can run on its own model** (`crg-debug.js`, the skill, the
   methodology). `--discover-model`, `--verify-model` and `--fix-model` put the finders, the
   reviewers and the fix phase on the model named; `--model` keeps its meaning and is the

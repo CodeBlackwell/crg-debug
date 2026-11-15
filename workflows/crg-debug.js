@@ -274,6 +274,36 @@ Read its body and its docstring, and whatever else in the repository you need in
 
 Judge this one function, not its callers or the rest of the file. Return one findings row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "${concern}". List every defect you find, not only the first. If it does what it is meant to do, return no findings. Wrong behaviour only: style, naming, performance and missing tests are not defects. ${untrusted}`
 
+// GROUP MODE (unitsPerFinder): one finder audits several functions. Groups never cross a
+// file. 'related' keeps a group inside one class (or the file's module-level functions);
+// 'order' takes the file's functions in line order whatever their class. Members are in line
+// order within a group; groups come in the order their file and class first appear.
+const groupUnits = (units, size, rule) =>
+  [...groupBy(units || [], u => (rule === 'order' ? normPath(u.file) : `${normPath(u.file)}::${u.parent || ''}`)).values()].flatMap(members => {
+    const sorted = [...members].sort((x, y) => x.start - y.start)
+    return Array.from({ length: Math.ceil(sorted.length / size) }, (_, i) => sorted.slice(i * size, (i + 1) * size))
+  })
+const bareName = name => String(name || '').split('.').pop()
+// D1's finders filled in a row per function and read no more than before: the row itself is
+// no evidence. A row shows real work when it names a function of its group, carries the
+// command run for it (naming it) and what that printed, and its output copies no other row's.
+const evidencedRows = (rows, group) => {
+  const names = new Set((group || []).map(unitName))
+  const outs = (rows || []).map(r => String((r && r.observed) || '').trim())
+  return (rows || []).filter((r, i) => r && names.has(r.name) && String(r.command || '').includes(bareName(r.name)) && outs[i] && outs.indexOf(outs[i]) === outs.lastIndexOf(outs[i]))
+}
+// The whole prompt one group finder receives: the one-function brief's audit, for each member.
+const groupBrief = (group, concern, repoRoot, untrusted) =>
+  `You are auditing ${group.length} function(s) in the repo at ${repoRoot}. Change nothing in the repository.
+
+File: ${group[0].file}
+Functions:
+${group.map(u => `- ${unitName(u)} (lines ${u.start}-${u.end})`).join('\n')}
+
+Audit EACH function on its own, one after another, giving each the full audit. For each: read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.
+
+Return one row per function in functions[], with name exactly as listed above; command, the command you ran to exercise it, which calls it or the public API that reaches it; observed, what that command printed; verdict, "defect" or "matches"; and findings, one row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "${concern}". List every defect you find, not only the first. Judge each function, not its callers or the rest of the file. Do not cover several functions in one row, and give no row to a function you did not run. Wrong behaviour only: style, naming, performance and missing tests are not defects. ${untrusted}`
+
 // ---- verify -------------------------------------------------------------------
 // Phase 3's two pure halves — the reviewer's prompt and the survivor rule — live here so
 // a change to Verify can be unit-tested and replayed (args.fromFindings) without a sweep.
@@ -1188,6 +1218,27 @@ const FINDINGS_SCHEMA = {
     },
   },
 }
+// One property, so a mis-serialised call cannot leak a second parameter into the first.
+const GROUP_SCHEMA = {
+  type: 'object',
+  required: ['functions'],
+  properties: {
+    functions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'command', 'observed', 'verdict', 'findings'],
+        properties: {
+          name: { type: 'string', description: 'the function exactly as listed in the brief' },
+          command: { type: 'string', description: 'the command you ran to exercise this function' },
+          observed: { type: 'string', description: 'what that command printed' },
+          verdict: { type: 'string', enum: ['defect', 'matches'] },
+          findings: FINDINGS_SCHEMA.properties.findings,
+        },
+      },
+    },
+  },
+}
 
 // args.fromFindings carries rows of the shape above and Verify replays them VERBATIM, so a
 // bad arg is rejected, never trimmed to fit: a truncated finding would be reviewed as
@@ -1422,8 +1473,14 @@ const discoveryRounds = clampRounds(a.discoveryRounds)
 // How Discover fans out. 'concerns' (default) = the concern finders + residual pass.
 // 'units' = list every function in scope and give each its own finder, which RUNS it;
 // maxUnits caps how many, and the run logs what the cap dropped.
+// unitsPerFinder (with discover:'units') puts that many functions in one finder, grouped by
+// `grouping` ('related': same file and class, the default; 'order': file order).
 const discover = a.discover ?? 'concerns'
 const maxUnits = a.maxUnits ?? MAX_UNITS_DEFAULT
+// Group mode for units: unitsPerFinder functions per finder (absent = one each, as before),
+// grouped by `grouping` ('related', the default, or 'order'). An experiment's knob for now.
+const unitsPerFinder = a.unitsPerFinder
+const grouping = a.grouping ?? 'related'
 // Issue/ticket the user pointed us at. issueContext = the fetched issue body (UNTRUSTED — only
 // ever interpolated through fence()); issueRef = short provenance. Main loop does the gh fetch.
 const issueContext = capText(a.issueContext, 4000)
@@ -1471,6 +1528,12 @@ if (!DISCOVER_MODES.includes(discover)) {
 }
 if (!Number.isInteger(maxUnits) || maxUnits < 1) {
   throw new Error(`Unusable maxUnits ${JSON.stringify(a.maxUnits)} — it must be a positive integer (default ${MAX_UNITS_DEFAULT})`)
+}
+if (unitsPerFinder !== undefined && (discover !== 'units' || !Number.isInteger(unitsPerFinder) || unitsPerFinder < 1)) {
+  throw new Error(`Unusable unitsPerFinder ${JSON.stringify(a.unitsPerFinder)} — it needs discover:'units' and a positive integer`)
+}
+if (!['related', 'order'].includes(grouping)) {
+  throw new Error(`Unknown grouping ${JSON.stringify(a.grouping)} — use 'related' (the default) or 'order'`)
 }
 if (fromLedger && !isSafeAbs(fromLedger)) {
   throw new Error(`Unsafe fromLedger ${JSON.stringify(fromLedger)} — must be an absolute path with no '..' segments`)
@@ -1896,6 +1959,23 @@ if (discover === 'units') {
   }
   const { kept, dropped } = orderUnits(listed, map.targets, maxUnits)
   log(`Units: ${listed.length} listed in ${unitTargets.length} file(s) -> ${kept.length} to audit, ${dropped.length} dropped by maxUnits=${maxUnits}${dropped.length ? ` (${tallyByFile(dropped)})` : ''}`)
+  // Output tokens spent so far, where the runtime keeps count; 'unavailable' where it does not.
+  const spentNow = () => (typeof budget !== 'undefined' && budget && typeof budget.spent === 'function' ? budget.spent() : 'unavailable')
+  if (unitsPerFinder) {
+    const groups = groupUnits(kept, unitsPerFinder, grouping)
+    const spentBefore = spentNow()
+    const judged = await parallel(groups.map((group, g) => () =>
+      startAgent(groupBrief(group, group[0].concern, repoRoot, UNTRUSTED_MAY_RUN), { agentType: 'Explore', label: `group:${shortFile(group[0].file)}:${g + 1}`, phase: 'Discover', schema: GROUP_SCHEMA, model: models.discover }),
+    ))
+    const rows = judged.map(r => (r && r.functions) || [])
+    rawFindings = dedupBy(rows.flat().flatMap(r => r.findings || []), bugKeyOf)
+    // Measured, not enforced: the sweep reads these; nothing acts on them yet.
+    const evidenced = groups.map((group, g) => new Set(evidencedRows(rows[g], group).map(r => r.name)).size)
+    log(`Units: ${groups.length} group(s) of up to ${unitsPerFinder} (${grouping}); ${judged.filter(Boolean).length} judged, ${judged.filter(r => !r).length} returned nothing; ${evidenced.reduce((x, y) => x + y, 0)} of ${kept.length} function(s) evidenced; ${rawFindings.length} finding(s)`)
+    groups.forEach((group, g) => log(`Group ${g + 1}: ${evidenced[g]}/${group.length} evidenced, ${rows[g].length} row(s) — ${group.map(unitName).join(', ')}`))
+    log(`Units: output tokens spent ${spentBefore} -> ${spentNow()}`)
+  } else {
+  const spentBefore = spentNow()
   const judged = await parallel(kept.map(unit => () =>
     startAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED_MAY_RUN), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model: models.discover }),
   ))
@@ -1904,6 +1984,8 @@ if (discover === 'units') {
   const raised = perUnit.flatMap(row => row.findings.map(() => row.unit))
   // Measured, not enforced.
   log(`Units: ${judged.filter(Boolean).length} judged, ${judged.filter(r => !r).length} returned nothing, ${raised.length} finding(s)${raised.length ? ` (${tallyByFile(raised)})` : ''}`)
+  if (spentBefore !== 'unavailable') log(`Units: output tokens spent ${spentBefore} -> ${spentNow()}`)
+  } // end else — one function per finder
 } else {
 // Body left at column 0 for the same reason as the enclosing branches.
 // One round = every concern finder + the residual pass, in parallel. discoveryRounds=1
