@@ -68,6 +68,12 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `persist:assemble`). Reading a small ledger is still one agent.
 
 ### Fixed
+- **A commit undone for its message is tried once more** (`crg-debug.js`). On click a commit
+  agent added a Co-Authored-By trailer despite the brief; the script undid the commit as
+  designed, and a fix that had passed every gate was left uncommitted. A commit whose files
+  are right and whose message is not the composed one is now committed once more with the
+  same message after the un-commit; a second bad message ends as before ("twice"). Stray
+  files still get no second try.
 - **A fix whose own test fails once a blamed fix is gone costs that fix, not the wave**
   (`crg-debug.js`). After the regression gate takes the blamed fixers back, a test still
   failing may be one that a standing fix of the same wave wrote, because that fix leaned on a

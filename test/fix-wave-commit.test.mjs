@@ -77,7 +77,8 @@ test('a commit whose message is not the one composed is undone: the live run app
   const trailer = () => ({ commitHash: 'deadbeef12345', committedFiles: ['src/core.py', 'tests/test_core.py'], committedMessage: 'Fix a bug in core.py\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n', results: [{ command: 'git commit', exitCode: 0 }] })
   const { result, calls } = await fixRun(SRC, { bugs: [bug('b1', 'src/core.py')], on: { commit: trailer } })
   assert.deepEqual(result.fix.commits, [], 'it is not reported as a commit')
-  assert.deepEqual(result.fix.uncommitted.map(u => [u.bugs, u.landed, u.reason]), [[['b1'], false, 'commit rejected (the message that landed is not the one composed ("Fix a bug in core.py\\n\\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>")) — un-committed, work stays in tree']])
+  assert.deepEqual(result.fix.uncommitted.map(u => [u.bugs, u.landed, u.reason]), [[['b1'], false, 'commit rejected (the message that landed is not the one composed ("Fix a bug in core.py\\n\\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>")) twice — un-committed, work stays in tree']])
+  assert.equal(commitsOf(calls).length, 2, 'an agent that adds the trailer every time gets one more try, not more')
   assert.ok(calls.some(c => c.label === 'uncommit:wave' || c.label.startsWith('uncommit')), 'and it is taken back')
   const brief = commitsOf(calls)[0].prompt
   assert.ok(brief.includes('add NO trailer: no Co-Authored-By') && brief.includes('log -1 --format=%B HEAD'), 'the agent is told, and asked for the message that landed')
@@ -104,4 +105,26 @@ test('commit:false is a choice, not a problem to report', async () => {
   assert.equal(commitsOf(calls).length, 0)
   assert.deepEqual(result.fix.commits, [])
   assert.deepEqual(result.fix.uncommitted, [])
+})
+
+test('a commit undone for its message is tried once more, and lands when the second message is the composed one', async () => {
+  // M9.1 on click: one commit agent added a Co-Authored-By trailer; the gated fix was left uncommitted.
+  const landed = ({ prompt, nth }) => {
+    const committedFiles = [...prompt.match(/add -- (.*?) {3}\(EXACTLY/)[1].matchAll(/"([^"]+)"/g)].map(m => m[1])
+    const composed = JSON.parse(/ commit -m ("(?:[^"\\]|\\.)*")/.exec(prompt)[1])
+    const committedMessage = nth === 1 ? `${composed}\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n` : `${composed}\n`
+    return { commitHash: `c0ffee${nth}`, committedFiles, committedMessage, results: [{ command: 'git commit', exitCode: 0 }] }
+  }
+  const { result, calls, logs } = await fixRun(SRC, { bugs: [bug('b1', 'src/core.py')], on: { commit: landed } })
+  assert.deepEqual(result.fix.uncommitted, [])
+  assert.deepEqual(result.fix.commits.map(c => [c.hash, c.bugs]), [['c0ffee2', ['b1']]])
+  assert.equal(commitsOf(calls).length, 2)
+  assert.ok(calls.some(c => c.label.startsWith('uncommit')), 'the first commit is undone before the second')
+  assert.ok(logs.some(l => /un-committed; committing once more$/.test(l)))
+  assert.ok(logs.some(l => / on a second try · graph re-ingested$/.test(l)))
+
+  // Stray files are the fixer's doing: no second try.
+  const stray = () => ({ commitHash: 'deadbeef12345', committedFiles: ['src/core.py', 'tests/test_core.py', 'notes.txt'], committedMessage: 'Fix a bug in core.py\n', results: [{ command: 'git commit', exitCode: 0 }] })
+  const once = await fixRun(SRC, { bugs: [bug('b1', 'src/core.py')], on: { commit: stray } })
+  assert.equal(commitsOf(once.calls).length, 1)
 })

@@ -2323,20 +2323,24 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     const message = waveCommitMessage(closedNow)
     if (!allow.length) return hold(false, 'not committed — no file was recorded for the closed bugs; work stays in tree')
     if (!commitMessageOk(message)) return hold(false, `not committed — the composed message ${JSON.stringify(message)} was refused; work stays in tree`)
-    const c = await commitAgent(allow, message)
-    if (!c) return hold('unknown', `the commit relay did not report — a commit may have landed unverified on ${fixBranch}`)
-    const hash = String(c.commitHash || '').slice(0, 9)
-    const filesOk = commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)
-    if (hash && filesOk && landedMessageOk(c.committedMessage, message)) {
-      commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles, bugs })
-      log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${hash} · graph re-ingested`)
-      return
+    // A message the commit agent changed is the agent's doing, not the fix's: a live run left a
+    // gated fix uncommitted over an added trailer. Such a commit, once undone, gets one more try.
+    for (let attempt = 1; ; attempt++) {
+      const c = await commitAgent(allow, message)
+      if (!c) return hold('unknown', `the commit relay did not report — a commit may have landed unverified on ${fixBranch}`)
+      const hash = String(c.commitHash || '').slice(0, 9)
+      const filesOk = commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)
+      if (hash && filesOk && landedMessageOk(c.committedMessage, message)) {
+        commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles, bugs })
+        log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${hash}${attempt > 1 ? ' on a second try' : ''} · graph re-ingested`)
+        return
+      }
+      if (!hash) return hold(false, 'commit failed — work stays in tree')
+      const why = filesOk ? `the message that landed is not the one composed (${JSON.stringify(capText(c.committedMessage, 160))})` : 'stray files vs allowlist'
+      if (!uncommitOk(await uncommitAgent())) return hold('unknown', `commit rejected (${why}) AND the un-commit was not confirmed — ${hash} may still be on the run branch`)
+      if (!filesOk || attempt > 1) return hold(false, `commit rejected (${why})${attempt > 1 ? ' twice' : ''} — un-committed, work stays in tree`)
+      log(`Fix ${tag}: commit rejected (${why}) — un-committed; committing once more`)
     }
-    if (!hash) return hold(false, 'commit failed — work stays in tree')
-    const why = filesOk ? `the message that landed is not the one composed (${JSON.stringify(capText(c.committedMessage, 160))})` : 'stray files vs allowlist'
-    return uncommitOk(await uncommitAgent())
-      ? hold(false, `commit rejected (${why}) — un-committed, work stays in tree`)
-      : hold('unknown', `commit rejected (${why}) AND the un-commit was not confirmed — ${hash} may still be on the run branch`)
   }
 
   const seenKeys = new Set()
