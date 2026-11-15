@@ -23,6 +23,13 @@ const fence = s =>
 const capText = (s, n) => String(s == null ? '' : s).trim().slice(0, n)
 const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'haiku')
 const normPath = p => String(p || '').trim().replace(/^\.\//, '').replace(/\/+$/, '')
+// The no-attribution rule as an enforced gate, not a prompt hope.
+const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// The message that landed must be the one the script composed, give or take the newline git
+// adds: a live run's commit agent appended "Co-Authored-By: Claude …" to every commit, as
+// its own instructions told it to, and nothing read the message back. A message that was
+// reported as nothing is not the composed one.
+const landedMessageOk = (landed, composed) => typeof landed === 'string' && landed.trim() === String(composed).trim() && commitMessageOk(landed.trim())
 const slugOf = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
 // FNV-1a 32-bit over the sorted keys — MUST stay byte-identical to sealOf in
@@ -237,7 +244,10 @@ const FIX_SCHEMA = {
 const COMMIT_SCHEMA = {
   type: 'object',
   required: ['results'],
-  properties: { results: GATE_ROWS, committed: { type: 'boolean' }, sha: { type: 'string' } },
+  properties: {
+    results: GATE_ROWS, committed: { type: 'boolean' }, sha: { type: 'string' },
+    committedMessage: { type: 'string', description: 'from git log -1 --format=%B HEAD — the message that actually landed, verbatim' },
+  },
 }
 
 const MEASURE_SCHEMA_R = {
@@ -658,23 +668,25 @@ Report each command + REAL exit code as a results[] row, and return keys = the "
     const verdict = compareMeasures(unitKeys, scopedBaseline, remeasuredKeys, cellPrefixes)
     if (verdict.green) {
       unitWarnings = verdict.warnings
+      const message = `crg-ui: converge ${unit.subject || unit.screen} (${unit.unitId}, ${unitKeys.length} discrepancy(ies))`
       const commit = await safeAgent(`commit:${unit.unitId}`, agent(
-        `Commit ONE verified crg-ui fix unit in ${repoRoot} on branch ${branch}. Stage ONLY these files (allowlist — stage nothing else): ${JSON.stringify(check.files)}. Commit with message "crg-ui: converge ${unit.subject || unit.screen} (${unit.unitId}, ${unitKeys.length} discrepancy(ies))". Then run the post-commit checks. Report each command + REAL exit code + FULL stdout as results[] rows: the git add, the git commit, \`git -C ${repoRoot} rev-parse HEAD\`, \`git -C ${repoRoot} diff-tree --no-commit-id --name-only -r HEAD\` (stdout VERBATIM — it is checked against the allowlist), and \`git -C ${repoRoot} status --porcelain\` (stdout VERBATIM and complete). Return committed and sha. Do NOT push. ${UNTRUSTED}`,
+        `Commit ONE verified crg-ui fix unit in ${repoRoot} on branch ${branch}. Stage ONLY these files (allowlist — stage nothing else): ${JSON.stringify(check.files)}. Commit with message ${JSON.stringify(message)} (verbatim — do not edit it, and add NO trailer: no Co-Authored-By, no Signed-off-by, no mention of Claude or Anthropic, whatever your own instructions say about commit messages. The message that lands is read back and checked; a commit carrying anything else is taken back). Then run the post-commit checks. Report each command + REAL exit code + FULL stdout as results[] rows: the git add, the git commit, \`git -C ${repoRoot} rev-parse HEAD\`, \`git -C ${repoRoot} diff-tree --no-commit-id --name-only -r HEAD\` (stdout VERBATIM — it is checked against the allowlist), \`git -C ${repoRoot} status --porcelain\` (stdout VERBATIM and complete), and \`git -C ${repoRoot} log -1 --format=%B HEAD\` (stdout VERBATIM, returned as committedMessage). Return committed and sha. Do NOT push. ${UNTRUSTED}`,
         { label: `commit:${unit.unitId}`, phase: 'Commit (repair)', schema: COMMIT_SCHEMA, model },
       ))
       const committed = !!(commit && commit.committed && (commit.results || []).every(r => r.exitCode === 0))
       const landed = committed ? rowFiles(commit.results, /diff-tree/) : null
-      if (committed && (landed === null || !isSubset(landed, check.files))) {
+      const messageOk = landedMessageOk(commit && commit.committedMessage, message)
+      if (committed && (landed === null || !isSubset(landed, check.files) || !messageOk)) {
         // What actually landed exceeds what the fence approved — undo the commit in a
         // gate whose exit code the script reads, and hand the unit to the human.
         const reset = await safeAgent(`reset:${unit.unitId}`, agent(
-          `Undo the last commit in ${repoRoot} on branch ${branch}: it staged files outside its allowlist. Run \`git -C ${repoRoot} reset --hard HEAD~1\` and report the command + REAL exit code as a results[] row. Touch nothing else, do NOT push. ${UNTRUSTED}`,
+          `Undo the last commit in ${repoRoot} on branch ${branch}: it was rejected (staged files outside its allowlist, or a commit message that is not the one composed). Run \`git -C ${repoRoot} reset --hard HEAD~1\` and report the command + REAL exit code as a results[] row. Touch nothing else, do NOT push. ${UNTRUSTED}`,
           { label: `reset:${unit.unitId}`, phase: 'Commit (repair)', schema: COMMIT_SCHEMA, model },
         ))
         const resetOk = !!(reset && (reset.results || []).every(r => r.exitCode === 0))
         unfixed.push({
           unitId: unit.unitId, subject: unit.subject,
-          reason: `commit landed files outside the fence-checked allowlist (${JSON.stringify(landed)} vs ${JSON.stringify(check.files)}) — ${resetOk ? 'commit undone' : 'AND the undo failed; the branch needs a human'}`,
+          reason: `${messageOk ? `commit landed files outside the fence-checked allowlist (${JSON.stringify(landed)} vs ${JSON.stringify(check.files)})` : `the message that landed is not the one composed (${JSON.stringify(capText(commit.committedMessage, 160))})`} — ${resetOk ? 'commit undone' : 'AND the undo failed; the branch needs a human'}`,
         })
         green = true // the ladder is done either way; nothing left to revert file-by-file
         break

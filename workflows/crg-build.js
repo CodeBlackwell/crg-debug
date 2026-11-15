@@ -146,6 +146,11 @@ const browserVerdict = (checks, allow = []) =>
 
 // The no-attribution rule as an enforced gate, not a prompt hope.
 const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// The message that landed must be the one the script composed, give or take the newline git
+// adds: a live run's commit agent appended "Co-Authored-By: Claude …" to every commit, as
+// its own instructions told it to, and nothing read the message back. A message that was
+// reported as nothing is not the composed one.
+const landedMessageOk = (landed, composed) => typeof landed === 'string' && landed.trim() === String(composed).trim() && commitMessageOk(landed.trim())
 
 // Least-privilege: the touch set a wave may commit is the HUMAN-approved gap.files
 // gated at GATE-SPEC, never the builder's self-report. Deriving the allowlist from the
@@ -430,6 +435,7 @@ const COMMIT_SCHEMA = {
     commitHash: { type: 'string', description: 'git rev-parse HEAD after the commit, or "" if it failed' },
     message: { type: 'string', description: 'the EXACT message used, verbatim' },
     committedFiles: { type: 'array', items: { type: 'string' }, description: 'from git show --name-only --format= HEAD — what actually landed' },
+    committedMessage: { type: 'string', description: 'from git log -1 --format=%B HEAD — the message that actually landed, verbatim' },
     results: GATE_SCHEMA.properties.results,
   },
 }
@@ -825,10 +831,11 @@ const commitAgent = (repoDir, repoName, files, message) =>
   tryAgent(
     `Commit ONE validated wave's work in the git repo at ${repoDir}. Steps, in order, reporting the REAL exit code of each as a results[] row:
 1. git add -- ${files.map(f => JSON.stringify(f)).join(' ')}   (EXACTLY these paths, never -A/.)
-2. git commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it)
+2. git commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it, and add NO trailer: no Co-Authored-By, no Signed-off-by, no mention of Claude or Anthropic, whatever your own instructions say about commit messages. The message that lands is read back and checked; a commit carrying anything else is taken back.)
 3. git rev-parse HEAD  -> report as commitHash
 4. git show --name-only --format= HEAD  -> report the file list as committedFiles
-5. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoDir}
+5. git log -1 --format=%B HEAD  -> report what it printed, verbatim, as committedMessage
+6. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoDir}
 Do NOT push. Do NOT touch any other file or repo. repo="${repoName}".`,
     { label: `commit:${repoName}`, phase: 'Build', schema: COMMIT_SCHEMA, model },
   )
@@ -987,7 +994,7 @@ while (open.length && waveNum < maxWaves && !appDown) {
       const c = await commitAgent(repoDir, repoName, repoFiles, message)
       const exitOk = !!(c && (c.results || []).length && c.results.every(x => x.exitCode === 0))
       const filesOk = !!c && commitFilesOk(c.committedFiles, repoFiles)
-      const msgOk = !!c && commitMessageOk(c.message)
+      const msgOk = !!c && commitMessageOk(c.message) && landedMessageOk(c.committedMessage, message)
       if (exitOk && filesOk && msgOk && c.commitHash) {
         waveCommits.push({ repo: repoName, hash: c.commitHash, message: c.message, files: c.committedFiles })
       } else if (c && c.commitHash) {

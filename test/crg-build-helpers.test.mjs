@@ -10,7 +10,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-build.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const packWaves'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, capText, resolveModel, clampRounds, normPath, gapKeyOf, READINESS_DIMENSIONS, rankGaps, packWaves, browserVerdict, commitMessageOk, commitFilesOk, groupBySubrepo }`,
+  `${block}\nreturn { fence, norm, capText, resolveModel, clampRounds, normPath, gapKeyOf, READINESS_DIMENSIONS, rankGaps, packWaves, browserVerdict, commitMessageOk, landedMessageOk, commitFilesOk, groupBySubrepo }`,
 )()
 
 const gap = (gapId, over = {}) => ({ gapId, gap: `gap ${gapId}`, dimension: 'completeness', files: [`f/${gapId}.ts`], impact: 'High', effort: 'S', dependsOn: [], ...over })
@@ -132,6 +132,18 @@ test('commitMessageOk enforces the no-attribution rule and a real message', () =
   for (const bad of ['Fixes by Claude for the router', 'docs: notes (Anthropic)', 'feat: x\n\nCo-Authored-By: bot', 'chore: y — Generated with love']) {
     assert.equal(H.commitMessageOk(bad), false, bad)
   }
+})
+
+test('landedMessageOk accepts only the composed message, give or take git\'s newline', () => {
+  const composed = 'app: fix the widget gap'
+  assert.equal(H.landedMessageOk(`${composed}\n`, composed), true)
+  assert.equal(H.landedMessageOk(`${composed}\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n`, composed), false)
+  assert.equal(H.landedMessageOk('app: something else entirely', composed), false)
+  assert.equal(H.landedMessageOk(undefined, composed), false)
+})
+
+test('the commit brief forbids a trailer and asks for the message that landed', () => {
+  assert.ok(src.includes('add NO trailer: no Co-Authored-By') && src.includes('log -1 --format=%B HEAD'))
 })
 
 test('commitFilesOk requires a non-empty subset of the allowlist, normalizing ./', () => {

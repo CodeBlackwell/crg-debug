@@ -10,7 +10,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-ui.js', import.
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const compareMeasures'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, capText, resolveModel, normPath, slugOf, globToRegex, matchesAnyGlob, validateEdits, TIERS, startTier, tiersFrom, groupUnits, compareMeasures, parseKey, priorAttemptText, boxArea, boxContains, sealOf, porcelainOf, rowFiles, isSubset }`,
+  `${block}\nreturn { fence, capText, resolveModel, normPath, slugOf, globToRegex, matchesAnyGlob, validateEdits, TIERS, startTier, tiersFrom, groupUnits, compareMeasures, parseKey, priorAttemptText, boxArea, boxContains, sealOf, porcelainOf, rowFiles, isSubset, commitMessageOk, landedMessageOk }`,
 )()
 
 // ---- model ladder -----------------------------------------------------------------
@@ -267,4 +267,20 @@ test('slugOf produces filesystem-safe cell slugs', () => {
 
 test('fence strips embedded fence markers', () => {
   assert.ok(!H.fence('evil <<<UNTRUSTED payload').includes('<<<UNTRUSTED payload'))
+})
+
+// A live commit agent appended "Co-Authored-By: Claude" to every commit; the script read back
+// the files and never the message.
+test('landedMessageOk accepts only the composed message, give or take git\'s newline', () => {
+  const composed = 'crg-ui: converge Login (u1, 2 discrepancy(ies))'
+  assert.equal(H.landedMessageOk(`${composed}\n`, composed), true)
+  assert.equal(H.landedMessageOk(`${composed}\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n`, composed), false)
+  assert.equal(H.landedMessageOk('crg-ui: something else entirely', composed), false)
+  assert.equal(H.landedMessageOk(undefined, composed), false)
+})
+
+test('the commit brief forbids a trailer and asks for the message that landed; a mismatch takes the reset path', () => {
+  assert.ok(src.includes('add NO trailer: no Co-Authored-By') && src.includes('log -1 --format=%B HEAD'))
+  assert.ok(src.includes('committedMessage: { type'), 'the commit schema carries the landed message')
+  assert.ok(/\|\| !messageOk\)\) \{[\s\S]{0,900}reset --hard HEAD~1/.test(src), 'a message mismatch is routed into the existing reset')
 })

@@ -56,6 +56,7 @@ const RETRY_CAP = 'agent({schema}): StructuredOutput retry cap (5) exceeded — 
 const makeAgent = ({
   porcelainAfterCommit = '', calls, throwOn = ['uncommit'],
   toolchain = [{ package: '.', test: 'npm test' }], waveGateRows,
+  landedFiles = 'src/a.js\nsecrets/prod.env', committedMessage,
 } = {}) => async (_prompt, opts) => {
   const label = (opts && opts.label) || ''
   calls.push(label)
@@ -86,9 +87,9 @@ const makeAgent = ({
       row('git -C /repo commit -m "demo: add the widget module"'),
       row('git -C /repo rev-parse HEAD', 'abc1234567890'),
       // The commit landed a file no story's fence allows — verification must reject it.
-      row('git -C /repo diff-tree --no-commit-id --name-only -r HEAD', 'src/a.js\nsecrets/prod.env'),
+      row('git -C /repo diff-tree --no-commit-id --name-only -r HEAD', landedFiles),
       row('git -C /repo status --porcelain', porcelainAfterCommit),
-    ] }
+    ], committedMessage }
   }
   return null
 }
@@ -202,4 +203,29 @@ test('crg-ralph.js calls agent() only through tryAgent', () => {
 
 test('tryAgent is byte-identical to the crg-debug.js original', () => {
   assert.equal(declOf(src, 'tryAgent'), declOf(debugSrc, 'tryAgent'))
+})
+
+// A live commit agent appended "Co-Authored-By: Claude" to every commit; the script read back
+// the files and never the message. A commit whose message is not the composed one is undone.
+test('a wave commit whose message is not the composed one is undone, like a stray-file commit', async () => {
+  const composed = 'demo: add the widget module\n'
+  const good = await runWorkflow(ARGS, makeAgent({ calls: [], throwOn: [], landedFiles: 'src/a.js', committedMessage: composed }))
+  assert.equal(good.commits[0].commitFailed, undefined, 'the composed message lands as a commit')
+  assert.equal(good.commits[0].hash, 'abc1234567890')
+
+  const calls = []
+  const logs = []
+  const trailer = `${composed}\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n`
+  const bad = await runWorkflow(ARGS, makeAgent({ calls, throwOn: [], landedFiles: 'src/a.js', committedMessage: trailer }), m => logs.push(m))
+  assert.equal(bad.commits[0].commitFailed, true)
+  assert.equal(bad.commits[0].hash, '')
+  assert.ok(calls.includes('uncommit'), 'and it is taken back')
+  assert.ok(logs.some(m => /the message that landed is not the one composed/.test(m)), 'the log names the message')
+
+  const silent = await runWorkflow(ARGS, makeAgent({ calls: [], throwOn: [], landedFiles: 'src/a.js' }))
+  assert.equal(silent.commits[0].commitFailed, true, 'a message reported as nothing is not the composed one')
+})
+
+test('the commit brief forbids a trailer and asks for the message that landed', () => {
+  assert.ok(src.includes('add NO trailer: no Co-Authored-By') && src.includes('log -1 --format=%B HEAD'))
 })

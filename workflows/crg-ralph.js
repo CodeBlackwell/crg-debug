@@ -46,6 +46,11 @@ const fenceOf = s => [...new Set([...(s.files || []), ...(s.claimedNew || [])].m
 
 // The no-attribution rule as an enforced gate, not a prompt hope.
 const commitMessageOk = m => !!m && String(m).length >= 12 && !/claude|anthropic|co-authored-by|generated with/i.test(m)
+// The message that landed must be the one the script composed, give or take the newline git
+// adds: a live run's commit agent appended "Co-Authored-By: Claude …" to every commit, as
+// its own instructions told it to, and nothing read the message back. A message that was
+// reported as nothing is not the composed one.
+const landedMessageOk = (landed, composed) => typeof landed === 'string' && landed.trim() === String(composed).trim() && commitMessageOk(landed.trim())
 // A rejected commit is only UNDONE when the reset itself reported exit 0. A dead relay
 // (null) or a rowless report is not evidence the commit was undone — it is no evidence at
 // all, and logging "un-committed" over it leaves a stray-file commit on the run branch.
@@ -292,6 +297,14 @@ const GATE_SCHEMA = {
 
 // Wave-gate rows additionally classify preexisting failures (already red at the
 // plan-time baseline) so the script can judge the delta. Separate schema on purpose:
+// The commit relay: the gate rows plus the message that landed.
+const COMMIT_SCHEMA = {
+  ...GATE_SCHEMA,
+  properties: {
+    ...GATE_SCHEMA.properties,
+    committedMessage: { type: 'string', description: 'from git log -1 --format=%B HEAD — the message that actually landed, verbatim' },
+  },
+}
 // GATE_SCHEMA is shared by cached agents and must never change shape.
 const WAVE_GATE_SCHEMA = {
   type: 'object',
@@ -743,13 +756,14 @@ const commitAgent = (files, message) =>
   tryAgent(
     `Commit ONE validated wave's work in the git repo at ${repoRoot} on branch ${branch}. Steps, in order, reporting each command + REAL exit code + FULL stdout as results[] rows:
 1. git -C ${repoRoot} add -- ${files.map(f => JSON.stringify(f)).join(' ')}   (EXACTLY these paths, never -A/.)
-2. git -C ${repoRoot} commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it)
+2. git -C ${repoRoot} commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it, and add NO trailer: no Co-Authored-By, no Signed-off-by, no mention of Claude or Anthropic, whatever your own instructions say about commit messages. The message that lands is read back and checked; a commit carrying anything else is taken back.)
 3. git -C ${repoRoot} rev-parse HEAD
 4. git -C ${repoRoot} diff-tree --no-commit-id --name-only -r HEAD   (stdout VERBATIM — checked against the fence allowlist)
 5. git -C ${repoRoot} status --porcelain   (stdout VERBATIM and complete)
-6. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
+6. git -C ${repoRoot} log -1 --format=%B HEAD   (stdout VERBATIM, reported as committedMessage)
+7. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
 Do NOT push. Do NOT touch any other file.`,
-    { label: 'commit:wave', phase: 'Build', schema: GATE_SCHEMA, model },
+    { label: 'commit:wave', phase: 'Build', schema: COMMIT_SCHEMA, model },
   )
 
 const uncommitAgent = () =>
@@ -921,6 +935,7 @@ while (open.length && waveNum < maxWaves && !dirtyStop) {
       const pc = porcelainOf(rows)
       const gitOk = rows.filter(r => /git /.test(r.command || '')).every(r => r.exitCode === 0)
       const landedOk = !!landed && landed.length > 0 && landed.every(f => underFence(f, allow))
+      const messageOk = landedMessageOk(c && c.committedMessage, message)
       const openFences = open.flatMap(s => s.fence)
       const extraDirt = pc === null ? null
         : porcelainFiles(pc).filter(f => !baselineDirty.has(f) && !underFence(f, openFences) && !underFence(f, HARNESS_DIRS))
@@ -933,7 +948,7 @@ while (open.length && waveNum < maxWaves && !dirtyStop) {
         for (const { s, r } of closedNow) built.push({ id: s.id, title: s.title, lane: s.lane, wave: waveNum, tier: ladder[s.tierIdx], filesTouched: r.filesTouched, commit: '' })
         dirtyStop = `wave ${waveNum}'s commit agent died before reporting — a commit may have landed on ${branch} without allowlist or porcelain verification; stopping (no later verify is trustworthy)`
         log(`Build wave ${waveNum}: commit agent died before reporting — commit state unknown, inspect ${branch} by hand`)
-      } else if (gitOk && sha && landedOk && extraDirt && extraDirt.length === 0) {
+      } else if (gitOk && sha && landedOk && messageOk && extraDirt && extraDirt.length === 0) {
         commits.push({ wave: waveNum, hash: sha, message, files: landed })
         for (const { s, r } of closedNow) built.push({ id: s.id, title: s.title, lane: s.lane, wave: waveNum, tier: ladder[s.tierIdx], filesTouched: r.filesTouched, commit: sha })
         log(`Build wave ${waveNum}: committed ${landed.length} file(s) -> ${sha.slice(0, 9)} · graph re-ingested`)
@@ -948,7 +963,7 @@ while (open.length && waveNum < maxWaves && !dirtyStop) {
         commits.push({ wave: waveNum, hash: '', message, files: [], commitFailed: true, uncommitFailed: !undone })
         for (const { s, r } of closedNow) built.push({ id: s.id, title: s.title, lane: s.lane, wave: waveNum, tier: ladder[s.tierIdx], filesTouched: r.filesTouched, commit: '' })
         log(undone
-          ? `Build wave ${waveNum}: commit rejected (allowlist/porcelain verification) — un-committed, work stays in tree`
+          ? `Build wave ${waveNum}: commit rejected (${messageOk ? 'allowlist/porcelain verification' : `the message that landed is not the one composed (${JSON.stringify(capText(c.committedMessage, 160))})`}) — un-committed, work stays in tree`
           : `Build wave ${waveNum}: commit rejected AND the un-commit was not confirmed — ${sha.slice(0, 9)} may still be on ${branch}`)
       } else {
         commits.push({ wave: waveNum, hash: '', message, files: [], commitFailed: true })
