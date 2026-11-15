@@ -68,6 +68,11 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `persist:assemble`). Reading a small ledger is still one agent.
 
 ### Fixed
+- **One file has one fixer** (`crg-debug.js`). A ledger can name a file both absolute and
+  repo-relative, and the fix phase grouped bugs by the raw string, so a live click run put two
+  fixers on `core.py` at once. Taking one back for a broken test restored the file under the
+  other, its fresh test failed, and the whole wave of 36 bugs went back. Every bug's file is
+  now made repo-relative as it enters the fix queue.
 - **A test of a bug that did not close never reaches a commit** (`crg-debug.js`, the
   methodology). A live click run committed the tests of eight bugs that never closed: their
   fixers wrote them into a test file a closed sibling declared, the commit staged that file

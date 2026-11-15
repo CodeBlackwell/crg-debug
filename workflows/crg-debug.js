@@ -2338,7 +2338,10 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   // in confirmedBugs for the report but never enter the fix queue.
   const heldConflicted = confirmedBugs.filter(b => b.conflicted).length
   if (heldConflicted) log(`Fix: holding ${heldConflicted} conflicted finding(s) unfixed (mixed verdicts)`)
-  let queue = confirmedBugs.filter(b => !b.conflicted).map((b, i) => ({ ...b, bugId: b.bugId || `b${i}` }))
+  // One file, one path: a ledger can name a file both absolute and repo-relative, and grouped
+  // by the raw string the two forms got two fixers on one file. Taking one back then undid
+  // the other's fix, and a live run lost a whole wave of 36 bugs to it.
+  let queue = confirmedBugs.filter(b => !b.conflicted).map((b, i) => ({ ...b, file: relPath(b.file, repoRoot), bugId: b.bugId || `b${i}` }))
   const MAX_WAVES = 6
   const MAX_BUGS_PER_FIX = 4 // one agent's load cap; a denser file sends extra chunks to later waves
   let waveNum = 0

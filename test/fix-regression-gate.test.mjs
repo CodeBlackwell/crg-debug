@@ -915,3 +915,14 @@ test('a test of a bug that did not close never reaches a commit, even in a file 
   assert.deepEqual(names(twice.result.fix.fixed), ['b3'])
   for (const c of twice.result.fix.commits) assert.equal(c.files.includes('tests/test_shared.py'), false, `${c.hash} carries the shared test file`)
 })
+
+test('a file named both absolute and repo-relative has one fixer, not two', async () => {
+  // M7.2 on click: /click/src/click/core.py and src/click/core.py got a fixer each; taking one
+  // back undid the other's fix and the whole wave of 36 bugs went back.
+  const bugs = [bug('b1', '/tmp/crg-fixture/src/alpha.py'), bug('b2', 'src/alpha.py'), bug('b3', './src/alpha.py')]
+  const { labels, calls, result } = await fixRun(SRC, { bugs })
+  const fixers = calls.filter(c => c.label.startsWith('fix:'))
+  assert.equal(fixers.length, 1, `one fixer for alpha.py, got ${labels.filter(l => l.startsWith('fix:')).join(', ')}`)
+  assert.deepEqual([...fixers[0].prompt.matchAll(/^bugId: (\S+)$/gm)].map(m => m[1]), ['b1', 'b2', 'b3'])
+  assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/alpha.py:10', 'src/alpha.py:10'])
+})
