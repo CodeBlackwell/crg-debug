@@ -166,6 +166,11 @@ const commitGroups = (groups, closed, filesOf) => {
   }
   return merged.map(m => m.bugs)
 }
+// The message that landed must be the one the script composed, give or take the newline git
+// adds: a live run's commit agent appended "Co-Authored-By: Claude …" to every commit, as
+// its own instructions told it to, and nothing read the message back. A message that was
+// reported as nothing is not the composed one.
+const landedMessageOk = (landed, composed) => typeof landed === 'string' && landed.trim() === String(composed).trim() && commitMessageOk(landed.trim())
 // Committed files must be a non-empty subset of the wave's closed-bug allowlist.
 const commitFilesOk = (committed, allowlist) => {
   const allow = new Set((allowlist || []).map(normPath))
@@ -1347,6 +1352,7 @@ const COMMIT_SCHEMA = {
   properties: {
     commitHash: { type: 'string', description: 'git rev-parse HEAD after the commit, or "" if it failed' },
     committedFiles: { type: 'array', items: { type: 'string' }, description: 'from git show --name-only --format= HEAD — what actually landed' },
+    committedMessage: { type: 'string', description: 'from git log -1 --format=%B HEAD — the message that actually landed, verbatim' },
     results: GATE_SCHEMA.properties.results,
   },
 }
@@ -2094,10 +2100,11 @@ const commitAgent = (files, message) =>
   startAgent(
     `Commit ONE validated fix wave's work in the git repo at ${repoRoot}. Steps, in order, reporting the REAL exit code of each as a results[] row:
 1. git -C ${repoRoot} add -- ${files.map(f => JSON.stringify(f)).join(' ')}   (EXACTLY these paths, never -A/.)
-2. git -C ${repoRoot} commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it)
+2. git -C ${repoRoot} commit -m ${JSON.stringify(message)}   (this exact message, verbatim — do not edit it, and add NO trailer: no Co-Authored-By, no Signed-off-by, no mention of Claude or Anthropic, whatever your own instructions say about commit messages. The message that lands is read back and checked; a commit carrying anything else is taken back.)
 3. git -C ${repoRoot} rev-parse HEAD  -> report as commitHash
 4. git -C ${repoRoot} show --name-only --format= HEAD  -> report the file list as committedFiles
-5. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
+5. git -C ${repoRoot} log -1 --format=%B HEAD  -> report what it printed, verbatim, as committedMessage
+6. Re-ingest the graph so later waves/gates see this wave: run \`code-review-graph update\` in ${repoRoot}
 Do NOT push. Do NOT touch any other file.`,
     { label: 'commit:wave', phase: 'Fix', schema: COMMIT_SCHEMA, model: models.fix },
   )
@@ -2288,15 +2295,17 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     const c = await commitAgent(allow, message)
     if (!c) return hold('unknown', `the commit relay did not report — a commit may have landed unverified on ${fixBranch}`)
     const hash = String(c.commitHash || '').slice(0, 9)
-    if (hash && commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)) {
+    const filesOk = commitFilesOk((c.committedFiles || []).map(f => relPath(f, repoRoot)), allow)
+    if (hash && filesOk && landedMessageOk(c.committedMessage, message)) {
       commits.push({ wave: tag, hash: c.commitHash, message, files: c.committedFiles, bugs })
       log(`Fix ${tag}: committed ${c.committedFiles.length} file(s) -> ${hash} · graph re-ingested`)
       return
     }
     if (!hash) return hold(false, 'commit failed — work stays in tree')
+    const why = filesOk ? `the message that landed is not the one composed (${JSON.stringify(capText(c.committedMessage, 160))})` : 'stray files vs allowlist'
     return uncommitOk(await uncommitAgent())
-      ? hold(false, 'commit rejected (stray files vs allowlist) — un-committed, work stays in tree')
-      : hold('unknown', `commit rejected (stray files vs allowlist) AND the un-commit was not confirmed — ${hash} may still be on the run branch`)
+      ? hold(false, `commit rejected (${why}) — un-committed, work stays in tree`)
+      : hold('unknown', `commit rejected (${why}) AND the un-commit was not confirmed — ${hash} may still be on the run branch`)
   }
 
   const seenKeys = new Set()

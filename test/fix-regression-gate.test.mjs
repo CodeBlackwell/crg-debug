@@ -370,7 +370,8 @@ const fixRun = async (source, { bugs, args = {}, on = {} }) => {
     }
     if (kind === 'commit') {
       const committedFiles = [...prompt.match(/add -- (.*?) {3}\(EXACTLY/)[1].matchAll(/"([^"]+)"/g)].map(m => m[1])
-      return { commitHash: `c0ffee${calls.filter(c => c.label === label).length}`, committedFiles, results: [{ command: 'git commit', exitCode: 0 }] }
+      const committedMessage = `${JSON.parse(/ commit -m ("(?:[^"\\]|\\.)*")/.exec(prompt)[1])}\n`
+      return { commitHash: `c0ffee${calls.filter(c => c.label === label).length}`, committedFiles, committedMessage, results: [{ command: 'git commit', exitCode: 0 }] }
     }
     // Like a live agent: the baseline names its command in full, a re-run answers with the id.
     if (kind === 'regress') return { runs: [{ command: label === 'regress:baseline' ? 'pytest tests/test_alpha.py tests/test_bravo.py' : 'c1', exitCode: 0, passed: 40, failing: [] }] }
@@ -442,6 +443,8 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // whose output the script checks, not returned whole by the agent. (And once more when that
 // command began to print how many rows are findings and what the ledger says it holds, under a seal,
 // and again when it began to print a row to a line, each under its own seal.)
+// Re-pinned the commit:wave lines again when the commit brief began to forbid a trailer and
+// ask for the message that landed (2026-11-15).
 // Re-pinned the commit:wave lines when a wave began to commit per fixer: one wave commit of
 // two files became one commit for each.
 const PINNED = {
@@ -452,8 +455,8 @@ const PINNED = {
     'fix:bravo.py 88b62555c23d',
     'gate:alpha.py c4a75d839022',
     'gate:bravo.py 675eb1af41ab',
-    'commit:wave 35af19a6930e',
-    'commit:wave c8c3477b1c92',
+    'commit:wave 974aab4a3936',
+    'commit:wave 5bf04a3287b0',
   ],
   busy: [
     'ingest-ledger 6669b5a98551',
@@ -465,12 +468,12 @@ const PINNED = {
     'gate:alpha.py f3d457292a95',
     'gate:alpha.py a945067a9f5e',
     'gate:bravo.py e1397314abe4',
-    'commit:wave 49f580d8c9ff',
-    'commit:wave b657b49ac07e',
+    'commit:wave 800e36c785d3',
+    'commit:wave cd48fbe54531',
     'fix:alpha.py 3f1e3c6c9767',
     'gate:alpha.py 3a4d9c8155d1',
     'gate:alpha.py f3d457292a95',
-    'commit:wave 204ee0303cb4',
+    'commit:wave 2004fb596429',
     'fix:coupled ad532a83e120',
     'gate:alpha.py fdb94e5ea4dc',
   ],

@@ -48,6 +48,7 @@ const stubAgent = (throwOn, trace = []) => async (prompt, opts = {}) => {
   if (label === 'commit:wave') return {
     commitHash: 'deadbeef123',
     committedFiles: ['src/alpha-widget.ts', 'src/alpha-widget.test.ts'],
+    committedMessage: 'Fix a bug in alpha-widget.ts\n',
     results: [{ command: 'git commit', exitCode: 0, stdout: '', stderr: '' }],
   }
   // A restore point is recorded before each wave.

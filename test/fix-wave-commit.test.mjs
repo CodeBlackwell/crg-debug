@@ -72,6 +72,21 @@ test('a commit with stray files is undone and reported; an undo that never confi
   assert.equal(undone.result.fix.halted, undefined, 'a commit that was cleanly undone is a known state: the run goes on')
 })
 
+test('a commit whose message is not the one composed is undone: the live run appended an AI trailer', async () => {
+  // What a live commit agent did to every commit, following its own instructions.
+  const trailer = () => ({ commitHash: 'deadbeef12345', committedFiles: ['src/core.py', 'tests/test_core.py'], committedMessage: 'Fix a bug in core.py\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n', results: [{ command: 'git commit', exitCode: 0 }] })
+  const { result, calls } = await fixRun(SRC, { bugs: [bug('b1', 'src/core.py')], on: { commit: trailer } })
+  assert.deepEqual(result.fix.commits, [], 'it is not reported as a commit')
+  assert.deepEqual(result.fix.uncommitted.map(u => [u.bugs, u.landed, u.reason]), [[['b1'], false, 'commit rejected (the message that landed is not the one composed ("Fix a bug in core.py\\n\\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>")) — un-committed, work stays in tree']])
+  assert.ok(calls.some(c => c.label === 'uncommit:wave' || c.label.startsWith('uncommit')), 'and it is taken back')
+  const brief = commitsOf(calls)[0].prompt
+  assert.ok(brief.includes('add NO trailer: no Co-Authored-By') && brief.includes('log -1 --format=%B HEAD'), 'the agent is told, and asked for the message that landed')
+
+  // A message reported as nothing is not the composed one either.
+  const silent = await fixRun(SRC, { bugs: [bug('b1', 'src/core.py')], on: { commit: () => ({ ...trailer(), committedMessage: undefined }) } })
+  assert.deepEqual(silent.result.fix.commits, [])
+})
+
 test('a wave with nothing recorded to commit is refused out loud, not skipped', async () => {
   // A bug whose file is a line number and no path (a row with no file at all is not a
   // finding, and the ledger read refuses it), fixed by an agent that reports no test file

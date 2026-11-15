@@ -123,6 +123,14 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   - `ledger-slice` leaves `unread` out of the ledger it narrows, where the places would
     point at other rows.
   The write direction was left as it was then, and is covered by the next entry.
+- **A fix commit carries only the message the script composed** (`crg-debug.js`). A live
+  run's commit agent appended `Co-Authored-By: Claude …` to every commit, as its own
+  instructions told it to: the brief asked for the message verbatim and the script read
+  back only the files that landed. The brief now forbids any trailer, the agent reports
+  `git log -1 --format=%B HEAD`, and a commit whose message is not the composed one is
+  taken back and reported like a commit with stray files. `crg-build`, `crg-ralph`,
+  `crg-ui` and `crg-integrations` commit through agents the same way and are not yet
+  checked.
 - **A writer that alters one row no longer loses the ledger** (`crg-debug.js`). A sweep of
   281 findings reached the end of Verify and wrote nothing: the agent writing piece 22 of 24
   changed one row of it on both tries, so the piece failed its seal twice, the ledger was
