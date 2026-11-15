@@ -657,6 +657,16 @@ const newFailures = (now, baselineIds, redCommands) => {
   const before = new Set(baselineIds || [])
   return (now || []).filter(t => !before.has(t.id) && !(redCommands || []).some(c => commandNamesTest(c, t.id)))
 }
+// After the blamed fixers go back, a test still failing may be one a standing fix of the SAME
+// wave wrote: that fix leaned on a change just taken back. On click a closed fix's new test
+// failed this way, and the whole wave of 10 bugs went back for it, 8 of which broke nothing.
+// The bugs whose own test command names a failing test, when every failing test is one of
+// theirs; [] when any failure belongs to no bug here, or a bug has no test command.
+const ownedFailures = (failing, bugs, commandOf) => {
+  const owners = (bugs || []).filter(b => commandOf(b) && (failing || []).some(t => commandNamesTest(commandOf(b), t.id)))
+  const allOwned = (failing || []).length > 0 && failing.every(t => owners.some(b => commandNamesTest(commandOf(b), t.id)))
+  return allOwned ? owners : []
+}
 // An agent asked to echo a long command back does not reliably do it: a live run answered
 // with the labels "restore command" and "compare command". So the script never recognises
 // a relayed row by its command TEXT. Each baseline command gets a short id — c1, c2, … —
@@ -2442,10 +2452,11 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   //   fresh — the tests it broke · named — the bugs an agent blamed (a claim)
   //   taken — bugs whose fixer's files were restored, leaving the tree clean
   //   whole — the reason, when the whole wave had to go back instead
+  //   leaned — bugs taken back because their own test failed once a blamed fix was gone
   // `beforeBack(groups, named, fresh)` runs before the blamed fixers' files are restored.
-  const settleWave = async (tag, attempted, groups, filesOf, snapshot, beforeBack) => {
+  const settleWave = async (tag, attempted, groups, filesOf, snapshot, beforeBack, commandOf) => {
     const first = await regressionCheck(tag, filesOf(attempted))
-    const out = { fresh: first || [], named: [], taken: [], whole: '' }
+    const out = { fresh: first || [], named: [], taken: [], whole: '', leaned: [] }
     if (first && !first.length) return out
     let left = first
     if (first) {
@@ -2457,7 +2468,19 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
         await beforeBack(blamed, out.named, first)
         if (!(await takeBack(tag, filesOf(hit), snapshot))) return out
         left = await regressionCheck(tag, filesOf(attempted), 'recheck')
-        if (left && !left.length) return { ...out, taken: hit }
+        let taken = hit
+        // Each round takes back at least one more fixer, so it ends.
+        while (left && left.length) {
+          const owners = ownedFailures(left, attempted.filter(b => !taken.includes(b)), commandOf)
+          if (!owners.length) break
+          const more = groups.filter(([, bugs]) => bugs.some(b => owners.includes(b))).flatMap(([, bugs]) => bugs)
+          if (!(await takeBack(tag, filesOf(more), snapshot))) return out
+          log(`Fix ${tag}: ${owners.map(b => b.bugId).join(', ')} — its own test failed once the blamed fix was gone; took back its fixer (${more.map(b => b.bugId).join(', ')}), not the wave`)
+          taken = [...taken, ...more]
+          out.leaned.push(...more)
+          left = await regressionCheck(tag, filesOf(attempted), 'recheck')
+        }
+        if (left && !left.length) return { ...out, taken }
       }
     }
     if (!(await takeBack(tag, filesOf(attempted), snapshot))) return out
@@ -2646,7 +2669,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     const beforeBack = async (blamed, named, fresh) => {
       for (const group of blamed) await answer(group, group[1].filter(b => named.includes(b.bugId)), strikeOf(fresh, []))
     }
-    const verdict = halted || unchecked || !stand.length ? quiet : await settleWave(waveTag, stand, standing, filesOf, snapshot, beforeBack)
+    const verdict = halted || unchecked || !stand.length ? quiet : await settleWave(waveTag, stand, standing, filesOf, snapshot, beforeBack, b => (fixById.get(b.bugId) || {}).testCommand)
     const row = { wave: waveNum, newFailures: verdict.fresh.map(t => t.id), takenBack: [], outcome: 'clean' }
     regression.waves.push(row)
     if (halted || verdict.whole) {
@@ -2673,6 +2696,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
       continue
     }
     const takenIds = new Set(verdict.taken.map(b => b.bugId))
+    for (const b of verdict.leaned || []) backNow.add(b.bugId) // broke nothing: its retry is not thrash
     // A fix that passed its own gate and was taken back goes round once more, unless this
     // was already its second time and beforeBack has answered it.
     requeued.push(...closedNow.filter(b => takenIds.has(b.bugId) && !settled.has(b.bugId)))

@@ -926,3 +926,43 @@ test('a file named both absolute and repo-relative has one fixer, not two', asyn
   assert.deepEqual([...fixers[0].prompt.matchAll(/^bugId: (\S+)$/gm)].map(m => m[1]), ['b1', 'b2', 'b3'])
   assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/alpha.py:10', 'src/alpha.py:10'])
 })
+
+// ---- a recheck failure a standing fix of the wave owns costs that fix, not the wave ----
+
+const W = new Function(`${block}\nreturn { ownedFailures }`)()
+
+test('a failure is owned when a bug\'s own test command names it, and only when every failure is', () => {
+  const [b1, b2, b3] = [{ bugId: 'b1' }, { bugId: 'b2' }, { bugId: 'b3' }]
+  const commands = { b1: 'pytest tests/test_b1.py::test_one', b2: 'pytest tests/test_b2.py::test_two -q', b3: '' }
+  const commandOf = b => commands[b.bugId]
+  assert.deepEqual(W.ownedFailures([{ id: 'tests/test_b2.py::test_two' }], [b1, b2, b3], commandOf), [b2])
+  assert.deepEqual(W.ownedFailures([{ id: 'tests/test_b2.py::test_two' }, { id: 'tests/test_utils.py::test_styling' }], [b1, b2], commandOf), [], 'a failure nobody here owns: the wave goes back as before')
+  assert.deepEqual(W.ownedFailures([], [b1, b2], commandOf), [], 'nothing failing is nothing owned')
+  assert.deepEqual(W.ownedFailures([{ id: 'tests/test_b2.py' }], [b2], commandOf), [], 'naming a file does not claim the tests in it')
+})
+
+test('a fix whose own test fails once the blamed fix is gone goes back alone, and the wave commits', async () => {
+  // M8.1 on click: b1 and b3 were blamed and taken back, then b35's own new test failed on the
+  // recheck, and the whole wave of 10 went back. Here b2's test fails once b1 is gone.
+  const OWN_B2 = { id: 'tests/test_bravo.py::test_b2', output: 'leaned on b1' }
+  const THREE = [bug('b1', 'src/alpha.py'), bug('b2', 'src/bravo.py'), bug('b3', 'src/gamma.py')]
+  const { result, labels, logs } = await fixRun(SRC, {
+    bugs: THREE,
+    on: {
+      regress: script(runs(), runs(EXISTING), runs(OWN_B2)), // baseline, wave 1, first recheck; then clean
+      blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }),
+    },
+  })
+  assert.deepEqual(labels.slice(13, 19), ['blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'regress:wave1:recheck', 'commit:wave'])
+  assert.ok(logs.includes('Fix wave 1: b2 — its own test failed once the blamed fix was gone; took back its fixer (b2), not the wave'))
+  assert.deepEqual(result.fix.regressionGate.waves[0], { wave: 1, newFailures: [EXISTING.id], takenBack: ['b1', 'b2'], outcome: 'named fixes restored' })
+  assert.deepEqual(result.fix.commits[0].bugs, ['b3'], 'the fix that leaned on nothing commits in wave 1')
+  assert.deepEqual(names(result.fix.fixed).sort(), ['b1', 'b2', 'b3'], 'both taken-back bugs are tried again')
+  assert.deepEqual(result.fix.unfixed, [])
+
+  const unowned = await fixRun(SRC, {
+    bugs: THREE,
+    on: { regress: script(runs(), runs(EXISTING), runs({ id: 'tests/test_other.py::test_x' })), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }) },
+  })
+  assert.equal(unowned.result.fix.regressionGate.waves[0].outcome, 'wave restored', 'a failure no bug of the wave owns still costs the wave')
+})

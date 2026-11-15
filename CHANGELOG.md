@@ -68,6 +68,13 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `persist:assemble`). Reading a small ledger is still one agent.
 
 ### Fixed
+- **A fix whose own test fails once a blamed fix is gone costs that fix, not the wave**
+  (`crg-debug.js`). After the regression gate takes the blamed fixers back, a test still
+  failing may be one that a standing fix of the same wave wrote, because that fix leaned on a
+  change just undone. On click the whole wave of 10 bugs went back for one such test, 8 of
+  which broke nothing. When every test still failing is named by a standing bug's own test
+  command, that bug's fixer goes back too (no strike, and its retry is not thrash) and the
+  gate checks again. The wave goes back whole only for a failure no bug in it owns.
 - **One file has one fixer** (`crg-debug.js`). A ledger can name a file both absolute and
   repo-relative, and the fix phase grouped bugs by the raw string, so a live click run put two
   fixers on `core.py` at once. Taking one back for a broken test restored the file under the
