@@ -94,6 +94,7 @@ const DISK = ledgerDisk(SRC)
 const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newline', issueRef: 'gh#12', discoveryRounds: 2, model: 'sonnet' }
 // Re-pinned the rich run's refute/confirm lines when V1 was reverted (2026-11-14): its
 // reviewers no longer get the issue context and the change-under-review rule.
+// Re-pinned the persist lines when the ledger came to be written a row to a line (2026-11-15).
 // Re-pinned whole when D1 (finders handed functions in slices of 24) was reverted
 // (2026-11-14): each concern has one finder again, handed its files, so every label after
 // Discover and the logs and return moved with it.
@@ -114,8 +115,8 @@ const PINNED = {
     'confirm:find_residual.py ac06bda651f2',
     'refute:z.py db2c9964acd7',
     'confirm:z.py dc045b6c9657',
-    'persist:1 707a242db728',
-    'persist:assemble 162c9bd30a3e',
+    'persist:1 91762c8b7197',
+    'persist:assemble 680f77918547',
     'logs a8d8c006f68f',
     'return d21dcaee4efd',
   ],
@@ -147,8 +148,8 @@ const PINNED = {
     'confirm:find_residual_.py a4dcbdf22d85',
     'refute:z.py 1f7e46b1df06',
     'confirm:z.py dd4717d2929a',
-    'persist:1 0be6399ed251',
-    'persist:assemble f5d1ea58fae3',
+    'persist:1 1ab6aaf6e7f9',
+    'persist:assemble c6a51968f036',
     'logs 240fd33e8e97',
     'return 113bc0284e75',
   ],

@@ -122,8 +122,18 @@ All notable changes to the crg-debug plugin are documented here. The format foll
     bugs and follows each through fixed or unfixed.
   - `ledger-slice` leaves `unread` out of the ledger it narrows, where the places would
     point at other rows.
-  The write direction is unchanged: a piece is still written by one agent and checked by
-  seal, with one more try.
+  The write direction was left as it was then, and is covered by the next entry.
+- **A writer that alters one row no longer loses the ledger** (`crg-debug.js`). A sweep of
+  281 findings reached the end of Verify and wrote nothing: the agent writing piece 22 of 24
+  changed one row of it on both tries, so the piece failed its seal twice, the ledger was
+  refused, and the fix run that followed had nothing to read. The ledger is now written as
+  it is read, a row to a line, each line carrying its slot, its place and a seal over them
+  and the row. The program that puts the parts together keeps every row that came through
+  whole and names each that did not; only those are sent again, alone when there are at
+  most four of them (with no neighbour to copy from), packed into pieces when there are
+  more, at most twice. A retry adds part files and never overwrites one. A written file is
+  believed only beside a seal the program prints from the write's own seal. The file on
+  disk is unchanged. Writing a ledger now holds back 10 more agents for the retries.
 - **Verify no longer discards every verdict** (`crg-debug.js`). A live sweep of 115 findings
   started 230 reviewers, received 230 verdicts, and filed all 115 findings as unreviewed
   with `no verdict`; a run from that ledger did the same again. The script matched each
