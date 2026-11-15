@@ -129,13 +129,14 @@ test('a new failure beside the old one is red, and the old one is still named', 
 test('a test of a bug left unfixed that still fails at the end is red, and named apart from regressions', async () => {
   // The live case (writeup 024, tree B): two bugs in one file, one closes and its commit takes
   // the shared test file, the other never passes its own gate and its red test stays behind.
+  // Since ownTests that file goes back before the commit; the stub's gate still reports the
+  // test at the end, which is what is judged here.
   const OPEN = { id: 'tests/test_alpha.py::test_b2', output: 'AssertionError' }
   const gate = ({ prompt }) => (prompt.includes('::test_b2') ? { results: [{ command: 'pytest', exitCode: 1 }] } : undefined)
   const regress = ({ label }) => (label === 'regress:baseline' ? row(label, 40) : row(label, 41, OPEN))
   const { result, logs } = await fixRun(SRC, { bugs: [bug('b1', 'src/alpha.py'), bug('b2', 'src/alpha.py')], on: { gate, regress } })
   assert.deepEqual(result.fix.fixed.map(b => b.bugId), ['b1'])
   assert.deepEqual(result.fix.unfixed.map(b => b.bugId), ['b2'])
-  assert.ok(result.fix.commits[0].files.includes('tests/test_alpha.py'), 'the shared test file was committed with b1')
   assert.equal(result.fix.finalGate.verdict, 'red', 'the suite fails, so the gate cannot read green')
   assert.deepEqual(result.fix.finalGate.openBugTests, [OPEN.id])
   assert.deepEqual(result.fix.finalGate.newFailures, [], 'it is not a regression, and is not called one')
@@ -184,4 +185,15 @@ test('two tests already failing are counted in the plural', async () => {
   const regress = ({ label }) => row(label, 1423, OLD, NEW)
   const { logs } = await fixRun(SRC, { bugs: TWO, on: { regress } })
   assert.match(logs.at(-1), / · final gate green · 2 tests already failing before the first fix · regression gate: /)
+})
+
+test('the test of a fix taken back is an open bug\'s test at the end, not a regression', async () => {
+  // M6.1: tests of fixes taken back were filed as newly failing, and in the next wave they cost
+  // two innocent fixes. A bug the wave does not keep has its test marked red, whatever took it back.
+  const OWN = { id: 'tests/test_alpha.py::test_b1', output: 'AssertionError' }
+  const regress = ({ label }) => (label === 'regress:baseline' ? row(label, 40) : label === 'regress:wave1' ? row(label, 40, NEW) : row(label, 40, OWN))
+  const { result } = await fixRun(SRC, { bugs: TWO, on: { regress, blame: () => null } })
+  assert.deepEqual(result.fix.commits, [], 'the whole wave went back')
+  assert.deepEqual(result.fix.finalGate.openBugTests, [OWN.id])
+  assert.deepEqual(result.fix.finalGate.newFailures, [])
 })

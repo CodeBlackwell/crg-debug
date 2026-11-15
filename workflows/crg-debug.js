@@ -137,6 +137,26 @@ const waveAllowlist = (closedNow, fixById, supportById, root) => [...new Set(
     return [bugFile(b), fx.testFile, ...support].filter(Boolean).map(f => relPath(f, root))
   }),
 )]
+// A test reaches a commit only with its own bug closed. A live run committed the tests of
+// eight bugs that never closed: their fixers wrote them into a test file a closed sibling
+// declared, the commit staged that file whole, and in the next wave those tests read as
+// newly failing and cost two innocent fixes. So the test files of the wave's open bugs are
+// put back before anything is gated or committed (restore), and a closed bug whose test
+// sits in one of them goes back with it (demote): its test is gone, so it is not closed.
+// A test file that is also an attempted bug's source file (a test inline in the module) is
+// not put back: that would undo the source of every bug in it.
+const ownTests = (attempted, closed, fixById, root) => {
+  const testOf = b => {
+    const t = ((fixById && fixById.get(b.bugId)) || {}).testFile
+    return t ? relPath(t, root) : ''
+  }
+  const sources = new Set((attempted || []).map(b => relPath(bugFile(b), root)))
+  const closedIds = new Set((closed || []).map(b => b.bugId))
+  const open = (attempted || []).filter(b => !closedIds.has(b.bugId))
+  const restore = [...new Set(open.map(testOf).filter(t => t && !sources.has(t)))]
+  return { restore, demote: (closed || []).filter(b => restore.includes(testOf(b))) }
+}
+const SHARED_TEST_REASON = 'its test shared a file with the test of a bug that did not close, twice'
 // A COMMIT PER FIXER, not per wave. Six wave commits held about 50 fixes, so a reviewer who
 // wanted to drop a bad one had to pick hunks apart. Each fixer's closed bugs (one file's
 // chunk) now commit on their own. A file is staged whole, so fixers whose files overlap (a
@@ -2015,7 +2035,7 @@ const CONTAINERIZED_TEST_NOTE = `If the toolchain commands above are containeriz
 
 const fixAgent = (file, bugs) =>
   startAgent(
-    `Fix confirmed bugs in ONE file in the repo at ${repoRoot} using strict TDD. You EXCLUSIVELY own this file for this wave — edit ONLY it (plus its test file(s)): ${file}
+    `Fix confirmed bugs in ONE file in the repo at ${repoRoot} using strict TDD. You EXCLUSIVELY own this file for this wave — edit ONLY it (plus one new test file per bug): ${file}
 
 Bugs in this file (${bugs.length}) — fix EVERY one:
 ${bugRows(bugs)}
@@ -2028,6 +2048,7 @@ For EACH bug above, run the TDD micro-cycle (mandatory, in order; full disciplin
 1. RED — write a test asserting the bug's INTENDED CORRECT outcome (derived from its symptom/whyRepro: the misbehaving input must now yield the right output, and the reported error/symptom must STOP happening). Run it with the narrowest path filter; confirm it FAILS for the right reason (the actual bug). NEVER encode the symptom as expected — a test that asserts the current wrong output, or that the reported exception is raised (e.g. assert_raises on the very error the bug describes), codifies the bug and is INVALID. If your test passes before any edit, first check it is asserting the corrected behavior and not the present one; rewrite it if so. Only set redObserved=false (source left untouched) once a test that genuinely encodes the CORRECT behavior still passes — i.e. the bug truly is not present.
 2. GREEN — apply the MINIMAL fix to SOURCE (never a generated artifact: no dist/build/bundle/minified/lockfile), re-run, confirm it passes (its greenObserved=true).
 Open each test with a one-sentence comment naming the user-facing behavior it protects.
+Each bug's test goes in a NEW test file of its own, one file per bug, named after its bugId in the repo's test naming convention (e.g. tests/test_crg_<bugId>.py, next to the existing tests): never add it to an existing test file, and never put two bugs' tests in one file. The script puts back the test file of every bug that does not close, and a bug whose test shares that file goes back with it.
 Each bug's test must be ISOLATED to THAT bug: it must pass even while OTHER unfixed bugs remain (do not import a whole crashing module if a narrower import works; for compiled languages, build+run only that test). For each bug report testCommand: the exact, narrowest command that runs ONLY that bug's test (e.g. \`pytest path::test_x\`, or the gcc compile+run line) — the script re-runs each independently to confirm. ${CONTAINERIZED_TEST_NOTE}
 Return filesTouched and a fixes[] row per bug: {bugId, testFile, testCommand, redObserved, greenObserved}.`,
     { label: `fix:${shortFile(file)}`, phase: 'Fix', schema: fixSchemaFor(bugs), model: models.fix },
@@ -2329,6 +2350,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   // fixer is from then on attempted alone, and a strike counts only from an attempt the
   // bug had to itself. A file still has one fixer per wave, so its bugs take turns.
   const solo = new Set() // bugIds owed single-bug attempts
+  const sharedTest = new Set() // bugIds demoted once already for a test that shared a file with an open bug's
   let waveCap = MAX_WAVES // a wave that holds a single-bug retry does not use the cap up
 
   // Regression baseline — once, before the first fix is applied. Which blast-radius tests
@@ -2539,13 +2561,36 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     }
     // An open bug's own new test is red by its own gate — known, and not a regression.
     for (const b of closedNow) redCommands.delete(b.bugId)
-    for (const b of requeued) if ((fixById.get(b.bugId) || {}).testCommand) redCommands.set(b.bugId, fixById.get(b.bugId).testCommand)
+    // So is the test of any bug this wave does not keep, whatever took it back.
+    const markRed = bugs => bugs.forEach(b => (fixById.get(b.bugId) || {}).testCommand && redCommands.set(b.bugId, fixById.get(b.bugId).testCommand))
+    markRed(requeued)
 
     // Existing tests first: the gate below re-runs them, so they must be the tests that
     // were there. A fixer that changed or removed a line of one is taken back whole and
     // gets one retry; the second time its change is saved as a proposal (strikeOrPropose).
     const filesOf = bugs => waveAllowlist(bugs, fixById, supportById, repoRoot)
     const backNow = new Set() // bugs whose fixer the script takes back in this wave
+    // A test reaches a commit only with its own bug closed (ownTests): the open bugs' test
+    // files go back now, and leave every allowlist. A closed bug whose test was in one of
+    // them is not closed any more: it gets a single-bug attempt, once.
+    const own = ownTests(attempted, closedNow, fixById, repoRoot)
+    if (own.restore.length) {
+      for (const [id, files] of supportById) supportById.set(id, files.filter(f => !own.restore.includes(relPath(f, repoRoot))))
+      if (await takeBack(waveTag, own.restore, snapshot)) log(`Fix wave ${waveNum}: put back the test file(s) of bugs that did not close: ${own.restore.join(', ')}`)
+    }
+    for (const b of own.demote) {
+      if (sharedTest.has(b.bugId)) {
+        unfixedBugs.push({ ...b, reason: SHARED_TEST_REASON, wave: waveNum })
+        settled.add(b.bugId)
+        continue
+      }
+      sharedTest.add(b.bugId)
+      solo.add(b.bugId)
+      backNow.add(b.bugId)
+      requeued.push(b)
+    }
+    if (own.demote.length) log(`Fix wave ${waveNum}: ${own.demote.map(b => b.bugId).join(', ')} closed with a test in a file an open bug's test shares — not kept; tried again alone`)
+    closedNow = closedNow.filter(b => !own.demote.includes(b))
     const answer = async ([file, bugs], culprits, strike) => {
       for (const b of bugs.filter(b => !settled.has(b.bugId))) {
         solo.add(b.bugId)
@@ -2560,7 +2605,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
       const done = await strikeOrPropose(waveTag, waveNum, file, culprits.filter(b => !settled.has(b.bugId)), strike, filesOf(bugs), snapshot, ground)
       done.forEach(b => settled.add(b.bugId))
     }
-    const edits = await editedTests(waveTag, snapshot, attempted.map(b => (fixById.get(b.bugId) || {}).testFile))
+    const edits = halted ? [] : await editedTests(waveTag, snapshot, attempted.map(b => (fixById.get(b.bugId) || {}).testFile))
     let unchecked = '' // why the whole wave goes back before the regression gate is even asked
     let standing = groups // the fixers whose work is still in the tree
     if (!edits) {
@@ -2606,6 +2651,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
       // already taken back for an existing test is not part of that — it is owed its retry.
       const open = stand.filter(b => !settled.has(b.bugId))
       const owed = attempted.filter(b => goesRound(b))
+      markRed(attempted)
       const reason = halted || verdict.whole
       unfixedBugs.push(...open.map(b => ({ ...b, reason, wave: waveNum })))
       row.takenBack = open.map(b => b.bugId)
@@ -2628,6 +2674,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     // was already its second time and beforeBack has answered it.
     requeued.push(...closedNow.filter(b => takenIds.has(b.bugId) && !settled.has(b.bugId)))
     const kept = closedNow.filter(b => !takenIds.has(b.bugId))
+    markRed(attempted.filter(b => !kept.includes(b)))
     for (const b of kept) fixedBugs.push({ ...b, testFile: fixById.get(b.bugId).testFile, wave: waveNum })
     const closed = kept.length
     if (verdict.taken.length) {

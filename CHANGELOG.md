@@ -68,6 +68,25 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `persist:assemble`). Reading a small ledger is still one agent.
 
 ### Fixed
+- **A test of a bug that did not close never reaches a commit** (`crg-debug.js`, the
+  methodology). A live click run committed the tests of eight bugs that never closed: their
+  fixers wrote them into a test file a closed sibling declared, the commit staged that file
+  whole, and the branch ended red. Those tests then read as newly failing in the next wave
+  and cost two fixes that had broken nothing. The fix brief now asks for one new test file
+  per bug; after each wave the script puts back the test files of the bugs that did not
+  close and drops them from every allowlist, and a closed bug whose test sits in one of them
+  is not kept and gets one single-bug attempt (the second time it is unfixed, so it cannot
+  loop). A test inline in a source file is left alone.
+- **The test of a fix taken back is an open bug's test** (`crg-debug.js`). A bug a wave does
+  not keep, whatever took it back, has its test command marked red, so a later wave's
+  regression gate does not blame that test on another fix and the final gate files it under
+  `openBugTests` rather than `newFailures`.
+- **crg-build, crg-ralph and crg-ui check the commit message that landed** (the three
+  workflows). The same hole crg-debug had: a commit agent free to append a trailer and a
+  script that read back only the files. Each brief now forbids any trailer and asks for
+  `git log -1 --format=%B HEAD`; a message that is not the composed one takes the existing
+  un-commit path. crg-ui gains the `commitMessageOk` gate it lacked. crg-integrations never
+  commits and is unchanged.
 - **A run bigger than the Workflow's 1,000 agents no longer loses its findings or its ledger**
   (`crg-debug.js`). A sweep of 300 findings reached the limit inside Verify: the runtime
   refused the remaining reviewers, 70 findings nobody had read were filed as rejected with
