@@ -80,6 +80,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   `persist:assemble`). Reading a small ledger is still one agent.
 
 ### Fixed
+- **A ledger row holding U+2028, U+2029 or U+0085 is written and read whole**
+  (`crg-debug.js`). JSON leaves those characters raw; JavaScript reads the first two as line
+  ends, so the harness split the row inside the agent's brief and the write program's
+  pattern stopped at it. Such a row could not reach the disk however it was copied, and on a
+  click detection one made the whole ledger write fail. Both ledger programs now escape the
+  three characters, which parses back to the same value.
+- **A reason over 600 characters is cut at a word and ends `[cut]`** (`crg-debug.js`). A
+  reason cut mid-word ("does not apply, becau") was a row the writing agent kept "finishing",
+  dropping its closing quote and brace on every retry. Reasons also turn those three
+  characters into spaces, like the other line breaks.
 - **A commit undone for its message is tried once more** (`crg-debug.js`). On click a commit
   agent added a Co-Authored-By trailer despite the brief; the script undid the commit as
   designed, and a fix that had passed every gate was left uncommitted. A commit whose files

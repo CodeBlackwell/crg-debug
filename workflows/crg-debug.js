@@ -412,9 +412,14 @@ const fixersThatFit = (bugCounts, left) => {
 // 16,000 is about half of what a shell tool hands back before it truncates its output.
 const LEDGER_PIECE = 16000
 // A stored reason is one line of at most this many characters, so the size of the ledger
-// Verify will produce is known before it runs.
+// Verify will produce is known before it runs. A longer one is cut at a word and says so:
+// a row ending mid-word reads as broken, and the agent that writes it out "finishes" it.
 const REASON_CAP = 600
-const reasonText = s => capText(String(s == null ? '' : s).replace(/[\u0000-\u001f]+/g, ' '), REASON_CAP)
+const REASON_CUT = ' [cut]'
+const reasonText = s => {
+  const text = String(s == null ? '' : s).replace(/[\u0000-\u001f\u0085\u2028\u2029]+/g, ' ').trim()
+  return text.length <= REASON_CAP ? text : `${text.slice(0, REASON_CAP - REASON_CUT.length).replace(/\s+\S{0,40}$/, '')}${REASON_CUT}`
+}
 // The most a finding's row can grow by on its way through Verify: the longest field name,
 // and a reason every character of which JSON has to escape.
 const ROW_GROWTH = 2 * REASON_CAP + 80
@@ -423,9 +428,9 @@ const LINE_OVERHEAD = 64
 // An upper bound on the text a ledger write will send: what is already fixed, plus every
 // finding with the most Verify can add to it, each on a line of its own.
 const ledgerBound = (fixed, findings) =>
-  JSON.stringify(fixed).length +
+  lineSafe(JSON.stringify(fixed)).length +
   Object.values(fixed || {}).reduce((n, v) => n + LINE_OVERHEAD * (Array.isArray(v) ? v.length || 1 : 1), 0) +
-  (findings || []).reduce((n, f) => n + JSON.stringify(f).length + ROW_GROWTH + LINE_OVERHEAD, 0) + 400
+  (findings || []).reduce((n, f) => n + lineSafe(JSON.stringify(f)).length + ROW_GROWTH + LINE_OVERHEAD, 0) + 400
 // How many rows that did not reach the disk whole are sent again one to an agent; more than
 // this go again packed into pieces. And how often a write is tried again (ROW_TRIES_ALONE).
 const WRITE_ROWS_ALONE = 4
@@ -458,6 +463,13 @@ const packLines = (lines, size) => {
 // The text as fence() would hand it to an agent, so a piece is the same inside its fence.
 const fenceSafe = s => fence(s).slice('<<<UNTRUSTED\n'.length, -'\nUNTRUSTED>>>'.length)
 const LEDGER_SECTIONS = ['confirmedBugs', 'deferred', 'rejected', 'unreviewed']
+// JS reads U+2028 and U+2029 as line ends, and so does every `.` in the patterns that take
+// a row apart and the harness that hands a brief to an agent; other tools read U+0085 as
+// one. JSON leaves all three raw, so a row holding one was split on its way and could
+// never be whole. Escaped, it is one line again and parses to the same value. The
+// programs carry the same function (LEDGER_LINE_JS); the tests compare them.
+const lineSafe = s => s.replace(/[\u0085\u2028\u2029]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+const LEDGER_LINE_JS = 'const lineSafe=s=>s.replace(/[\\u0085\\u2028\\u2029]/g,c=>"\\\\u"+c.charCodeAt(0).toString(16).padStart(4,"0"));'
 const LEDGER_SEAL_JS = 'const seal=s=>{let h=0x811c9dc5;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),0x01000193)>>>0;return h.toString(16).padStart(8,"0")};'
 // The sections a run from a ledger reads row by row. Deferred and rejected rows are
 // counted and stay on disk.
@@ -470,7 +482,7 @@ const LEDGER_ROW_SECTIONS = ['toolchain', 'baselineFailures', 'confirmedBugs', '
 // ledger carries of itself and how many batches there are, those four lines under one
 // seal, and the rows too when they are one batch. Asked for k it prints batch k. Asked
 // for `row <section> <place>` it prints that one row, alone.
-const LEDGER_READ_PROGRAM = `const fs=require("fs"),[file,what,section,place]=process.argv.slice(1);${LEDGER_SEAL_JS}const all=JSON.parse(fs.readFileSync(file,"utf8")),rows=key=>Array.isArray(all[key])?all[key]:[];const R=${JSON.stringify(LEDGER_ROW_SECTIONS)};const line=(key,i)=>{const text=JSON.stringify(rows(key)[i]);return "crg-ledger-row "+key+" "+i+" "+seal(key+" "+i+" "+text)+" "+text};const lines=R.flatMap(key=>rows(key).map((row,i)=>line(key,i)));const batches=[[]];let size=0;for(const l of lines){if(size&&size+l.length>${LEDGER_PIECE}){batches.push([]);size=0}batches[batches.length-1].push(l);size+=l.length}const show=n=>batches[n-1].forEach(l=>console.log(l));const isFinding=r=>!!r&&typeof r==="object"&&typeof r.file==="string"&&r.file!==""&&typeof r.rootCause==="string"&&r.rootCause!=="";if(what==="0"){const S=${JSON.stringify(LEDGER_SECTIONS)},said=all.counts;const head=["crg-ledger-rows "+S.map(key=>rows(key).length).join(" "),"crg-ledger-findings "+S.map(key=>rows(key).filter(isFinding).length).join(" "),"crg-ledger-says "+(said&&typeof said==="object"?S.map(key=>String(said[key])):["nothing"]).join(" "),"crg-ledger-read "+rows("toolchain").length+" "+rows("baselineFailures").length+" "+batches.length];head.forEach(l=>console.log(l));console.log("crg-ledger-head",seal(head.join("|")));if(batches.length===1)show(1)}else if(what==="row"){if(!R.includes(section)||!(+place<rows(section).length))process.exit(1);console.log(line(section,+place))}else{if(!batches[+what-1])process.exit(1);show(+what)}`
+const LEDGER_READ_PROGRAM = `const fs=require("fs"),[file,what,section,place]=process.argv.slice(1);${LEDGER_SEAL_JS}${LEDGER_LINE_JS}const all=JSON.parse(fs.readFileSync(file,"utf8")),rows=key=>Array.isArray(all[key])?all[key]:[];const R=${JSON.stringify(LEDGER_ROW_SECTIONS)};const line=(key,i)=>{const text=lineSafe(JSON.stringify(rows(key)[i]));return "crg-ledger-row "+key+" "+i+" "+seal(key+" "+i+" "+text)+" "+text};const lines=R.flatMap(key=>rows(key).map((row,i)=>line(key,i)));const batches=[[]];let size=0;for(const l of lines){if(size&&size+l.length>${LEDGER_PIECE}){batches.push([]);size=0}batches[batches.length-1].push(l);size+=l.length}const show=n=>batches[n-1].forEach(l=>console.log(l));const isFinding=r=>!!r&&typeof r==="object"&&typeof r.file==="string"&&r.file!==""&&typeof r.rootCause==="string"&&r.rootCause!=="";if(what==="0"){const S=${JSON.stringify(LEDGER_SECTIONS)},said=all.counts;const head=["crg-ledger-rows "+S.map(key=>rows(key).length).join(" "),"crg-ledger-findings "+S.map(key=>rows(key).filter(isFinding).length).join(" "),"crg-ledger-says "+(said&&typeof said==="object"?S.map(key=>String(said[key])):["nothing"]).join(" "),"crg-ledger-read "+rows("toolchain").length+" "+rows("baselineFailures").length+" "+batches.length];head.forEach(l=>console.log(l));console.log("crg-ledger-head",seal(head.join("|")));if(batches.length===1)show(1)}else if(what==="row"){if(!R.includes(section)||!(+place<rows(section).length))process.exit(1);console.log(line(section,+place))}else{if(!batches[+what-1])process.exit(1);show(+what)}`
 // A LEDGER IS WRITTEN A ROW TO A LINE. It used to go as one JSON text cut into pieces, under
 // one seal per piece. A live run lost a whole ledger that way: the agent writing piece 22
 // of 24 changed one row of it on both tries, so the piece failed twice and nothing was
@@ -502,7 +514,7 @@ const ledgerWrite = patch => {
       shape.push(`${slot}:${many ? value.length : -1}`)
       for (const [place, row] of many ? value.map((v, i) => [String(i), v]) : [['-', value]]) {
         const name = `${slot} ${place}`
-        const text = fenceSafe(JSON.stringify(row))
+        const text = fenceSafe(lineSafe(JSON.stringify(row)))
         rows.push({ name, line: `crg-ledger-put ${name} ${textSeal(`${name} ${text}`)} ${text}` })
       }
     }

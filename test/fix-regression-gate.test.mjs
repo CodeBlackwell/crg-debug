@@ -442,7 +442,8 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // Re-pinned again, the ingest-ledger line alone: the ledger is now read by a fixed command
 // whose output the script checks, not returned whole by the agent. (And once more when that
 // command began to print how many rows are findings and what the ledger says it holds, under a seal,
-// and again when it began to print a row to a line, each under its own seal.)
+// and again when it began to print a row to a line, each under its own seal, and again when
+// it began to escape U+2028, U+2029 and U+0085 in each row, 2026-11-16.)
 // Re-pinned the commit:wave lines again when the commit brief began to forbid a trailer and
 // ask for the message that landed (2026-11-15).
 // Re-pinned the commit:wave lines when a wave began to commit per fixer: one wave commit of
@@ -452,7 +453,7 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // open test now takes that file back, and b1, b2, b4 and b5 each close again alone.
 const PINNED = {
   two: [
-    'ingest-ledger 53e11a083abd',
+    'ingest-ledger 882abb8b87c5',
     'fix-branch f0bdaf259764',
     'fix:alpha.py 419f675069f1',
     'fix:bravo.py 549822cdb48e',
@@ -462,7 +463,7 @@ const PINNED = {
     'commit:wave 5bf04a3287b0',
   ],
   busy: [
-    'ingest-ledger 6669b5a98551',
+    'ingest-ledger a9553c9c9101',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 086405ce8b20',
     'fix:bravo.py cb8e0fdab373',

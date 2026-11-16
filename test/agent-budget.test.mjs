@@ -13,7 +13,7 @@ import { sliceLedger } from '../lib/crg-debug.ledger-slice.mjs'
 
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
-const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, verdictRows, NO_VERDICT_REASON, AGENT_LIMIT_REASON, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, packLines, ledgerWrite, writeRowName, WRITE_ROWS_ALONE, LINE_OVERHEAD, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerRowsOf, ledgerReadOf, rowName, unreadNames, ROW_TRIES_ALONE, LEDGER_ROW_SECTIONS, ledgerDoubt, isFindingRow, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA }`)()
+const H = new Function(`${block}\nreturn { AGENT_LIMIT, DISCOVER_RESERVE, agentsLeft, reviewsThatFit, firstToReview, verdictRows, NO_VERDICT_REASON, AGENT_LIMIT_REASON, waveAgents, fixersThatFit, FIX_OPENING, FIX_CLOSING, COUPLED_AGENTS, LEDGER_PIECE, REASON_CAP, reasonText, ROW_GROWTH, ledgerBound, ledgerWriteAgents, textSeal, packLines, ledgerWrite, writeRowName, WRITE_ROWS_ALONE, LINE_OVERHEAD, fenceSafe, fence, ledgerParts, ledgerPartBrief, ledgerPartPath, ledgerRelayBrief, ledgerReadCommand, ledgerWriteCommand, ledgerWriteOf, ledgerManifestOf, ledgerRowsOf, ledgerReadOf, rowName, unreadNames, ROW_TRIES_ALONE, LEDGER_ROW_SECTIONS, ledgerDoubt, isFindingRow, sectionCounts, ledgerFailureLine, unreviewedNote, LEDGER_UNREPORTED, LEDGER_READ_PROGRAM, LEDGER_WRITE_PROGRAM, bucketVerdicts, GATE_SCHEMA, lineSafe, LEDGER_LINE_JS }`)()
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, bug, ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, bug, ledgerDisk }`)()
 
@@ -92,6 +92,38 @@ test('a stored reason is one line of at most the cap', () => {
   assert.equal(H.reasonText('  a\nb\r\n\tc  '), 'a b c')
   assert.equal(H.reasonText('x'.repeat(5000)).length, H.REASON_CAP)
   assert.equal(H.reasonText(null), '')
+  assert.equal(H.reasonText('a\u2028b\u2029c\u0085d'), 'a b c d', 'and the characters JS and other tools read as line ends are spaces too')
+})
+
+// VO2.1 lost a row whose reason the cap had cut to "... does not apply, becau": the agent
+// that wrote it out dropped the closing quote and brace each time, as if mending a sentence.
+test('a reason over the cap is cut at a word and says it was cut', () => {
+  const said = H.reasonText(`${'word '.repeat(200)}because`)
+  assert.ok(said.length <= H.REASON_CAP, `${said.length}`)
+  assert.ok(said.endsWith('word [cut]'), said.slice(-20))
+  assert.equal(H.reasonText('w'.repeat(H.REASON_CAP)), 'w'.repeat(H.REASON_CAP), 'a reason at the cap is kept whole')
+})
+
+// VO2.1 lost a row whose rootCause held a raw U+2028. JSON leaves it raw; the harness that
+// hands a brief to an agent broke the line there, and the write program's `(.*)$` stops at
+// it, so the row could not have been accepted however faithfully it was copied.
+test('a row holding U+2028, U+2029 or U+0085 is one ASCII-safe line both ways, and parses to the same value', () => {
+  const row = { file: 'a.py', rootCause: 'or \u2028 is \u2029 lost \u0085 here' }
+  assert.equal(H.lineSafe(JSON.stringify(row)), JSON.stringify(row).replace('\u2028', '\\u2028').replace('\u2029', '\\u2029').replace('\u0085', '\\u0085'))
+  const program = new Function(`${H.LEDGER_LINE_JS}return lineSafe`)()
+  for (const text of [JSON.stringify(row), 'plain', '\u2028\u2028']) assert.equal(program(text), H.lineSafe(text), 'the programs escape as the script does')
+
+  const dir = mkdtempSync(join(tmpdir(), 'crg-ledger-'))
+  const path = join(dir, 'ledger.json')
+  const ledger = { repoRoot: '/r', confirmedBugs: [row], deferred: [row], rejected: [], unreviewed: [] }
+  const write = H.ledgerWrite({ set: ledger })
+  assert.ok(write.rows.every(r => !/[\u0085\u2028\u2029]/.test(r.line)), 'no row line holds one raw')
+  H.ledgerParts(write).forEach((p, i) => writeFileSync(H.ledgerPartPath(path, i + 1), `${p}\n`))
+  const counts = H.sectionCounts(ledger)
+  assert.deepEqual(H.ledgerWriteOf(sh(H.ledgerWriteCommand(path, H.ledgerParts(write).length, write)), write, counts), { ok: true, missing: [] })
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), ledger, 'the file holds the characters themselves')
+  const read = H.ledgerRowsOf(sh(H.ledgerReadCommand(path, 0)))
+  assert.deepEqual(read.map(r => r.row), [row], 'and the row read back is whole')
 })
 
 test('lines are packed into pieces of at most the size asked, never cut, and join back', () => {
