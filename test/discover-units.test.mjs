@@ -185,7 +185,7 @@ const RELAYS = {
 }
 const FOUND = { file: 'src/auth.py:9', concern: 'security', symptom: 's', rootCause: 'check_token accepts an expired token', severity: 'High', whyRepro: 'w', confidence: 'high' }
 
-const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label === 'unit:auth.py:check_token' ? [FOUND] : []), groupRows = () => [] } = {}) => {
+const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label === 'unit:auth.py:check_token' ? [FOUND] : []) } = {}) => {
   const calls = []
   const logs = []
   const agent = async (prompt, opts = {}) => {
@@ -194,7 +194,6 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
     if (label === 'setup') return { graphStats: '4 files', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (label === 'map') return { overview: 'o', targets: TARGETS }
     if (label.startsWith('units:')) return relays[label] ?? null
-    if (label.startsWith('group:')) return { functions: groupRows(label, prompt) }
     if (label.startsWith('unit:')) {
       const rows = findings(label)
       return rows === null ? null : { findings: rows }
@@ -328,60 +327,4 @@ test('an unknown discover mode or an unusable maxUnits is refused before any age
   for (const discover of ['unit', 'files', '', 0, true]) await assert.rejects(start({ discover }), /Unknown discover mode .* — use 'concerns' \(the default\) or 'units'/)
   for (const maxUnits of [0, -1, 2.5, '500', NaN]) await assert.rejects(start({ discover: 'units', maxUnits }), /Unusable maxUnits .* — it must be a positive integer \(default 500\)/)
   assert.equal(ran, 0, 'validation happens before Phase 0')
-})
-
-// ---- group mode (unitsPerFinder): the sweep's knob ----------------------------------
-
-const GB = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
-const G = new Function(`${GB}\nreturn { groupUnits, evidencedRows, groupBrief, GROUP_SCHEMA, unitName }`)()
-const u = (name, parent, start, file = 'src/core.py') => ({ file, concern: 'backend-logic', name, parent, start, end: start + 3 })
-
-test('related groups stay inside one class and one file; order groups ignore the class', () => {
-  const units = [u('b', 'Opt', 30), u('main', '', 5), u('a', 'Opt', 10), u('c', 'Opt', 50), u('helper', '', 70), u('x', '', 1, 'src/other.py')]
-  const names = gs => gs.map(g => g.map(G.unitName))
-  assert.deepEqual(names(G.groupUnits(units, 2, 'related')), [['Opt.a', 'Opt.b'], ['Opt.c'], ['main', 'helper'], ['x']])
-  assert.deepEqual(names(G.groupUnits(units, 2, 'order')), [['main', 'Opt.a'], ['Opt.b', 'Opt.c'], ['helper'], ['x']])
-  assert.deepEqual(names(G.groupUnits(units, 1, 'related')), [['Opt.a'], ['Opt.b'], ['Opt.c'], ['main'], ['helper'], ['x']], 'size 1 is one function a finder')
-})
-
-test('a row is evidence only with its own command and its own output', () => {
-  const group = [u('a', 'Opt', 10), u('b', 'Opt', 30), u('c', 'Opt', 50)]
-  const rows = [
-    { name: 'Opt.a', command: "python - <<'EOF'\nOpt().a(1)\nEOF", observed: '1 -> 2' },
-    { name: 'Opt.b', command: 'python -c "print(1)"', observed: '1' }, // never calls b
-    { name: 'Opt.c', command: 'python -c "Opt().c()"', observed: '' }, // printed nothing
-    { name: 'Opt.z', command: 'python -c "Opt().z()"', observed: 'z' }, // not in the group
-  ]
-  assert.deepEqual(G.evidencedRows(rows, group).map(r => r.name), ['Opt.a'])
-  const copied = [{ name: 'Opt.a', command: 'a()', observed: 'ok' }, { name: 'Opt.b', command: 'b()', observed: 'ok' }]
-  assert.deepEqual(G.evidencedRows(copied, group), [], 'one output pasted under two functions proves neither')
-  assert.deepEqual(G.evidencedRows(null, group), [])
-})
-
-test('the group brief names every member and asks for one row each; its schema submits one property', () => {
-  const brief = G.groupBrief([u('a', 'Opt', 10), u('b', 'Opt', 30)], 'backend-logic', '/r', 'U')
-  assert.match(brief, /^You are auditing 2 function\(s\) in the repo at \/r\./)
-  assert.ok(brief.includes('- Opt.a (lines 10-13)\n- Opt.b (lines 30-33)'))
-  assert.match(brief, /Return one row per function in functions\[\]/)
-  assert.match(brief, /give no row to a function you did not run/)
-  assert.deepEqual(Object.keys(G.GROUP_SCHEMA.properties), ['functions'])
-})
-
-test('unitsPerFinder sends one finder per group, logs the evidence, and keeps every finding', async () => {
-  const groupRows = label => (label === 'group:auth.py:4'
-    ? [{ name: 'check_token', command: 'python -c "check_token(1)"', observed: 'True', verdict: 'defect', findings: [FOUND] }, { name: 'sign', command: 'python -c "print(2)"', observed: '2', verdict: 'matches', findings: [] }]
-    : [])
-  const { labels, logs, calls } = await unitsRun({ args: { unitsPerFinder: 2 }, groupRows })
-  assert.deepEqual(labels.filter(l => l.startsWith('group:') || l.startsWith('unit:')), ['group:core.py:1', 'group:core.py:2', 'group:core.py:3', 'group:auth.py:4'])
-  assert.ok(logs.includes('Units: 4 group(s) of up to 2 (related); 4 judged, 0 returned nothing; 1 of 5 function(s) evidenced; 1 finding(s)'))
-  assert.ok(logs.includes('Group 4: 1/2 evidenced, 2 row(s) — sign, check_token'))
-  assert.ok(logs.includes('Units: output tokens spent unavailable -> unavailable'))
-  assert.ok(labels.includes('refute:auth.py'), 'a group finding goes on to Verify like any other')
-  assert.equal(calls.find(c => c.label === 'group:auth.py:4').opts.agentType, 'Explore')
-})
-
-test('group mode is refused outside units mode, at a size below one, or with an unknown grouping', async () => {
-  for (const args of [{ unitsPerFinder: 0 }, { unitsPerFinder: 2.5 }, { discover: 'concerns', unitsPerFinder: 2 }, { unitsPerFinder: 2, grouping: 'random' }]) {
-    await assert.rejects(unitsRun({ args }), /unitsPerFinder|grouping/, JSON.stringify(args))
-  }
 })
