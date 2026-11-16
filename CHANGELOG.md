@@ -7,10 +7,6 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 ## [Unreleased]
 
 ### Added
-- **`discoverEffort` sets the unit finders' reasoning effort** (`crg-debug.js`). With
-  `discover: 'units'`, `discoverEffort: 'low'` (or medium, high, xhigh, max) is passed to every
-  one-function finder and to no other agent; left out, the finders inherit the session's effort as
-  before. An unusable value is refused before any agent starts.
 - **Each stage of `/crg-debug` can run on its own model** (`crg-debug.js`, the skill, the
   methodology). `--discover-model`, `--verify-model` and `--fix-model` put the finders, the
   reviewers and the fix phase on the model named; `--model` keeps its meaning and is the
