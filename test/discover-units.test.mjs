@@ -98,6 +98,10 @@ const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newlin
 // Re-pinned whole when D1 (finders handed functions in slices of 24) was reverted
 // (2026-11-14): each concern has one finder again, handed its files, so every label after
 // Discover and the logs and return moved with it.
+// Re-pinned when Verify came to run refute first and confirm only when it can still
+// matter (VO1, 2026-11-16): the confirms now start after the refutes, a finding refute
+// calls intentional gets no confirm, one log line is added, and one fewer agent starts.
+// The buckets are unchanged (checked by diffing the old and new runs' returns).
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -108,17 +112,16 @@ const PINNED = {
     'find:residual 23a5b4993cd3',
     'dedup 03bf8d255c1b',
     'refute:find_backend_logic.py b3fedbc100b3',
-    'confirm:find_backend_logic.py f9ff47321fdf',
     'refute:find_tests.py 4084e84e9390',
-    'confirm:find_tests.py 49d4484543f6',
     'refute:find_residual.py 480cb917ecf7',
-    'confirm:find_residual.py ac06bda651f2',
     'refute:z.py db2c9964acd7',
+    'confirm:find_backend_logic.py f9ff47321fdf',
+    'confirm:find_tests.py 49d4484543f6',
     'confirm:z.py dc045b6c9657',
     'persist:1 91762c8b7197',
     'persist:assemble 680f77918547',
-    'logs a8d8c006f68f',
-    'return d21dcaee4efd',
+    'logs 56222a6a67fd',
+    'return 3c2103878bdd',
   ],
   rich: [
     'setup 90104e291d00',
@@ -133,25 +136,23 @@ const PINNED = {
     'find:residual#2 62bd09f11294',
     'dedup 2e72ecdd2f81',
     'refute:find_backend_logic.py 76c9cf6892bc',
-    'confirm:find_backend_logic.py 06324b26dc4b',
     'refute:find_tests.py e48291f5078d',
-    'confirm:find_tests.py 66a66bc5bd3e',
     'refute:find_residual.py e28759570631',
-    'confirm:find_residual.py 5b07300642ef',
     'refute:find_backend_logic_.py 025d67443525',
-    'confirm:find_backend_logic_.py 7d2d6af9aab0',
     'refute:find_security_.py 3b62d1d58c76',
-    'confirm:find_security_.py 8ab6840273c9',
     'refute:find_tests_.py 37039ecabbc0',
-    'confirm:find_tests_.py 088b2c443995',
     'refute:find_residual_.py 7fa2eb1b3d93',
-    'confirm:find_residual_.py a4dcbdf22d85',
     'refute:z.py 1f7e46b1df06',
+    'confirm:find_backend_logic.py 06324b26dc4b',
+    'confirm:find_tests.py 66a66bc5bd3e',
+    'confirm:find_backend_logic_.py 7d2d6af9aab0',
+    'confirm:find_security_.py 8ab6840273c9',
+    'confirm:find_tests_.py 088b2c443995',
     'confirm:z.py dd4717d2929a',
     'persist:1 1ab6aaf6e7f9',
     'persist:assemble c6a51968f036',
-    'logs 240fd33e8e97',
-    'return 113bc0284e75',
+    'logs 9f4758659426',
+    'return ce23e9af9375',
   ],
 }
 

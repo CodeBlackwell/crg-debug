@@ -343,6 +343,11 @@ const bucketVerdicts = verified => {
   confirmedBugs.sort(severityOrder)
   return { confirmedBugs, deferred, rejected, unreviewed }
 }
+// The refute reviewer runs first. bucketVerdicts defers a finding that EITHER reviewer
+// calls intentional, whatever the other says, so once refute has said so the confirm
+// reviewer cannot change where the finding lands and is not started. A dead refute
+// (null) is not a verdict: confirm still runs, as when both started together.
+const needsConfirm = refute => !(refute && refute.classification === 'intentional')
 
 // ---- the agent limit ----------------------------------------------------------
 // A Workflow run may start AGENT_LIMIT agents; the runtime refuses the next one, and a
@@ -1616,7 +1621,7 @@ const readLedger = async path => {
   return { ...read, counts: manifest.counts, checked: !!manifest.says }
 }
 
-// ---- Verify: two reviewers per finding, for as many findings as the agents allow ----
+// ---- Verify: refute, then confirm when it can still matter, for as many findings as the agents allow ----
 const reviewer = (finding, stance, label) =>
   startAgent(reviewerBrief(finding, stance, repoRoot, SKILL, UNTRUSTED), { label, phase: 'Verify', schema: VERDICT_SCHEMA, model: models.verify })
 // `fixed` is what the ledger write that follows carries besides these findings: it sizes
@@ -1632,12 +1637,12 @@ const reviewFindings = async (findings, fixed) => {
   // in does not come out the same object and cannot be looked up by it.
   const reviewed = await parallel(
     findings.map((f, i) => [f, i]).filter(([, i]) => chosen.has(i)).map(([f, i]) => () =>
-      Promise.all([
-        reviewer(f, REFUTE_STANCE, `refute:${shortFile(f.file)}`),
-        reviewer(f, REPRODUCE_STANCE, `confirm:${shortFile(f.file)}`),
-      ]).then(([refute, confirm]) => ({ i, refute, confirm })),
+      reviewer(f, REFUTE_STANCE, `refute:${shortFile(f.file)}`).then(async refute =>
+        ({ i, refute, confirm: needsConfirm(refute) ? await reviewer(f, REPRODUCE_STANCE, `confirm:${shortFile(f.file)}`) : null })),
     ),
   )
+  const skipped = reviewed.filter(row => row && !needsConfirm(row.refute)).length
+  if (skipped) log(`Verify: ${skipped} confirm reviewer(s) not started — refute had already called the finding intentional, which defers it whatever confirm says`)
   return bucketVerdicts(verdictRows(findings, chosen, reviewed))
 }
 

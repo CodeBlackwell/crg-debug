@@ -11,7 +11,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
+  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, needsConfirm, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -583,4 +583,27 @@ test('fromFindingsError refuses an oversized list or field rather than trimming 
   assert.match(H.fromFindingsError([...atCap, FINDING]), /holds 201 findings; the cap is 200/)
   assert.equal(H.fromFindingsError([{ ...FINDING, whyRepro: 'x'.repeat(H.FINDING_TEXT_CAP) }]), '')
   assert.match(H.fromFindingsError([{ ...FINDING, whyRepro: 'x'.repeat(H.FINDING_TEXT_CAP + 1) }]), /^row 0 /)
+})
+
+test('needsConfirm: skipping confirm after an intentional refute never changes a bucket', () => {
+  const kinds = [
+    null,
+    { confirmed: false, classification: 'intentional', reason: 'documented' },
+    { confirmed: true, classification: 'intentional', reason: 'documented, and real' },
+    { confirmed: true, classification: 'real-bug', reason: 'traced' },
+    { confirmed: false, classification: 'real-bug', reason: 'guarded' },
+    { confirmed: false, classification: 'not-a-bug', reason: 'no path' },
+  ]
+  let skipped = 0
+  for (const [r, refute] of kinds.entries()) {
+    for (const [c, confirm] of kinds.entries()) {
+      const f = { file: `src/m${r}${c}.py:1`, rootCause: 'x', severity: 'High' }
+      const both = H.bucketVerdicts([{ f, refute, confirm }])
+      const ran = H.needsConfirm(refute) ? confirm : null
+      if (!H.needsConfirm(refute)) skipped++
+      assert.deepEqual(H.bucketVerdicts([{ f, refute, confirm: ran }]), both, `refute ${r}, confirm ${c}`)
+    }
+  }
+  assert.equal(skipped, 12, 'confirm is skipped exactly when refute said intentional')
+  assert.equal(H.needsConfirm(null), true, 'a dead refute is not a verdict: confirm still runs')
 })

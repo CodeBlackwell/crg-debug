@@ -429,7 +429,7 @@ test('two findings, four verdicts, copies back from parallel: one row per findin
     { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fromFindings: two },
     (prompt, opts) => agent(prompt, opts).then(copyOf), copyingParallel, m => logs.push(m), undefined, () => {},
   )
-  assert.deepEqual(labels.filter(l => /^(refute|confirm):/.test(l)), ['refute:m0.py', 'confirm:m0.py', 'refute:m1.py', 'confirm:m1.py'], 'both reviewers of both findings answered')
+  assert.deepEqual(labels.filter(l => /^(refute|confirm):/.test(l)), ['refute:m0.py', 'refute:m1.py', 'confirm:m0.py', 'confirm:m1.py'], 'both reviewers of both findings answered, each refute first')
   assert.deepEqual(result.unreviewed, [], 'a finding with two verdicts is not unreviewed')
   assert.deepEqual(result.confirmedBugs, [two[0]])
   assert.deepEqual(result.rejected, [{ ...two[1], refutationReason: 'traced refute:m1.py | traced confirm:m1.py' }])
@@ -607,9 +607,9 @@ test('a run from a ledger with fix off finishes the review: each row moves to th
   const { result, labels, logs, calls, disk } = await fixRun(SRC, { bugs: [], args: { fix: false }, on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
   assert.deepEqual(labels, [
     'ingest-ledger',
-    'refute:m100.py', 'confirm:m100.py', 'refute:m101.py', 'confirm:m101.py', 'refute:m102.py', 'confirm:m102.py', 'refute:m103.py', 'confirm:m103.py',
+    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m102.py', 'confirm:m103.py',
     'persist:1', 'persist:assemble',
-  ])
+  ], 'm101\'s refute called it intentional, so its confirm never started')
   assert.equal(result.mode, 'review-from-ledger')
   assert.equal(result.fix, null)
   assert.deepEqual(result.confirmedBugs.map(b => b.file), ['src/alpha.py:10', 'src/m100.py:101'])
@@ -639,12 +639,12 @@ test('a run from a ledger with fix off finishes the review: each row moves to th
 
 test('a fix run from a ledger reviews what is unreviewed first, then fixes what is confirmed, the new bug among them', async () => {
   const { result, labels, logs, disk } = await fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
-  assert.deepEqual(labels.slice(0, 12), [
+  assert.deepEqual(labels.slice(0, 11), [
     'tree-status', 'ingest-ledger',
-    'refute:m100.py', 'confirm:m100.py', 'refute:m101.py', 'confirm:m101.py', 'refute:m102.py', 'confirm:m102.py', 'refute:m103.py', 'confirm:m103.py',
+    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m102.py', 'confirm:m103.py',
     'persist:1', 'persist:assemble',
   ])
-  assert.deepEqual(labels.slice(12, 17), ['fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:m100.py'])
+  assert.deepEqual(labels.slice(11, 16), ['fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:m100.py'])
   assert.equal(result.mode, 'fix-from-ledger')
   assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/m100.py:101'])
   assert.equal(result.unreviewed.length, 1)

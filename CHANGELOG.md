@@ -6,6 +6,14 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Changed
+- **Verify runs the refute reviewer first and the confirm reviewer only when it can still
+  matter** (`crg-debug.js`). A finding either reviewer calls intentional is deferred whatever
+  the other says, so after an intentional refute the confirm reviewer is not started. Every
+  finding lands in the bucket it did before; on three recorded click runs this skips 201, 153
+  and 60 confirm reviewers, 37 to 44% of reviewer spend. Verify takes longer, since a finding
+  refute does not defer waits for its second reviewer. The run logs how many were skipped.
+
 ### Added
 - **Each stage of `/crg-debug` can run on its own model** (`crg-debug.js`, the skill, the
   methodology). `--discover-model`, `--verify-model` and `--fix-model` put the finders, the

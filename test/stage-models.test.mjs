@@ -150,7 +150,7 @@ test('a haiku finder and a sonnet verify: each phase runs on its own model', asy
   const want = { ...every('opus'), discover: 'haiku', verify: 'sonnet' }
   assertByPhase(calls, want)
   assert.ok(calls.some(c => c.label.startsWith('find:')) && calls.some(c => c.label === 'dedup'), 'the finders and the merge both ran')
-  assert.deepEqual(calls.filter(c => c.phase === 'Verify').map(c => c.label), ['refute:a.py', 'confirm:a.py', 'refute:a.py', 'confirm:a.py', 'persist:1', 'persist:assemble'])
+  assert.deepEqual(calls.filter(c => c.phase === 'Verify').map(c => c.label), ['refute:a.py', 'refute:a.py', 'confirm:a.py', 'confirm:a.py', 'persist:1', 'persist:assemble'])
   assert.deepEqual(result.models, want)
   assert.deepEqual(ledgerOf().models, want)
   assert.equal(ledgerOf().model, 'opus', 'the run model is still recorded beside them')
