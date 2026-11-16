@@ -320,11 +320,20 @@ test('units mode is a single pass and says so when rounds were asked for', async
   assert.ok(!labels.some(l => l.includes('#')))
 })
 
-test('an unknown discover mode or an unusable maxUnits is refused before any agent runs', async () => {
+test('an unknown discover mode, an unusable maxUnits or discoverEffort is refused before any agent runs', async () => {
   let ran = 0
   const run = new AsyncFunction('args', 'agent', 'parallel', 'log', 'workflow', 'phase', SRC.replace(/^export\s+const\s+meta/m, 'const meta'))
   const start = args => run({ repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/M.md', ...args }, async () => { ran++ }, async () => [], () => {}, undefined, () => {})
   for (const discover of ['unit', 'files', '', 0, true]) await assert.rejects(start({ discover }), /Unknown discover mode .* — use 'concerns' \(the default\) or 'units'/)
   for (const maxUnits of [0, -1, 2.5, '500', NaN]) await assert.rejects(start({ discover: 'units', maxUnits }), /Unusable maxUnits .* — it must be a positive integer \(default 500\)/)
+  for (const discoverEffort of ['', 'LOW', 'minimal', 1, null]) await assert.rejects(start({ discover: 'units', discoverEffort }), /Unusable discoverEffort .* — use low, medium, high, xhigh or max/)
   assert.equal(ran, 0, 'validation happens before Phase 0')
+})
+
+test('discoverEffort sets the unit finders\' effort and nothing else; absent, no effort is passed', async () => {
+  const low = (await unitsRun({ args: { model: 'sonnet', discoverEffort: 'low' } })).calls
+  assert.ok(low.filter(c => c.label.startsWith('unit:')).length > 0)
+  for (const c of low) assert.equal(c.opts.effort, c.label.startsWith('unit:') ? 'low' : undefined, c.label)
+  const plain = (await unitsRun({ args: { model: 'sonnet' } })).calls
+  assert.ok(plain.every(c => !('effort' in c.opts)))
 })
