@@ -1020,3 +1020,41 @@ test('with no room for even one wave the fix phase does not start, and writes no
   assert.equal(result.ledgerSaved, true, 'the review it did is on disk')
   assert.ok(logs.some(l => /^Fix not started: 30 confirmed bug\(s\) left unfixed — agent limit \(\d+ of 1000 agents left, a first wave needs 19\)\. Run again from the ledger to fix them\.$/.test(l)))
 })
+
+test('refutes that say intentional leave agents unspent, and further rounds review findings with them', async () => {
+  // Two of every three findings are called intentional by their refute, so their confirm
+  // never starts: the agents one round leaves are spent on the next ranked findings.
+  const num = label => Number(/m(\d+)\.py/.exec(label)[1])
+  const verdict = label => (label.startsWith('refute:') && num(label) % 3
+    ? { confirmed: false, reason: 'documented', classification: 'intentional' }
+    : { confirmed: true, reason: 'traced it', classification: 'real-bug' })
+  const { calls, logs, result, ledger } = await sweep({ verdict })
+  assert.ok(calls.length <= H.AGENT_LIMIT, `${calls.length} agents`)
+  assert.ok(!logs.some(l => /not started|failed:/.test(l)), 'no agent was asked for that the run could not have')
+  const refutes = calls.filter(c => c.label.startsWith('refute:'))
+  const confirms = calls.filter(c => c.label.startsWith('confirm:'))
+  assert.ok(refutes.length > 450, `${refutes.length} reviewed: more than one round of two-reviewer room would allow`)
+  assert.equal(confirms.length, refutes.filter(c => num(c.label) % 3 === 0).length, 'every finding refute did not defer got its confirm')
+  assert.ok(logs.some(l => /^Verify: reviewed in \d+ rounds/.test(l)), 'the rounds are logged')
+  const reviewed = result.confirmedBugs.length + result.deferred.length
+  assert.equal(reviewed, refutes.length)
+  assert.equal(result.unreviewed.length, 600 - reviewed)
+  assert.deepEqual(result.rejected, [])
+  if (result.unreviewed.length) {
+    const worstReviewed = Math.max(...[...result.confirmedBugs, ...result.deferred].map(b => RANK[b.severity]))
+    const bestSkipped = Math.min(...result.unreviewed.map(b => RANK[b.severity]))
+    assert.ok(bestSkipped >= worstReviewed, 'later rounds still take the highest-ranked findings left')
+  }
+  assert.equal(result.ledgerSaved, true)
+  assert.equal(ledger.confirmedBugs.length + ledger.deferred.length + ledger.rejected.length + ledger.unreviewed.length, 600)
+})
+
+test('a round never starts a refute without room for its confirm', async () => {
+  // Every refute lets its finding through, so every finding needs both reviewers: the run
+  // must stop at pairs, never leaving a finding with only a refute because confirm had no room.
+  const { calls, result } = await sweep()
+  const refutes = calls.filter(c => c.label.startsWith('refute:')).length
+  const confirms = calls.filter(c => c.label.startsWith('confirm:')).length
+  assert.equal(confirms, refutes)
+  assert.equal(result.confirmedBugs.length, refutes)
+})

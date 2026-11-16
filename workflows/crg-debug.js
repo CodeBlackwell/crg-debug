@@ -1625,24 +1625,32 @@ const readLedger = async path => {
 const reviewer = (finding, stance, label) =>
   startAgent(reviewerBrief(finding, stance, repoRoot, SKILL, UNTRUSTED), { label, phase: 'Verify', schema: VERDICT_SCHEMA, model: models.verify })
 // `fixed` is what the ledger write that follows carries besides these findings: it sizes
-// the agents held back for that write. When not every finding can have its two reviewers,
-// the highest-ranked do (firstToReview) and the rest are returned unreviewed. The
-// reviewers start in the order the findings have.
+// the agents held back for that write. Findings are reviewed in rounds, highest-ranked first
+// (firstToReview). Each round takes as many as fit if every one needed both reviewers, so a
+// refute is never started without room for its confirm; a refute that says intentional
+// leaves its confirm unspent, and the next round uses what is left. What no round could
+// take is returned unreviewed. The reviewers start in the order the findings have.
 const reviewFindings = async (findings, fixed) => {
   const writeAgents = ledgerWriteAgents(ledgerBound(fixed, findings))
-  const chosen = firstToReview(findings, reviewsThatFit(findings.length, agentsLeft(agentsStarted), writeAgents))
+  const ranked = [...firstToReview(findings, findings.length)]
+  const chosen = new Set()
+  const reviewed = []
   agentsHeld = writeAgents
-  // A thunk hands back the finding's place in `findings`, never the finding: what
-  // parallel() returns is a copy of what the thunk resolved with, so an object that went
-  // in does not come out the same object and cannot be looked up by it.
-  const reviewed = await parallel(
-    findings.map((f, i) => [f, i]).filter(([, i]) => chosen.has(i)).map(([f, i]) => () =>
-      reviewer(f, REFUTE_STANCE, `refute:${shortFile(f.file)}`).then(async refute =>
-        ({ i, refute, confirm: needsConfirm(refute) ? await reviewer(f, REPRODUCE_STANCE, `confirm:${shortFile(f.file)}`) : null })),
-    ),
-  )
+  let rounds = 0
+  for (let room; (room = reviewsThatFit(ranked.length - chosen.size, agentsLeft(agentsStarted), writeAgents)); rounds++) {
+    const batch = ranked.filter(i => !chosen.has(i)).slice(0, room).sort((i, j) => i - j)
+    batch.forEach(i => chosen.add(i))
+    // A thunk hands back the finding's place in `findings`, never the finding: what
+    // parallel() returns is a copy of what the thunk resolved with, so an object that went
+    // in does not come out the same object and cannot be looked up by it.
+    reviewed.push(...await parallel(batch.map(i => () =>
+      reviewer(findings[i], REFUTE_STANCE, `refute:${shortFile(findings[i].file)}`).then(async refute =>
+        ({ i, refute, confirm: needsConfirm(refute) ? await reviewer(findings[i], REPRODUCE_STANCE, `confirm:${shortFile(findings[i].file)}`) : null })),
+    )))
+  }
+  if (rounds > 1) log(`Verify: reviewed in ${rounds} rounds — each took what fit with room for both reviewers, and the next used what intentional refutes left unspent`)
   const skipped = reviewed.filter(row => row && !needsConfirm(row.refute)).length
-  if (skipped) log(`Verify: ${skipped} confirm reviewer(s) not started — refute had already called the finding intentional, which defers it whatever confirm says`)
+  if (skipped) log(`Verify: ${skipped} confirm reviewer(s) skipped — refute had already called the finding intentional, which defers it whatever confirm says`)
   return bucketVerdicts(verdictRows(findings, chosen, reviewed))
 }
 

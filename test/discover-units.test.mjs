@@ -101,7 +101,8 @@ const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newlin
 // Re-pinned when Verify came to run refute first and confirm only when it can still
 // matter (VO1, 2026-11-16): the confirms now start after the refutes, a finding refute
 // calls intentional gets no confirm, one log line is added, and one fewer agent starts.
-// The buckets are unchanged (checked by diffing the old and new runs' returns).
+// The buckets are unchanged (checked by diffing the old and new runs' returns). Re-pinned
+// the logs when that line came to say "skipped" rather than "not started" (2026-11-16).
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -120,7 +121,7 @@ const PINNED = {
     'confirm:z.py dc045b6c9657',
     'persist:1 91762c8b7197',
     'persist:assemble 680f77918547',
-    'logs 56222a6a67fd',
+    'logs 71fa212f2d4e',
     'return 3c2103878bdd',
   ],
   rich: [
@@ -151,7 +152,7 @@ const PINNED = {
     'confirm:z.py dd4717d2929a',
     'persist:1 1ab6aaf6e7f9',
     'persist:assemble c6a51968f036',
-    'logs 9f4758659426',
+    'logs 875a5cfe4c27',
     'return ce23e9af9375',
   ],
 }

@@ -11,8 +11,12 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   matter** (`crg-debug.js`). A finding either reviewer calls intentional is deferred whatever
   the other says, so after an intentional refute the confirm reviewer is not started. Every
   finding lands in the bucket it did before; on three recorded click runs this skips 201, 153
-  and 60 confirm reviewers, 37 to 44% of reviewer spend. Verify takes longer, since a finding
-  refute does not defer waits for its second reviewer. The run logs how many were skipped.
+  and 60 confirm reviewers, 37 to 44% of reviewer spend. Verify does not take longer: fewer reviewers queue for the same slots. The run logs how many were skipped.
+- **Verify reviews in rounds until the agents or the findings run out** (`crg-debug.js`). Each
+  round takes the highest-ranked findings that fit with room for both reviewers, so a refute
+  is never started without room for its confirm; the agents an intentional refute leaves
+  unspent go to the next round. Before, the budget reserved two reviewers per finding up
+  front, and a click detection left 93 findings unreviewed with 168 agents unused.
 
 ### Added
 - **Each stage of `/crg-debug` can run on its own model** (`crg-debug.js`, the skill, the
