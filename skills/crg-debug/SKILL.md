@@ -1,7 +1,7 @@
 ---
 name: crg-debug
 description: CRG-driven parallel debug + fix sweep. Builds/refreshes the code-review-graph, maps hotspots, fans out parallel discovery over disjoint concerns, verifies adversarially, and fixes confirmed bugs in TDD waves over file-disjoint sets. Each validated fixer's work is committed on its own on a crg-debug/fix-* branch and the graph re-ingested; never pushed. Use for /crg-debug, "debug this repo with CRG", "graph-driven bug sweep".
-argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--from-ledger <path>] [--prose] [--model <name>] [--discover-model <name>] [--verify-model <name>] [--fix-model <name>]"
+argument-hint: "[repo path] [focus area/file/issue] [--issue <ref>] [--detect-only] [--from-ledger <path>] [--prose] [--model <name>] [--discover-model <name>] [--verify-model <name>] [--fix-model <name>] [--ledger-model <name>]"
 user_invocable: true
 ---
 
@@ -30,13 +30,15 @@ skill's directory):
   `https://github.com/<owner>/<repo>/issues/<n>` URL, `<owner>/<repo>#<n>`, or a bare `#<n>`
   (bare resolves against the repo's `origin` remote). See *Resolve the issue* below.
 - **model**: defaults to `haiku`. `--model <name>` overrides it (e.g. `--model opus`); `--model session` inherits the session model.
-- **stageModels**: `--discover-model <name>`, `--verify-model <name>` and `--fix-model <name>` each put
-  one stage on its own model (`session` inherits the session model). Collect the flags that were given
-  into `stageModels`, keyed `discover` / `verify` / `fix`: `--discover-model haiku --verify-model sonnet`
+- **stageModels**: `--discover-model <name>`, `--verify-model <name>`, `--fix-model <name>` and
+  `--ledger-model <name>` each put one stage on its own model (`session` inherits the session model).
+  Collect the flags that were given into `stageModels`, keyed `discover` / `verify` / `fix` / `ledger`: `--discover-model haiku --verify-model sonnet`
   is `stageModels: { discover: 'haiku', verify: 'sonnet' }`. A stage with no flag gets no key and runs on
   `model`, which stays the fallback for every stage. Discover is the finders and the merge of what they
-  found, Verify the two reviewers of each finding and the ledger write, Fix everything from the first
-  fix to the final gate.
+  found, Verify the two reviewers of each finding, Fix everything from the first fix to the final gate,
+  and ledger the agents that write the ledger to disk and read it back. Those only copy sealed text, and
+  every row is checked by its seal, so `--ledger-model haiku` is safe and cheap when Verify runs on a
+  larger model.
 - **fix**: `true` by default. `--detect-only` sets `fix=false` (read-only ledger, no edits).
 - **fromLedger**: `--from-ledger <path>` ingests a prior run's `.crg-debug/ledger.json` and skips
   Discover. If the ledger lists findings as `unreviewed`, the run reviews those first and saves the

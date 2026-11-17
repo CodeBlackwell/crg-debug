@@ -14,12 +14,15 @@ const { fixRun, bug } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fi
 const { ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { ledgerDisk }`)()
 const DISK = ledgerDisk(SRC)
 
-const every = model => ({ graph: model, map: model, discover: model, verify: model, fix: model })
+const every = model => ({ graph: model, map: model, discover: model, verify: model, fix: model, ledger: model })
+// The agents that write and read the ledger run on the ledger stage, whatever phase they report under.
+const LEDGER_LABEL = /^(persist:|ingest-ledger)/
+const stageOf = call => (LEDGER_LABEL.test(call.label) ? 'ledger' : call.phase.toLowerCase())
 
 // ---- the helper ------------------------------------------------------------------
 
 test('with no map every phase runs on the run model, haiku by default', () => {
-  assert.deepEqual(H.STAGE_KEYS, ['graph', 'map', 'discover', 'verify', 'fix'])
+  assert.deepEqual(H.STAGE_KEYS, ['graph', 'map', 'discover', 'verify', 'fix', 'ledger'])
   assert.deepEqual(H.stageModelsOf(undefined, undefined), every('haiku'))
   assert.deepEqual(H.stageModelsOf(null, undefined), every('haiku'))
   assert.deepEqual(H.stageModelsOf({}, 'opus'), every('opus'))
@@ -64,8 +67,8 @@ test("the record names every phase's model, 'session' where it inherits", () => 
 test('the log note is empty unless a phase differs from the run model', () => {
   assert.equal(H.stageModelsNote(every('haiku'), 'haiku'), '')
   assert.equal(H.stageModelsNote(every(undefined), undefined), '')
-  assert.equal(H.stageModelsNote({ ...every('haiku'), verify: 'sonnet' }, 'haiku'), ' · stage models: graph haiku, map haiku, discover haiku, verify sonnet, fix haiku')
-  assert.equal(H.stageModelsNote({ ...every('haiku'), fix: undefined }, 'haiku'), ' · stage models: graph haiku, map haiku, discover haiku, verify haiku, fix session')
+  assert.equal(H.stageModelsNote({ ...every('haiku'), verify: 'sonnet' }, 'haiku'), ' · stage models: graph haiku, map haiku, discover haiku, verify sonnet, fix haiku, ledger haiku')
+  assert.equal(H.stageModelsNote({ ...every('haiku'), fix: undefined }, 'haiku'), ' · stage models: graph haiku, map haiku, discover haiku, verify haiku, fix session, ledger haiku')
 })
 
 // ---- every agent call, read from the script ---------------------------------------
@@ -88,7 +91,8 @@ test('every agent call takes the model of the phase it names', () => {
     const [, phase, model] = found
     assert.ok(H.STAGE_KEYS.includes(phase.toLowerCase()), `${phase} has no stageModels key`)
     const isRetry = SESSION_RETRIES.some(label => line.includes(`label: ${label},`))
-    assert.equal(model, isRetry ? 'undefined' : `models.${phase.toLowerCase()}`, line.trim())
+    const isLedger = /label: (`persist:|'persist:assemble')/.test(line) || line.includes('ledgerReadCommand(')
+    assert.equal(model, isRetry ? 'undefined' : isLedger ? 'models.ledger' : `models.${phase.toLowerCase()}`, line.trim())
   }
   for (const label of SESSION_RETRIES) assert.equal(options.filter(line => line.includes(`label: ${label},`)).length, 1, `${label} is still in the script`)
 })
@@ -119,7 +123,7 @@ const sweep = async (args, dead = []) => {
   return { calls, logs, result }
 }
 const assertByPhase = (calls, want) => {
-  for (const call of calls) assert.equal(call.model, want[call.phase.toLowerCase()], `${call.label} ran in ${call.phase}`)
+  for (const call of calls) assert.equal(call.model, want[stageOf(call)], `${call.label} ran in ${call.phase}`)
 }
 // The ledger the last run wrote, as the script's own write program left it on the stand-in disk.
 const ledgerOf = () => JSON.parse(DISK.files.get('/tmp/crg-fixture/.crg-debug/ledger.json'))
@@ -154,7 +158,7 @@ test('a haiku finder and a sonnet verify: each phase runs on its own model', asy
   assert.deepEqual(result.models, want)
   assert.deepEqual(ledgerOf().models, want)
   assert.equal(ledgerOf().model, 'opus', 'the run model is still recorded beside them')
-  assert.match(logs[0], / · model: opus · stage models: graph opus, map opus, discover haiku, verify sonnet, fix opus/)
+  assert.match(logs[0], / · model: opus · stage models: graph opus, map opus, discover haiku, verify sonnet, fix opus, ledger opus/)
 })
 
 test("a phase set to null or 'session' inherits while the others keep the run model", async () => {
@@ -183,7 +187,7 @@ test('a map the script cannot read stops the run before any agent starts', async
   await refused('sonnet', /Unusable stageModels "sonnet"/)
 })
 
-test('a fix-from-ledger run reads the ledger on the graph model and fixes on the fix model', async () => {
+test('a fix-from-ledger run reads the ledger on the ledger model and fixes on the fix model', async () => {
   const { calls, logs, result } = await fixRun(SRC, { bugs: [bug('b1', 'src/alpha.py'), bug('b2', 'src/bravo.py')], args: { stageModels: { graph: 'opus', fix: 'sonnet' } } })
   const flat = calls.map(c => ({ label: c.label, phase: c.opts.phase, model: c.opts.model }))
   assert.deepEqual(phasesOf(flat), ['Graph', 'Fix'])
@@ -191,12 +195,23 @@ test('a fix-from-ledger run reads the ledger on the graph model and fixes on the
   assert.deepEqual(flat.filter(c => c.phase === 'Graph').map(c => c.label), ['tree-status', 'ingest-ledger'])
   assert.ok(flat.filter(c => c.phase === 'Fix').length > 8, 'the fixers, gates, commits and checks all ran')
   assert.deepEqual(result.models, { ...every('haiku'), graph: 'opus', fix: 'sonnet' })
-  assert.match(logs.find(line => line.includes('fix-from-ledger')), / · model: haiku · stage models: graph opus, map haiku, discover haiku, verify haiku, fix sonnet$/)
+  assert.match(logs.find(line => line.includes('fix-from-ledger')), / · model: haiku · stage models: graph opus, map haiku, discover haiku, verify haiku, fix sonnet, ledger haiku$/)
 })
 
 test('a Verify replay over supplied findings reviews on the verify model', async () => {
   const { calls, result } = await sweep({ fromFindings: [FINDING], stageModels: { verify: 'sonnet' } })
-  assert.deepEqual(calls.map(c => `${c.label} ${c.model}`), ['setup haiku', 'refute:a.py sonnet', 'confirm:a.py sonnet', 'persist:1 sonnet', 'persist:assemble sonnet'])
+  assert.deepEqual(calls.map(c => `${c.label} ${c.model}`), ['setup haiku', 'refute:a.py sonnet', 'confirm:a.py sonnet', 'persist:1 haiku', 'persist:assemble haiku'])
   assert.equal(result.mode, 'verify-from-findings')
   assert.deepEqual(result.models, { ...every('haiku'), verify: 'sonnet' })
+})
+
+test('the agents that write and read the ledger run on the ledger stage, and nothing else does', () => {
+  const src = readFileSync(new URL('../workflows/crg-debug.js', import.meta.url), 'utf8')
+  const uses = [...src.matchAll(/label: [^\n]*?model: models\.ledger/g)].map(m => m[0])
+  assert.equal(uses.length, 2, 'the persist pieces and the assemble step')
+  assert.ok(uses.some(u => u.includes('persist:${from + i + 1}')) && uses.some(u => u.includes("'persist:assemble'")))
+  assert.ok(/ledgerReadCommand\(path, \.\.\.words\)\), \{ label, phase: 'Graph', schema: GATE_SCHEMA, model: models\.ledger \}/.test(src), 'and the reads')
+  assert.equal([...src.matchAll(/models\.ledger/g)].length, 3)
+  assert.deepEqual(H.stageModelsOf({ ledger: 'claude-haiku-5-5' }, 'sonnet'), { graph: 'sonnet', map: 'sonnet', discover: 'sonnet', verify: 'sonnet', fix: 'sonnet', ledger: 'claude-haiku-5-5' })
+  assert.equal(H.stageModelsOf(undefined, 'sonnet').ledger, 'sonnet', 'unset, it runs on the run model as every stage does')
 })

@@ -107,6 +107,8 @@ const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newlin
 // calls intentional gets no confirm, one log line is added, and one fewer agent starts.
 // The buckets are unchanged (checked by diffing the old and new runs' returns). Re-pinned
 // the logs when that line came to say "skipped" rather than "not started" (2026-11-16).
+// Re-pinned when the ledger agents got a stage of their own (stageModels.ledger, 2026-11-16):
+// the return's models and the ledger's models row gained a ledger entry, nothing else.
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -124,10 +126,10 @@ const PINNED = {
     'confirm:find_tests.py 82f38d8a94c6',
     'confirm:find_residual.py 6066bb84cad7',
     'confirm:z.py 95fce7232fbf',
-    'persist:1 b321ffe6a6b4',
-    'persist:assemble fd6f51ee7b25',
+    'persist:1 3947be60f68d',
+    'persist:assemble acd528271a61',
     'logs a8d8c006f68f',
-    'return c1a07a5d0581',
+    'return 469c33d34df6',
   ],
   rich: [
     'setup 90104e291d00',
@@ -156,10 +158,10 @@ const PINNED = {
     'confirm:find_tests_.py df0c48d55fed',
     'confirm:find_residual_.py b61251c43a35',
     'confirm:z.py a5c480b3ca2b',
-    'persist:1 0cc487757826',
-    'persist:assemble 562c64eebdc2',
+    'persist:1 cd24bf5c8c87',
+    'persist:assemble 6279ed4996d3',
     'logs 39db231665fb',
-    'return b763acd7c7fc',
+    'return bdc5aca0d5cc',
   ],
 }
 

@@ -6,6 +6,13 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Added
+- **`stageModels.ledger` (`--ledger-model`): the ledger's writers and readers on a model of
+  their own** (`crg-debug.js`, skill). These agents only copy sealed text, and every row is
+  checked by its seal and retried alone when it fails. On click's real 283-row ledger, Haiku
+  wrote every row byte-exact after one retry piece, for $0.33 where Sonnet had cost $2.80.
+  Unset, the ledger stage runs on the run's model, as every stage does.
+
 ### Fixed
 - **A thrown agent failure no longer ends a crg-agentsmd, crg-ui-prep or farm-bypass run**
   (`crg-agentsmd.js`, `crg-ui-prep.js`, `crg-debug.farm-bypass.js`). These three still called

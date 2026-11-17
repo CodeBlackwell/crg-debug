@@ -30,8 +30,11 @@ const resolveModel = m => (m === null || m === 'session' ? undefined : m || 'hai
 // One model per phase. `stageModels` maps a phase, in lower case, to a model name, or to
 // null / 'session' to inherit the session's; a phase it leaves out runs on the run's
 // `model`. A map that is not understood is refused whole: a mistyped phase would run on
-// the wrong model and the run would report the right one.
-const STAGE_KEYS = ['graph', 'map', 'discover', 'verify', 'fix']
+// the wrong model and the run would report the right one. `ledger` is not a phase: it is
+// the agents that write the ledger to disk and read it back, which only copy sealed text,
+// so they can run on a cheaper model than the reviewers (writeup 031: Haiku wrote a click
+// ledger of 283 rows for $0.33 where Sonnet had cost $2.80, every row checked by its seal).
+const STAGE_KEYS = ['graph', 'map', 'discover', 'verify', 'fix', 'ledger']
 const stageModelsOf = (stageModels, model) => {
   const given = stageModels == null ? {} : stageModels
   if (typeof given !== 'object' || Array.isArray(given)) {
@@ -45,7 +48,7 @@ const stageModelsOf = (stageModels, model) => {
   }
   return Object.fromEntries(STAGE_KEYS.map(stage => [stage, resolveModel(stage in given ? given[stage] : model)]))
 }
-// The same five as the ledger and the return record them: an inherited model has no name
+// The same six as the ledger and the return record them: an inherited model has no name
 // to pass an agent, so it is written 'session'.
 const stageModelNames = models => Object.fromEntries(STAGE_KEYS.map(stage => [stage, models[stage] || 'session']))
 // For the opening log line: empty unless some phase runs on a model other than the run's.
@@ -1782,10 +1785,10 @@ const saveLedger = async (patch, counts, onto) => {
   for (let attempt = 0; ; attempt++) {
     const from = parts
     parts += todo.length
-    await parallel(todo.map((piece, i) => () => startAgent(ledgerPartBrief(ledgerPath, from + i + 1, piece), { label: `persist:${from + i + 1}`, phase: 'Verify', model: models.verify })))
+    await parallel(todo.map((piece, i) => () => startAgent(ledgerPartBrief(ledgerPath, from + i + 1, piece), { label: `persist:${from + i + 1}`, phase: 'Verify', model: models.ledger })))
     const relay = await startAgent(
       ledgerRelayBrief(`Put the ${parts} piece(s) of a ledger together at ${ledgerPath}.`, 'assemble', ledgerWriteCommand(ledgerPath, parts, write, onto)),
-      { label: 'persist:assemble', phase: 'Verify', schema: GATE_SCHEMA, model: models.verify },
+      { label: 'persist:assemble', phase: 'Verify', schema: GATE_SCHEMA, model: models.ledger },
     )
     const seen = ledgerWriteOf(relay, write, counts)
     if (seen.ok) return ''
@@ -1808,7 +1811,7 @@ const saveLedger = async (patch, counts, onto) => {
 // counts of its own.
 const readLedger = async path => {
   const ask = (what, label, ...words) =>
-    startAgent(ledgerRelayBrief(what, 'read', ledgerReadCommand(path, ...words)), { label, phase: 'Graph', schema: GATE_SCHEMA, model: models.graph })
+    startAgent(ledgerRelayBrief(what, 'read', ledgerReadCommand(path, ...words)), { label, phase: 'Graph', schema: GATE_SCHEMA, model: models.ledger })
   let first = null
   let manifest = null
   for (let attempt = 1; attempt <= 2 && !manifest; attempt++) {
