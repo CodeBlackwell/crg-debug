@@ -2078,6 +2078,7 @@ ${LEDGER_NOTE}
 ${PRIOR_FAILURE_NOTE}${takenBackNote(bugs, regressionStrikes)}
 Toolchain (use the owning package's commands):
 ${tcLine()}
+${RUN_RULE}
 
 For EACH bug above, run the TDD micro-cycle (mandatory, in order; full discipline in ${SKILL}):
 1. RED — write a test asserting the bug's INTENDED CORRECT outcome (derived from its symptom/whyRepro: the misbehaving input must now yield the right output, and the reported error/symptom must STOP happening). Run it with the narrowest path filter; confirm it FAILS for the right reason (the actual bug). NEVER encode the symptom as expected — a test that asserts the current wrong output, or that the reported exception is raised (e.g. assert_raises on the very error the bug describes), codifies the bug and is INVALID. If your test passes before any edit, first check it is asserting the corrected behavior and not the present one; rewrite it if so. Only set redObserved=false (source left untouched) once a test that genuinely encodes the CORRECT behavior still passes — i.e. the bug truly is not present.
@@ -2103,6 +2104,7 @@ ${LEDGER_NOTE}
 ${PRIOR_FAILURE_NOTE}${takenBackNote(bugs, regressionStrikes)}
 Toolchain:
 ${tcLine()}
+${RUN_RULE}
 
 Apply the MINIMAL source fix for EVERY bug at once. Then write ONE test that exercises the shared behavior and passes ONLY when all of them are fixed — do NOT try to isolate a single bug. Run that test AND the owning package's existing test command; both must be green. Report each bug's greenObserved and put the SAME shared narrowest testCommand on every row. ${CONTAINERIZED_TEST_NOTE}`,
     { label: 'fix:coupled', phase: 'Fix', schema: fixSchemaFor(bugs), model: models.fix },
@@ -2122,6 +2124,7 @@ Changed files (blast-radius roots):
 ${roots}
 Toolchain:
 ${tcLine()}
+${RUN_RULE}
 Report the REAL exit code and output tail for every command actually run — do not interpret pass/fail. Return one results[] row per command: {command, exitCode, stdout, stderr}.`,
     { label: 'gate', phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
@@ -2134,6 +2137,7 @@ const bugGateAgent = (b, cmd) =>
   startAgent(
     `Independently confirm the fix for bug "${b.bugId}" in the repo at ${repoRoot}. Do NOT edit any file. Run EXACTLY this command and report its REAL exit code and output tail — do not interpret pass/fail. For a compiled language, compile and run exactly as written.
 ${fence(cmd)}
+${RUN_RULE}
 Return one results[] row: {command, exitCode, stdout, stderr}.`,
     { label: `gate:${shortFile(b.file)}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )
@@ -2177,6 +2181,12 @@ const uncommitAgent = () =>
 const regressionRows = commandRule => `Return one runs[] row per command actually run: {command, exitCode, passed, failing}. ${commandRule} exitCode = its REAL exit code — do not interpret pass/fail. passed = the number of tests the runner's own summary says passed for that command, copied from its summary line (\`412 passed\` -> 412): do not count tests yourself, do not estimate, and do not add skipped or expected-failure tests to it. When the runner printed no such number, or more than one summary for the command, passed = -1. failing = one {id, output} for EVERY test the runner reported as failed or errored (a file that failed to import or collect counts, under the path the runner printed): id = the runner's own test id exactly as it printed it, with no status word and no message; output = the last lines of that test's failure output, at most 20. A command where every test passed has failing: [].`
 const BASELINE_COMMAND_RULE = 'command = the exact string you ran, complete and unabbreviated: it is run again, character for character, after every fix wave, so a label or a shortened form here breaks every later check.'
 const RERUN_COMMAND_RULE = 'For a step-1 command, command = JUST its id (c1, c2, …) — do not copy the command text. For a step-2 command, command = the exact string you ran.'
+// How every agent runs a test, build or typecheck command (writeup 030). Piped into tail
+// with the terminal as its input, a click suite that passes in a second sat idle on a
+// terminal read for twelve minutes, three times in one run, while the agent waited on it
+// by process name. The limit is just under the shell tool's longest foreground wait.
+const RUN_LIMIT_S = 590
+const RUN_RULE = `How to run every test, build or typecheck command: first run \`mktemp -d\` once and keep the directory it prints, D, as your own (agents running beside you have theirs). Write each command exactly as given into a file of its own, D/run-<n>.sh, then run it in the foreground as \`timeout ${RUN_LIMIT_S} sh D/run-<n>.sh < /dev/null > D/run-<n>.log 2>&1; echo "exit=$?"\` (leave off \`timeout ${RUN_LIMIT_S}\` only where \`command -v timeout\` finds nothing), with your shell tool's own time limit at its maximum, and read the log file back. Its exit code is the one echoed; 124 means the time limit stopped it, so report 124. Never pipe a command into tail, head, grep or anything else, never run it in the background, and never wait on, list or kill processes by name (no pgrep, pkill or killall): other agents' runs share this machine.`
 const RUN_TO_COMPLETION = 'TO COMPLETION — never stop at the first failure: no -x, --exitfirst, --maxfail, --bail or other fail-fast flag'
 const fileList = files => {
   const unique = [...new Set((files || []).filter(Boolean))]
@@ -2192,6 +2202,7 @@ Files about to be fixed (blast-radius roots):
 ${fileList(files)}
 Toolchain:
 ${tcLine()}
+${RUN_RULE}
 ${regressionRows(BASELINE_COMMAND_RULE)}`,
     { label: 'regress:baseline', phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
   )
@@ -2205,7 +2216,8 @@ ${commands.map((c, i) => `${commandId(i)}:\n${fence(c)}`).join('\n')}
 Files touched:
 ${fileList(touched)}
 Toolchain:
-${tcLine()}${alreadyFailing.length ? `\nThese tests were already failing before any fix. When one of them fails again, write its id exactly as it is written here:\n${fence(alreadyFailing.join('\n'))}` : ''}
+${tcLine()}
+${RUN_RULE}${alreadyFailing.length ? `\nThese tests were already failing before any fix. When one of them fails again, write its id exactly as it is written here:\n${fence(alreadyFailing.join('\n'))}` : ''}
 ${regressionRows(RERUN_COMMAND_RULE)}`,
     { label: `regress:${tag.replace(/\s+/g, '')}${pass ? `:${pass}` : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
   )
@@ -2241,6 +2253,7 @@ const checksAgent = (label, when, checks) =>
   startAgent(
     `Run the typecheck and build commands of the repo at ${repoRoot}, ${when}. Do NOT edit any file. Run EXACTLY these ${checks.length} command(s), each verbatim and to completion; add no flag and drop none. A command whose tool is not installed is still run and its exit code reported as it is — do not install anything and do not skip it. Each is given under a short id:
 ${checks.map(c => `${c.id}:\n${fence(c.command)}`).join('\n')}
+${RUN_RULE}
 Return one results[] row per command: command = JUST its id (k1, k2, …) — do not copy the command text; exitCode = its REAL exit code — do not interpret pass/fail; stdout and stderr = the last lines it printed, at most 20 each.`,
     { label: `checks:${label}`, phase: 'Fix', schema: GATE_SCHEMA, model: models.fix },
   )

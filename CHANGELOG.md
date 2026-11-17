@@ -6,6 +6,14 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- **Fix-phase agents run tests without a terminal, to a file, under a time limit**
+  (`crg-debug.js`). Every fix, gate, regression and checks agent now writes each command to a
+  file in its own `mktemp -d` directory and runs it as `timeout 590 sh … < /dev/null > log 2>&1`,
+  then reads the log. They no longer pipe a run into `tail`, background it, or wait on and kill
+  processes by name. On a click fix run, three regression checks each sat twelve minutes on a
+  suite that passes in a second, about 37 of the run's 52 minutes.
+
 ## [0.32.0] - 2026-11-16
 
 ### Changed

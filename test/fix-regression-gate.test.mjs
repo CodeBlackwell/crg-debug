@@ -451,45 +451,48 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // Re-pinned the fix lines when the brief began to ask for one new test file per bug, and the
 // whole busy list (2026-11-15): its stub writes all five alpha tests into one file, so b3's
 // open test now takes that file back, and b1, b2, b4 and b5 each close again alone.
+// Re-pinned the fix and gate lines when every brief that runs a test, build or typecheck
+// command gained the rule for
+// running a command (stdin from /dev/null, output to a file, a time limit), 2026-11-16.
 const PINNED = {
   two: [
     'ingest-ledger 882abb8b87c5',
     'fix-branch f0bdaf259764',
-    'fix:alpha.py 419f675069f1',
-    'fix:bravo.py 549822cdb48e',
-    'gate:alpha.py c4a75d839022',
-    'gate:bravo.py 675eb1af41ab',
+    'fix:alpha.py 1cfc828880e1',
+    'fix:bravo.py eae7df02fd88',
+    'gate:alpha.py 22f9409c7d85',
+    'gate:bravo.py 3101c365264b',
     'commit:wave 974aab4a3936',
     'commit:wave 5bf04a3287b0',
   ],
   busy: [
     'ingest-ledger a9553c9c9101',
     'fix-branch 5093eaa3874e',
-    'fix:alpha.py 086405ce8b20',
-    'fix:bravo.py cb8e0fdab373',
-    'gate:alpha.py c301198eb706',
-    'gate:alpha.py d1f02c0c2d10',
-    'gate:alpha.py f3d457292a95',
-    'gate:alpha.py a945067a9f5e',
-    'gate:bravo.py e1397314abe4',
+    'fix:alpha.py 56f7b5347ca8',
+    'fix:bravo.py a7bdeb4e28f7',
+    'gate:alpha.py b049a8457e37',
+    'gate:alpha.py 17c22684f9be',
+    'gate:alpha.py 95d6252c0528',
+    'gate:alpha.py d8295b54342d',
+    'gate:bravo.py 614100198da5',
     'commit:wave cd48fbe54531',
-    'fix:alpha.py ed132f521bd6',
-    'gate:alpha.py c301198eb706',
+    'fix:alpha.py c64088e4e318',
+    'gate:alpha.py b049a8457e37',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 85d171a78caa',
-    'gate:alpha.py d1f02c0c2d10',
+    'fix:alpha.py 15893f4bb529',
+    'gate:alpha.py 17c22684f9be',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 7df25d5a9069',
-    'gate:alpha.py a945067a9f5e',
+    'fix:alpha.py 84d6b11b57d8',
+    'gate:alpha.py d8295b54342d',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 2e01408df551',
-    'gate:alpha.py 3a4d9c8155d1',
-    'gate:alpha.py f3d457292a95',
-    'fix:alpha.py faaeeee4c5ba',
-    'gate:alpha.py 3a4d9c8155d1',
+    'fix:alpha.py 31828ad9c32a',
+    'gate:alpha.py a2fa59fbbccd',
+    'gate:alpha.py 95d6252c0528',
+    'fix:alpha.py 6239eb60601e',
+    'gate:alpha.py a2fa59fbbccd',
     'commit:wave 2004fb596429',
-    'fix:coupled ad532a83e120',
-    'gate:alpha.py fdb94e5ea4dc',
+    'fix:coupled 365d64f77551',
+    'gate:alpha.py 83f4d0d7b6ab',
   ],
 }
 
@@ -966,4 +969,16 @@ test('a fix whose own test fails once the blamed fix is gone goes back alone, an
     on: { regress: script(runs(), runs(EXISTING), runs({ id: 'tests/test_other.py::test_x' })), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }) },
   })
   assert.equal(unowned.result.fix.regressionGate.waves[0].outcome, 'wave restored', 'a failure no bug of the wave owns still costs the wave')
+})
+
+// Writeup 030: a suite piped into tail, with the terminal as its input, sat idle for twelve
+// minutes three times in one run while agents waited on it by process name.
+test('every agent that runs a test, build or typecheck command is told to run it without a terminal, to a file, under a time limit', () => {
+  const src = readFileSync(new URL('../workflows/crg-debug.js', import.meta.url), 'utf8')
+  const briefOf = name => { const at = src.indexOf(`\nconst ${name} = `); return src.slice(at, src.indexOf('\nconst ', at + 1)) }
+  for (const name of ['fixAgent', 'fixAgentCoupled', 'bugGateAgent', 'gateAgent', 'regressionBaselineAgent', 'regressionRerunAgent', 'checksAgent'])
+    assert.ok(briefOf(name).includes('${RUN_RULE}'), `${name} carries the run rule`)
+  const rule = src.slice(src.indexOf('const RUN_RULE = '), src.indexOf('\n', src.indexOf('const RUN_RULE = ')))
+  for (const part of ['< /dev/null', '2>&1', 'mktemp -d', 'timeout ${RUN_LIMIT_S}', 'Never pipe', 'never run it in the background', 'pgrep, pkill or killall'])
+    assert.ok(rule.includes(part), `the rule says ${part}`)
 })
