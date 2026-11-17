@@ -169,6 +169,14 @@ test('the relay brief hands over a fenced command and asks for everything it pri
   assert.ok(!H.LEDGER_READ_PROGRAM.includes('\n') && !H.LEDGER_WRITE_PROGRAM.includes('\n'), 'and each is one line')
 })
 
+// wfl-click-TR1.1: both read agents typed the program's `\u2028` escape into their JSON tool call
+// unescaped, so JSON decoded it to the raw character and node could not parse the program,
+// six tries in six. An agent retypes these programs; with no backslash there is nothing to escape.
+test('neither ledger program holds a backslash, so retyping it into a tool call cannot change it', () => {
+  assert.ok(!H.LEDGER_READ_PROGRAM.includes('\\'), 'the read program')
+  assert.ok(!H.LEDGER_WRITE_PROGRAM.includes('\\'), 'the write program')
+})
+
 // ---- what the script reads from a relay ----------------------------------------------
 
 const WRITE = H.ledgerWrite({ set: { confirmedBugs: [{ a: 1 }, { a: 2 }] } })

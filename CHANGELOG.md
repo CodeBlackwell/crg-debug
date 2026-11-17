@@ -7,6 +7,11 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 ## [Unreleased]
 
 ### Fixed
+- **A run from a saved ledger can read it again** (`crg-debug.js`). 0.32.0's ledger programs
+  escaped line-break characters with backslash escapes, and an agent retypes each program into
+  a JSON tool call. On a click fix run both reading agents wrote the escapes unescaped, so the
+  program no longer parsed, six tries in six, and the run stopped before fixing anything.
+  Neither program holds a backslash now; the characters they need are built from their codes.
 - **Fix-phase agents run tests without a terminal, to a file, under a time limit**
   (`crg-debug.js`). Every fix, gate, regression and checks agent now writes each command to a
   file in its own `mktemp -d` directory and runs it as `timeout 590 sh … < /dev/null > log 2>&1`,

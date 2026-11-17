@@ -456,7 +456,7 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // running a command (stdin from /dev/null, output to a file, a time limit), 2026-11-16.
 const PINNED = {
   two: [
-    'ingest-ledger 882abb8b87c5',
+    'ingest-ledger a6954c1dfabc',
     'fix-branch f0bdaf259764',
     'fix:alpha.py 66d5a1adec79',
     'fix:bravo.py 48fcca7ea951',
@@ -466,7 +466,7 @@ const PINNED = {
     'commit:wave 5bf04a3287b0',
   ],
   busy: [
-    'ingest-ledger a9553c9c9101',
+    'ingest-ledger 3ed203d62ea2',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 068d465207d2',
     'fix:bravo.py ac0daf040a16',
