@@ -217,12 +217,12 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
   return { calls, logs, res, labels: calls.map(c => c.label) }
 }
 
-test('units mode lists each mapped source file once, then runs one finder per function, ranked first', async () => {
+test('units mode lists each mapped source file once, then runs one finder per function, by path and line', async () => {
   const { labels } = await unitsRun()
   assert.deepEqual(labels, [
     'setup', 'map',
     'units:src/core.py', 'units:src/auth.py', 'units:src/empty.py',
-    'unit:core.py:Command.invoke', 'unit:core.py:Context.exit', 'unit:core.py:main', 'unit:auth.py:sign', 'unit:auth.py:check_token',
+    'unit:auth.py:sign', 'unit:auth.py:check_token', 'unit:core.py:Context.exit', 'unit:core.py:main', 'unit:core.py:Command.invoke',
     'refute:auth.py', 'confirm:auth.py', 'persist:1', 'persist:assemble',
   ], 'no concern finder, residual pass or test-file lister; a single finding skips the dedup agent')
 })
@@ -308,8 +308,8 @@ test('the script counts what was listed, kept, judged and found', async () => {
 
 test('maxUnits caps the finders and the log says what was dropped', async () => {
   const { labels, logs } = await unitsRun({ args: { maxUnits: 2 } })
-  assert.deepEqual(labels.filter(l => l.startsWith('unit:')), ['unit:core.py:Command.invoke', 'unit:core.py:Context.exit'])
-  assert.ok(logs.includes('Units: 5 listed in 3 file(s) -> 2 to audit, 3 dropped by maxUnits=2 (src/core.py: 1, src/auth.py: 2)'))
+  assert.deepEqual(labels.filter(l => l.startsWith('unit:')), ['unit:auth.py:sign', 'unit:auth.py:check_token'])
+  assert.ok(logs.includes('Units: 5 listed in 3 file(s) -> 2 to audit, 3 dropped by maxUnits=2 (src/core.py: 3)'))
 })
 
 test('a lister that dies is logged and the run goes on with the rest', async () => {

@@ -66,6 +66,11 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   with the refusing reviewer's `conflictNote` and a reason, and the closing line counts them.
   When every confirmed finding is conflicted the fix phase reports `fix.notStarted` instead of
   returning no fix result. Nothing about which findings are fixed has changed.
+- **Over the unit cap, the units audited are fixed by rule, not by Map's ranking**
+  (`crg-debug.js`). When a listing holds more than `maxUnits` functions, library code comes
+  first, then examples, docs, scripts and benchmarks, each by file path and line. On click
+  (575 listed, 500 kept) the dropped functions used to change from run to run with the
+  ranking; now the same listing always audits the same functions.
 
 ## [0.34.1] - 2026-11-21
 

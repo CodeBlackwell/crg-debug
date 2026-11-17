@@ -330,46 +330,44 @@ test('gateUnusable: rows without a test command are ignored, not counted as gate
 
 const unit = (file, name, start, parent = '') => ({ file, concern: 'backend-logic', name, parent, start, end: start + 5 })
 const namesOf = units => units.map(u => `${u.file}:${H.unitName(u)}`)
-const MAP = [
-  { file: 'src/core.py', concern: 'backend-logic', functions: ['invoke', 'Context.exit'] },
-  { file: 'tests/test_core.py', concern: 'tests', functions: ['test_invoke'] },
-  { file: './src/utils.py', concern: 'backend-logic', functions: ['echo'] },
-  { file: 'src/bare.py', concern: 'security' },
-]
 const LISTED = [
   unit('src/bare.py', 'late', 50), unit('src/bare.py', 'early', 2),
   unit('src/utils.py', 'style', 90), unit('src/utils.py', 'ECHO', 200), unit('src/utils.py', 'open_file', 10),
   unit('src/core.py', 'main', 400), unit('src/core.py', 'exit', 300, 'Context'), unit('src/core.py', 'invoke', 350, 'Command'), unit('src/core.py', 'abort', 5),
 ]
 
-test('orderUnits puts map-ranked functions first, in map order, then the rest by file and line', () => {
-  const { kept, dropped } = H.orderUnits(LISTED, MAP, 500)
+test('orderUnits orders by file path, then line, whatever order the listing came in', () => {
+  const { kept, dropped } = H.orderUnits(LISTED, 500)
   assert.deepEqual(namesOf(kept), [
-    'src/core.py:Command.invoke', 'src/core.py:Context.exit', 'src/utils.py:ECHO',
-    'src/core.py:abort', 'src/core.py:main', 'src/utils.py:open_file', 'src/utils.py:style', 'src/bare.py:early', 'src/bare.py:late',
+    'src/bare.py:early', 'src/bare.py:late', 'src/core.py:abort', 'src/core.py:Context.exit', 'src/core.py:Command.invoke', 'src/core.py:main',
+    'src/utils.py:open_file', 'src/utils.py:style', 'src/utils.py:ECHO',
   ])
   assert.deepEqual(dropped, [])
+  assert.deepEqual(namesOf(H.orderUnits([...LISTED].reverse(), 500).kept), namesOf(kept), 'the same listing in any order gives the same units')
 })
 
-test('orderUnits ranks a method by its bare name or by Parent.name, and same-named methods by line', () => {
-  const targets = [{ file: 'a.py', concern: 'backend-logic', functions: ['Writer.flush', '__init__'] }]
-  const units = [unit('a.py', '__init__', 80, 'Writer'), unit('a.py', 'flush', 120, 'Reader'), unit('a.py', '__init__', 10, 'Reader'), unit('a.py', 'flush', 60, 'Writer')]
-  assert.deepEqual(namesOf(H.orderUnits(units, targets, 500).kept), ['a.py:Writer.flush', 'a.py:Reader.__init__', 'a.py:Writer.__init__', 'a.py:Reader.flush'])
+// Writeup 031: Map's ranking chose what the cap dropped, differently each run, and on click
+// it dropped library functions while it kept examples.
+test('orderUnits keeps library code before examples, docs, scripts and benchmarks', () => {
+  const units = [unit('examples/aliases/aliases.py', 'cli', 1), unit('docs/conf.py', 'setup', 1), unit('src/click/_winconsole.py', 'write', 50),
+    unit('scripts/release.py', 'main', 1), unit('benchmarks/b.py', 'run', 1), unit('src/click/core.py', 'invoke', 9), unit('src/click/tools/x.py', 'f', 1)]
+  const { kept, dropped } = H.orderUnits(units, 3)
+  assert.deepEqual(namesOf(kept), ['src/click/_winconsole.py:write', 'src/click/core.py:invoke', 'src/click/tools/x.py:f'], 'a tools folder is library code')
+  assert.deepEqual(namesOf(dropped), ['benchmarks/b.py:run', 'docs/conf.py:setup', 'examples/aliases/aliases.py:cli', 'scripts/release.py:main'])
 })
 
 test('orderUnits keeps the first maxUnits and returns the rest as dropped', () => {
-  const { kept, dropped } = H.orderUnits(LISTED, MAP, 4)
-  assert.deepEqual(namesOf(kept), ['src/core.py:Command.invoke', 'src/core.py:Context.exit', 'src/utils.py:ECHO', 'src/core.py:abort'])
+  const { kept, dropped } = H.orderUnits(LISTED, 4)
+  assert.deepEqual(namesOf(kept), ['src/bare.py:early', 'src/bare.py:late', 'src/core.py:abort', 'src/core.py:Context.exit'])
   assert.equal(dropped.length, 5)
   assert.deepEqual([...kept, ...dropped].map(u => u.start).sort((x, y) => x - y), LISTED.map(u => u.start).sort((x, y) => x - y), 'nothing is lost or duplicated')
-  assert.equal(H.tallyByFile(dropped), 'src/core.py: 1, src/utils.py: 2, src/bare.py: 2')
-  assert.equal(H.orderUnits(LISTED, MAP, 9).dropped.length, 0, 'a cap equal to the list drops nothing')
+  assert.equal(H.tallyByFile(dropped), 'src/core.py: 2, src/utils.py: 3')
+  assert.equal(H.orderUnits(LISTED, 9).dropped.length, 0, 'a cap equal to the list drops nothing')
 })
 
 test('orderUnits returns nothing for nothing listed', () => {
-  assert.deepEqual(H.orderUnits([], MAP, 500), { kept: [], dropped: [] })
-  assert.deepEqual(H.orderUnits(null, MAP, 500), { kept: [], dropped: [] })
-  assert.deepEqual(namesOf(H.orderUnits([unit('x.py', 'b', 9), unit('x.py', 'a', 1)], [], 500).kept), ['x.py:a', 'x.py:b'], 'no map: file order then line')
+  assert.deepEqual(H.orderUnits([], 500), { kept: [], dropped: [] })
+  assert.deepEqual(H.orderUnits(null, 500), { kept: [], dropped: [] })
 })
 
 test('listedUnits keeps only rows in the asked file that are not tests', () => {
