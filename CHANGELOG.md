@@ -13,6 +13,12 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   then reads the log. They no longer pipe a run into `tail`, background it, or wait on and kill
   processes by name. On a click fix run, three regression checks each sat twelve minutes on a
   suite that passes in a second, about 37 of the run's 52 minutes.
+- **A fixer's test may not wait for input, and one bug's own test runs under two minutes**
+  (`crg-debug.js`). The twelve-minute hangs were a fixer's own test: it opened a
+  pseudo-terminal and read it, and whether the read returned depended on timing, so its gate
+  passed and later whole-suite runs blocked on it. Fixers are now told a test must never read a
+  terminal, stdin or an unwritten pipe without its own timeout, and a bug's gate runs its test
+  under a 120 s limit, so a test that can block fails and its bug does not close.
 
 ## [0.32.0] - 2026-11-16
 

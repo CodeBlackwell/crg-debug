@@ -458,41 +458,41 @@ const PINNED = {
   two: [
     'ingest-ledger 882abb8b87c5',
     'fix-branch f0bdaf259764',
-    'fix:alpha.py 1cfc828880e1',
-    'fix:bravo.py eae7df02fd88',
-    'gate:alpha.py 22f9409c7d85',
-    'gate:bravo.py 3101c365264b',
+    'fix:alpha.py 66d5a1adec79',
+    'fix:bravo.py 48fcca7ea951',
+    'gate:alpha.py de7a62f7843c',
+    'gate:bravo.py c3cb5bae12ec',
     'commit:wave 974aab4a3936',
     'commit:wave 5bf04a3287b0',
   ],
   busy: [
     'ingest-ledger a9553c9c9101',
     'fix-branch 5093eaa3874e',
-    'fix:alpha.py 56f7b5347ca8',
-    'fix:bravo.py a7bdeb4e28f7',
-    'gate:alpha.py b049a8457e37',
-    'gate:alpha.py 17c22684f9be',
-    'gate:alpha.py 95d6252c0528',
-    'gate:alpha.py d8295b54342d',
-    'gate:bravo.py 614100198da5',
+    'fix:alpha.py 068d465207d2',
+    'fix:bravo.py ac0daf040a16',
+    'gate:alpha.py 5fff255db671',
+    'gate:alpha.py be353dfc00ad',
+    'gate:alpha.py ea8e6951ff12',
+    'gate:alpha.py f9ec38447b70',
+    'gate:bravo.py ec7cb42870f3',
     'commit:wave cd48fbe54531',
-    'fix:alpha.py c64088e4e318',
-    'gate:alpha.py b049a8457e37',
+    'fix:alpha.py 29a910013d80',
+    'gate:alpha.py 5fff255db671',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 15893f4bb529',
-    'gate:alpha.py 17c22684f9be',
+    'fix:alpha.py 9b2e814fdb2d',
+    'gate:alpha.py be353dfc00ad',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 84d6b11b57d8',
-    'gate:alpha.py d8295b54342d',
+    'fix:alpha.py 92c07a804c60',
+    'gate:alpha.py f9ec38447b70',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 31828ad9c32a',
-    'gate:alpha.py a2fa59fbbccd',
-    'gate:alpha.py 95d6252c0528',
-    'fix:alpha.py 6239eb60601e',
-    'gate:alpha.py a2fa59fbbccd',
+    'fix:alpha.py 255be8242b0d',
+    'gate:alpha.py d1a15ffbdaaf',
+    'gate:alpha.py ea8e6951ff12',
+    'fix:alpha.py 83e6c2a019d8',
+    'gate:alpha.py d1a15ffbdaaf',
     'commit:wave 2004fb596429',
-    'fix:coupled 365d64f77551',
-    'gate:alpha.py 83f4d0d7b6ab',
+    'fix:coupled 8f1c8100af82',
+    'gate:alpha.py 7659138b9def',
   ],
 }
 
@@ -977,8 +977,11 @@ test('every agent that runs a test, build or typecheck command is told to run it
   const src = readFileSync(new URL('../workflows/crg-debug.js', import.meta.url), 'utf8')
   const briefOf = name => { const at = src.indexOf(`\nconst ${name} = `); return src.slice(at, src.indexOf('\nconst ', at + 1)) }
   for (const name of ['fixAgent', 'fixAgentCoupled', 'bugGateAgent', 'gateAgent', 'regressionBaselineAgent', 'regressionRerunAgent', 'checksAgent'])
-    assert.ok(briefOf(name).includes('${RUN_RULE}'), `${name} carries the run rule`)
-  const rule = src.slice(src.indexOf('const RUN_RULE = '), src.indexOf('\n', src.indexOf('const RUN_RULE = ')))
-  for (const part of ['< /dev/null', '2>&1', 'mktemp -d', 'timeout ${RUN_LIMIT_S}', 'Never pipe', 'never run it in the background', 'pgrep, pkill or killall'])
+    assert.ok(/\$\{(RUN_RULE|runRule\(GATE_LIMIT_S\))\}/.test(briefOf(name)), `${name} carries the run rule`)
+  const rule = src.slice(src.indexOf('const runRule = '), src.indexOf('\n', src.indexOf('const runRule = ')))
+  for (const part of ['< /dev/null', '2>&1', 'mktemp -d', 'timeout ${limit}', 'Never pipe', 'never run it in the background', 'pgrep, pkill or killall'])
     assert.ok(rule.includes(part), `the rule says ${part}`)
+  assert.ok(briefOf('bugGateAgent').includes('${runRule(GATE_LIMIT_S)}'), "one bug's own test runs under the short limit")
+  assert.ok(Number(/const GATE_LIMIT_S = (\d+)/.exec(src)[1]) < Number(/const RUN_LIMIT_S = (\d+)/.exec(src)[1]))
+  for (const name of ['fixAgent', 'fixAgentCoupled']) assert.ok(briefOf(name).includes('${NEVER_BLOCK}'), `${name} is told a test must never wait for input`)
 })
