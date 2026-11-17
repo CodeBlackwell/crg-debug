@@ -1,6 +1,6 @@
 {
   "name": "crg-debug",
-  "version": "0.31.2",
+  "version": "0.32.0",
   "private": true,
   "description": "Tests for the crg-debug plugin's pure helpers and issue-ref parsing",
   "scripts": {

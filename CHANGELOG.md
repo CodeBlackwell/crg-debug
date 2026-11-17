@@ -6,6 +6,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-16
+
 ### Changed
 - **Verify runs the refute reviewer first and the confirm reviewer only when it can still
   matter** (`crg-debug.js`). A finding either reviewer calls intentional is deferred whatever
