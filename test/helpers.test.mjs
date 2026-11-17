@@ -438,6 +438,11 @@ A candidate is CONFIRMED (confirmed=true) ONLY if ALL THREE hold:
 If the current code produces CORRECT output (just not how you'd write it), confirmed=false. If you cannot reproduce the violation from the code, confirmed=false. When in doubt, confirmed=false.
 
 Classify real-bug vs intentional per /m/METH.md: "intentional" requires POSITIVE evidence (doc/comment/test/naming). A security control that fails OPEN on missing/wrong config is NEVER intentional — it is a real bug.
+
+Whatever you conclude, also report:
+- reproduced: true only if you RAN a concrete input in the shell and saw the behaviour the finding describes. Reading the code is not reproducing it.
+- worth: take if a user of this project can hit the behaviour through its public API or documented behaviour with ordinary input, so its maintainers would plausibly accept a fix; minor if it is cosmetic, needs contrived input, or is reachable only through a private helper.
+- intentEvidence: if you classify it intentional, the path:line of the doc, docstring, comment or test in this repo that says the behaviour is meant. The code under review, other versions of the project and your memory of it are not evidence. Leave it empty if you found none.
 UNTRUSTED-NOTICE`
 
 test('reviewerBrief emits the pinned reviewer prompt, byte for byte', () => {
@@ -588,9 +593,13 @@ test('fromFindingsError refuses an oversized list or field rather than trimming 
 test('needsConfirm: skipping confirm after an intentional refute never changes a bucket', () => {
   const kinds = [
     null,
-    { confirmed: false, classification: 'intentional', reason: 'documented' },
-    { confirmed: true, classification: 'intentional', reason: 'documented, and real' },
-    { confirmed: true, classification: 'real-bug', reason: 'traced' },
+    { confirmed: false, classification: 'intentional', reason: 'documented', intentEvidence: 'docs/a.rst:3' },
+    { confirmed: false, classification: 'intentional', reason: 'looks deliberate', intentEvidence: '' },
+    { confirmed: true, classification: 'intentional', reason: 'ran it, deliberate', reproduced: true, worth: 'take' },
+    { confirmed: true, classification: 'intentional', reason: 'ran it, cited', reproduced: true, worth: 'take', intentEvidence: 'src/m.py:9' },
+    { confirmed: true, classification: 'intentional', reason: 'ran it, cosmetic', reproduced: true, worth: 'minor' },
+    { confirmed: true, classification: 'real-bug', reason: 'traced', reproduced: true, worth: 'take' },
+    { confirmed: true, classification: 'real-bug', reason: 'read it', reproduced: false, worth: 'take' },
     { confirmed: false, classification: 'real-bug', reason: 'guarded' },
     { confirmed: false, classification: 'not-a-bug', reason: 'no path' },
   ]
@@ -604,6 +613,22 @@ test('needsConfirm: skipping confirm after an intentional refute never changes a
       assert.deepEqual(H.bucketVerdicts([{ f, refute, confirm: ran }]), both, `refute ${r}, confirm ${c}`)
     }
   }
-  assert.equal(skipped, 12, 'confirm is skipped exactly when refute said intentional')
+  assert.equal(skipped, 20, 'confirm is skipped exactly when refute said intentional and cited a line')
   assert.equal(H.needsConfirm(null), true, 'a dead refute is not a verdict: confirm still runs')
+})
+
+test('bucketVerdicts: an intentional that cites nothing does not defer a finding reproduced and worth taking', () => {
+  const f = { file: 'src/a.py:4', rootCause: 'x', severity: 'High' }
+  const bare = { confirmed: false, classification: 'intentional', reason: 'long-standing behaviour', intentEvidence: '' }
+  const cited = { ...bare, reason: 'the docs say so', intentEvidence: 'docs/api.rst:12' }
+  const ranTake = { confirmed: true, classification: 'real-bug', reason: 'ran it: wrong output', reproduced: true, worth: 'take' }
+  const ranMinor = { ...ranTake, worth: 'minor' }
+  const readTake = { ...ranTake, reproduced: false }
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: bare, confirm: ranTake }]).confirmedBugs, [{ ...f, rescued: true, rescueNote: 'ran it: wrong output' }])
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: cited, confirm: ranTake }]).deferred, [{ ...f, deferReason: 'the docs say so' }], 'a cited intentional still defers')
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: bare, confirm: ranMinor }]).deferred, [{ ...f, deferReason: 'long-standing behaviour' }], 'minor stays deferred')
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: bare, confirm: readTake }]).deferred, [{ ...f, deferReason: 'long-standing behaviour' }], 'read, not run, stays deferred')
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: { ...bare, reproduced: true, worth: 'take' }, confirm: null }]).confirmedBugs.map(b => b.rescued), [true], 'the reviewer who called it intentional can be the one who reproduced it')
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: { ...bare, intentEvidence: 'see upstream' }, confirm: ranTake }]).confirmedBugs.map(b => b.rescued), [true], 'evidence that names no line is no citation')
+  assert.deepEqual(H.bucketVerdicts([{ f, refute: ranTake, confirm: ranMinor }]).confirmedBugs, [f], 'a finding nobody called intentional is bucketed as before, minor or not')
 })

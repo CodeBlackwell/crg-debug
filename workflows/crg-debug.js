@@ -297,6 +297,11 @@ A candidate is CONFIRMED (confirmed=true) ONLY if ALL THREE hold:
 If the current code produces CORRECT output (just not how you'd write it), confirmed=false. If you cannot reproduce the violation from the code, confirmed=false. When in doubt, confirmed=false.
 
 Classify real-bug vs intentional per ${skill}: "intentional" requires POSITIVE evidence (doc/comment/test/naming). A security control that fails OPEN on missing/wrong config is NEVER intentional — it is a real bug.
+
+Whatever you conclude, also report:
+- reproduced: true only if you RAN a concrete input in the shell and saw the behaviour the finding describes. Reading the code is not reproducing it.
+- worth: take if a user of this project can hit the behaviour through its public API or documented behaviour with ordinary input, so its maintainers would plausibly accept a fix; minor if it is cosmetic, needs contrived input, or is reachable only through a private helper.
+- intentEvidence: if you classify it intentional, the path:line of the doc, docstring, comment or test in this repo that says the behaviour is meant. The code under review, other versions of the project and your memory of it are not evidence. Leave it empty if you found none.
 ${untrusted}`
 
 // Survivor rule: kept only if >=1 reviewer confirms AND none refutes.
@@ -313,6 +318,12 @@ const verdictRows = (findings, chosen, reviewed) => {
   return findings.map((f, i) =>
     rowAt.has(i) ? { f, refute: rowAt.get(i).refute, confirm: rowAt.get(i).confirm } : { f, unreviewed: chosen.has(i) ? NO_VERDICT_REASON : AGENT_LIMIT_REASON })
 }
+// "Intentional" defers a finding only with evidence: a reviewer who calls it intentional
+// and names the repo line that says so (citesIntent). Without one, a finding a reviewer
+// reproduced and rated worth taking goes to Fix, marked rescued (writeup 029: of findings
+// deferred as intentional, about 9 in 10 were real and few had any line saying they were meant).
+const citesIntent = v => /\S+:\d+/.test(String((v && v.intentEvidence) || ''))
+const isRescuer = v => !!v && v.reproduced === true && v.worth === 'take'
 const bucketVerdicts = verified => {
   const confirmedBugs = []
   const deferred = []
@@ -324,9 +335,14 @@ const bucketVerdicts = verified => {
       unreviewed.push({ ...f, unreviewedReason: why || NO_VERDICT_REASON })
       continue
     }
-    const intentional = verdicts.find(v => v.classification === 'intentional')
-    if (intentional) {
-      deferred.push({ ...f, deferReason: reasonText(intentional.reason) })
+    const intentional = verdicts.filter(v => v.classification === 'intentional')
+    const rescuer = verdicts.find(isRescuer)
+    if (intentional.length && (intentional.some(citesIntent) || !rescuer)) {
+      deferred.push({ ...f, deferReason: reasonText((intentional.find(citesIntent) || intentional[0]).reason) })
+      continue
+    }
+    if (intentional.length) {
+      confirmedBugs.push({ ...f, rescued: true, rescueNote: reasonText(rescuer.reason) })
       continue
     }
     const confirms = verdicts.filter(v => v.confirmed)
@@ -344,10 +360,11 @@ const bucketVerdicts = verified => {
   return { confirmedBugs, deferred, rejected, unreviewed }
 }
 // The refute reviewer runs first. bucketVerdicts defers a finding that EITHER reviewer
-// calls intentional, whatever the other says, so once refute has said so the confirm
-// reviewer cannot change where the finding lands and is not started. A dead refute
+// calls intentional and cites the repo for it, whatever the other says, so once refute has
+// done so the confirm reviewer cannot change where the finding lands and is not started.
+// An intentional refute that cites nothing can still be outweighed, so confirm runs. A dead refute
 // (null) is not a verdict: confirm still runs, as when both started together.
-const needsConfirm = refute => !(refute && refute.classification === 'intentional')
+const needsConfirm = refute => !(refute && refute.classification === 'intentional' && citesIntent(refute))
 
 // ---- the agent limit ----------------------------------------------------------
 // A Workflow run may start AGENT_LIMIT agents; the runtime refuses the next one, and a
@@ -1261,6 +1278,9 @@ const VERDICT_SCHEMA = {
       description: 'intentional ONLY with positive evidence (doc/comment/test/naming). Security fail-open defaults are NEVER intentional.',
     },
     adjustedSeverity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
+    reproduced: { type: 'boolean', description: 'Did you RUN a concrete input and see the behaviour the finding describes, whatever you think of it? Reading the code is not reproducing it.' },
+    worth: { type: 'string', enum: ['take', 'minor'], description: 'take: a user can hit the behaviour through the public API or documented behaviour with ordinary input. minor: cosmetic, contrived input, or only through a private helper.' },
+    intentEvidence: { type: 'string', description: 'When intentional: path:line of the doc, docstring, comment or test in this repo saying the behaviour is meant. Empty when none.' },
   },
 }
 
@@ -1666,8 +1686,11 @@ const reviewFindings = async (findings, fixed) => {
   }
   if (rounds > 1) log(`Verify: reviewed in ${rounds} rounds — each took what fit with room for both reviewers, and the next used what intentional refutes left unspent`)
   const skipped = reviewed.filter(row => row && !needsConfirm(row.refute)).length
-  if (skipped) log(`Verify: ${skipped} confirm reviewer(s) skipped — refute had already called the finding intentional, which defers it whatever confirm says`)
-  return bucketVerdicts(verdictRows(findings, chosen, reviewed))
+  if (skipped) log(`Verify: ${skipped} confirm reviewer(s) skipped — refute had already called the finding intentional and cited the repo for it, which defers it whatever confirm says`)
+  const buckets = bucketVerdicts(verdictRows(findings, chosen, reviewed))
+  const rescued = buckets.confirmedBugs.filter(b => b.rescued).length
+  if (rescued) log(`Verify: ${rescued} finding(s) called intentional with no line cited go to Fix, marked rescued — a reviewer reproduced each and rated it worth taking`)
+  return buckets
 }
 
 // ---- Dirty-tree guard: before the first write of a run that means to fix --------

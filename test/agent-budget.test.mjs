@@ -75,6 +75,7 @@ test('the ledger write Verify sets agents aside for is never smaller than the on
   for (const shape of [
     f => ({ f, refute: verdict, confirm: verdict }),
     f => ({ f, refute: { ...verdict, classification: 'intentional' }, confirm: null }),
+    f => ({ f, refute: { ...verdict, classification: 'intentional' }, confirm: { ...verdict, confirmed: true, reproduced: true, worth: 'take' } }),
     f => ({ f, refute: verdict, confirm: { ...verdict, confirmed: true, adjustedSeverity: 'Critical' } }),
     f => ({ f, unreviewed: 'agent limit' }),
   ]) {
@@ -637,7 +638,7 @@ const PRIOR = (extra = {}) => ({
 })
 // m100 is confirmed, m101 is deferred as intentional, m102 is refuted, m103 gets no answer.
 const REVIEW = {
-  refute: ({ label }) => (label.endsWith('m103.py') ? null : label.endsWith('m101.py') ? { confirmed: false, classification: 'intentional', reason: 'documented' } : { confirmed: label.endsWith('m100.py'), classification: 'real-bug', reason: 'traced' }),
+  refute: ({ label }) => (label.endsWith('m103.py') ? null : label.endsWith('m101.py') ? { confirmed: false, classification: 'intentional', reason: 'documented', intentEvidence: 'docs/m101.rst:4' } : { confirmed: label.endsWith('m100.py'), classification: 'real-bug', reason: 'traced' }),
   confirm: ({ label }) => (label.endsWith('m103.py') ? null : { confirmed: label.endsWith('m100.py'), classification: 'real-bug', reason: 'traced' }),
 }
 const LEDGER = '/tmp/ledger.json'
@@ -1066,7 +1067,7 @@ test('refutes that say intentional leave agents unspent, and further rounds revi
   // never starts: the agents one round leaves are spent on the next ranked findings.
   const num = label => Number(/m(\d+)\.py/.exec(label)[1])
   const verdict = label => (label.startsWith('refute:') && num(label) % 3
-    ? { confirmed: false, reason: 'documented', classification: 'intentional' }
+    ? { confirmed: false, reason: 'documented', classification: 'intentional', intentEvidence: 'docs/x.rst:1' }
     : { confirmed: true, reason: 'traced it', classification: 'real-bug' })
   const { calls, logs, result, ledger } = await sweep({ verdict })
   assert.ok(calls.length <= H.AGENT_LIMIT, `${calls.length} agents`)

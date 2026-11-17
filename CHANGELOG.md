@@ -6,6 +6,23 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-19
+
+### Changed
+- **"Intentional" defers a finding only when the reviewer cites the line that says so**
+  (`crg-debug.js`, methodology). A Verify reviewer who calls a finding intentional now names the
+  doc, comment or test line behind the call (`intentEvidence`), and says whether it ran the case
+  (`reproduced`) and whether a fix is worth taking (`worth`). The confirm reviewer is skipped
+  only after an intentional refute that cites a line; an uncited one no longer ends the review.
+  Replaying 91 findings that earlier click runs had deferred, reviewers called 20% of them
+  intentional against 84% on 0.33.0, and confirmed 49 against 7, including three planted bugs
+  0.33.0 confirmed none of. In a full click run, detection confirmed 8 of 13 planted bugs
+  against 4, and the fix run resolved 7 against 5, for about a fifth more spend. The extra
+  confirmations are mostly real but minor defects, so Fix gets more work, and on a large repo
+  Verify reaches the 1,000-agent limit sooner. A finding called intentional with nothing cited,
+  that a reviewer reproduced and rated worth taking, also goes to Fix marked `rescued`; no
+  reviewer rated one worth taking in these trials, so that route has not yet fired.
+
 ## [0.33.0] - 2026-11-18
 
 ### Fixed
