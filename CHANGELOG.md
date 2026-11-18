@@ -6,12 +6,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-18
+
 ### Fixed
 - **A run from a saved ledger can read it again** (`crg-debug.js`). 0.32.0's ledger programs
   escaped line-break characters with backslash escapes, and an agent retypes each program into
   a JSON tool call. On a click fix run both reading agents wrote the escapes unescaped, so the
   program no longer parsed, six tries in six, and the run stopped before fixing anything.
   Neither program holds a backslash now; the characters they need are built from their codes.
+  0.32.0 is affected on every run started from a saved ledger (`fromLedger`), including
+  the detect-then-fix hand-off.
 - **Fix-phase agents run tests without a terminal, to a file, under a time limit**
   (`crg-debug.js`). Every fix, gate, regression and checks agent now writes each command to a
   file in its own `mktemp -d` directory and runs it as `timeout 590 sh … < /dev/null > log 2>&1`,
@@ -24,6 +28,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   passed and later whole-suite runs blocked on it. Fixers are now told a test must never read a
   terminal, stdin or an unwritten pipe without its own timeout, and a bug's gate runs its test
   under a 120 s limit, so a test that can block fails and its bug does not close.
+  Measured on the same click ledger, its fix run went from 52 minutes to 12, fixing 49 bugs
+  against 48, at the same cost.
 
 ## [0.32.0] - 2026-11-16
 
