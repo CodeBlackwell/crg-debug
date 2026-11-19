@@ -115,6 +115,12 @@ fixes what is confirmed). A fix run from a ledger reviews them first on its own.
 written, with the reason from the run's log: there is then no file to run again from, and whatever
 is at `ledgerPath` may be a prior run's.
 
+**Findings held back.** `fix.conflicted` lists the confirmed findings the fix phase did not attempt
+because their two reviewers disagreed: one confirmed the finding and the other refused it. Each
+carries the refusing reviewer's words in `conflictNote`. Say how many there are and that nobody
+tried to fix them. Do not count them as fixed or as unfixed, and do not call them rejected: the
+refusal is usually about whether the fix is worth making, not about whether the behaviour is real.
+
 **A ledger that is not what it says.** The ledger carries `counts`, the number of rows in each of
 its four buckets, written by the Workflow. A `--from-ledger` run stops before any work, with
 `fix-from-ledger: could not read/parse ledger at <path> — <why>`, when the file does not hold the

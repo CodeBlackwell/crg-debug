@@ -178,3 +178,27 @@ test('a toolchain with no typecheck or build is gated on its tests alone', async
   assert.deepEqual(result.fix.finalGate, { clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], fewerPassed: [], notChecked: [], unreported: [], held: ['tests'], alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }], results: [] })
   assert.match(logs.at(-1), / · final gate green · regression gate: /)
 })
+
+// ---- findings whose reviewers disagreed --------------------------------------------
+
+const SPLIT = { ...bug('b3', 'src/charlie.py'), conflicted: true, conflictNote: 'reproduced, but no documented contract covers it' }
+const NOT_ATTEMPTED = [{ ...SPLIT, reason: 'its two reviewers disagreed, so no fix was attempted' }]
+const withSplit = bugs => () => ({ confirmedBugs: bugs, deferred: [], rejected: [], toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] })
+
+test('a confirmed finding whose reviewers disagreed is listed in the fix result, apart from fixed and unfixed', async () => {
+  const { result, labels, logs } = await fixRun(SRC, { bugs: [...TWO, SPLIT], on: { 'ingest-ledger': withSplit([...TWO, SPLIT]) } })
+  assert.deepEqual(result.fix.conflicted, NOT_ATTEMPTED)
+  assert.deepEqual(result.fix.fixed.map(b => b.bugId), ['b1', 'b2'])
+  assert.deepEqual(result.fix.unfixed, [])
+  assert.equal(labels.includes('fix:charlie.py'), false, 'nobody tried to fix it')
+  assert.match(logs.at(-1), /^Fix complete: 2 fixed · 0 unfixed · 1 conflicted and not attempted · 0 need a decision · /)
+})
+
+test('when every confirmed finding is conflicted the fix phase says so instead of returning nothing', async () => {
+  const { result, labels, logs } = await fixRun(SRC, { bugs: [SPLIT], on: { 'ingest-ledger': withSplit([SPLIT]) } })
+  assert.equal(result.fix.notStarted, 'every confirmed finding is conflicted')
+  assert.deepEqual(result.fix.conflicted, NOT_ATTEMPTED)
+  assert.deepEqual([result.fix.fixed, result.fix.unfixed], [[], []])
+  assert.equal(labels.some(l => /^(fix-branch|regress|fix:)/.test(l)), false, 'no branch, no baseline, no fixer')
+  assert.equal(logs.at(-1), 'Fix not started: all 1 confirmed finding(s) are conflicted (mixed verdicts) — nothing was attempted')
+})

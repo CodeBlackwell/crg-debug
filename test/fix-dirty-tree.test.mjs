@@ -137,7 +137,7 @@ test('a fix run on a dirty tree does not start fixing, changes nothing, and name
     notStarted: REFUSED,
     tree: { staged: ['src/alpha.py'], changed: ['README.md'] },
     waves: [], fixed: [],
-    unfixed: TWO.map(b => ({ ...b, reason: `fix not started — ${REFUSED}` })),
+    unfixed: TWO.map(b => ({ ...b, reason: `fix not started — ${REFUSED}` })), conflicted: [],
     commits: [], uncommitted: [], needsDecision: [],
   })
   assert.equal(result.confirmedBugs.length, 2, 'what was found is still reported')

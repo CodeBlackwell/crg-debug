@@ -30,7 +30,6 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   A command that ran no test beside one that did is not run again: it is left out of the
   repeated commands (see Changed), and its exit code is still read.
 
-
 ### Changed
 - **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).
   When the regression baseline reports one command that ran tests and another the runner
@@ -46,6 +45,14 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   fix) or `alsoReportedElsewhere` (context only). Reviewers see the row as before. Which rows
   are kept and dropped is unchanged: over 71 recorded merges of 4,408 findings the kept rows
   are the same, and 540 of them gain places.
+- **A fix run lists the confirmed findings it did not attempt** (`crg-debug.js`, skill). A
+  finding one reviewer confirms and the other refuses is saved as confirmed and marked
+  `conflicted`, and the fix phase skips it. Until now it was in neither `fix.fixed` nor
+  `fix.unfixed`, and one log line was all that said so: on isort 27 of 117 confirmed findings
+  went missing from the result that way. Every fix result now carries `fix.conflicted`, each row
+  with the refusing reviewer's `conflictNote` and a reason, and the closing line counts them.
+  When every confirmed finding is conflicted the fix phase reports `fix.notStarted` instead of
+  returning no fix result. Nothing about which findings are fixed has changed.
 
 ## [0.34.1] - 2026-11-21
 
