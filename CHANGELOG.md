@@ -17,6 +17,19 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   baseline held: such a command cannot show an existing test breaking. A command that names
   any other file or directory, names a failing test or prints a passed count is judged as
   before.
+- **A test command that ran nothing is no longer taken for the starting point of the fix phase**
+  (`crg-debug.js`). When a baseline test command exits red and its runner prints no passed
+  count, it is run once more without the files that would not load, and the run that prints a
+  count becomes the baseline every later gate repeats. On isort two test files import packages
+  the image lacks, so pytest stopped before running a test. The script accepted that, the suite
+  first ran after wave 1, and 8 tests that fail on the untouched repo were read as broken by
+  the fixes: 11 fixes were taken back and five later waves were put back whole, for 30 bugs
+  left unfixed. Replaying that run's gate reports against a baseline that ran, waves 2 to 6
+  have no new failure. A second attempt that gives no count either leaves the run as it was
+  and logs it, since a runner that prints no count cannot be told from one that ran nothing.
+  A command that ran no test beside one that did is not run again: it is left out of the
+  repeated commands (see Changed), and its exit code is still read.
+
 
 ### Changed
 - **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).

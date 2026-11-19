@@ -14,7 +14,7 @@ const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
 const H = new Function(
-  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, commandId, baselineIndexOf, resolveRuns, regressionReported, regressionReason, blamedBugIds, shellQuote, snapshotCommand, snapshotOf, restoreCommands, restoreOk, printedLines, takenBackNote, strikeOf, FIX_SCHEMA, FIX_RETRY_SCHEMA, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
+  `${block}\nreturn { fence, failingTests, testIdOf, commandNamesTest, newFailures, commandId, baselineIndexOf, resolveRuns, regressionReported, ranBlind, recounted, blindRuns, regressionReason, blamedBugIds, shellQuote, snapshotCommand, snapshotOf, restoreCommands, restoreOk, printedLines, takenBackNote, strikeOf, FIX_SCHEMA, FIX_RETRY_SCHEMA, REGRESSION_UNREPORTED, REGRESSION_SCHEMA, BLAME_SCHEMA }`,
 )()
 // The proposal helpers, for the tests that follow a fix to its second time.
 const P = new Function(`${block}\nreturn { proposalName, proposalCommand, branchSlug }`)()
@@ -1157,4 +1157,67 @@ test('the same run with the rejected command naming an existing test still loses
   assert.equal(labels.includes('blame:wave1'), true)
   assert.deepEqual(names(result.fix.fixed), [])
   assert.equal(result.fix.regressionGate.unrun, 0)
+})
+
+// ---- a baseline command that ran nothing ------------------------------------------
+
+// isort's shape: two test files do not import, so pytest stops before it runs a test.
+const SUITE = 'python -m pytest tests/unit/'
+const SUITE_RUNS = `${SUITE} --ignore=tests/unit/test_pylama.py`
+const UNLOADED = { id: 'tests/unit/test_pylama.py', output: 'ModuleNotFoundError: pylama' }
+const OLD_RED = { id: 'tests/unit/test_isort.py::test_issue_909', output: 'FileNotFoundError: isort' }
+const STOPPED = { command: SUITE, exitCode: 2, passed: -1, failing: [UNLOADED] }
+const COUNTED = { command: SUITE_RUNS, exitCode: 1, passed: 478, failing: [OLD_RED] }
+
+test('a baseline command is blind when it exits red with no passed count, and only then', () => {
+  assert.equal(H.ranBlind(STOPPED), true)
+  assert.equal(H.ranBlind({ ...STOPPED, exitCode: 0 }), false, 'a green run from a runner that prints no count ran its tests')
+  assert.equal(H.ranBlind({ ...STOPPED, passed: 0 }), false, 'a count of zero is a count')
+  assert.equal(H.ranBlind({ ...STOPPED, exitCode: 124 }), false, 'the time limit is not answered by running it again')
+  assert.equal(H.ranBlind(null), false)
+})
+
+test('a counted second attempt takes the blind run\'s place and keeps what it named', () => {
+  const other = { command: 'pytest tests/other.py', exitCode: 0, passed: 23, failing: [] }
+  const baseline = { runs: [STOPPED, other] }
+  assert.deepEqual(H.recounted(baseline, STOPPED, { runs: [COUNTED] }).runs, [{ ...COUNTED, failing: [OLD_RED, UNLOADED] }, other])
+  assert.equal(H.recounted(baseline, STOPPED, { runs: [{ ...STOPPED }] }), baseline, 'a second attempt with no count changes nothing')
+  assert.equal(H.recounted(baseline, STOPPED, null), baseline, 'nor does one that did not report')
+})
+
+test('a row that ran no test beside one that did gets no second attempt', async () => {
+  const rejected = { command: 'pytest tests/', exitCode: 4, passed: -1, failing: [] }
+  const live = { command: 'pytest -o addopts="" tests/', exitCode: 0, passed: 40, failing: [] }
+  assert.deepEqual(H.blindRuns({ runs: [rejected, live] }), [], 'it is left out of the repeats and its exit code is still read')
+  assert.deepEqual(H.blindRuns({ runs: [rejected] }), [rejected], 'alone, it is all the baseline there is')
+  assert.deepEqual(H.blindRuns({ runs: [STOPPED, live] }), [STOPPED], 'a row that named what would not load is tried again whatever stands beside it')
+  assert.deepEqual(H.blindRuns({ runs: [null, live] }), [])
+  assert.deepEqual(H.blindRuns(null), [])
+  const { labels } = await fixRun(SRC, { bugs: TWO, on: { regress: ({ label }) => (label === 'regress:baseline' ? { runs: [rejected, live] } : { runs: [{ command: 'c1', exitCode: 0, passed: 40, failing: [] }] }) } })
+  assert.equal(labels.includes('regress:recount'), false)
+})
+
+test('tests that failed before any fix are not blamed on a wave when the first baseline run stopped at import', async () => {
+  const regress = ({ label }) => (label === 'regress:baseline' ? { runs: [STOPPED] } : label === 'regress:recount' ? { runs: [COUNTED] } : { runs: [{ command: 'c1', exitCode: 1, passed: 480, failing: [OLD_RED] }] })
+  const { result, calls, logs } = await fixRun(SRC, { bugs: TWO, on: { regress } })
+  assert.deepEqual(result.fix.regressionGate.waves, [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }])
+  assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
+  assert.equal(result.fix.finalGate.verdict, 'green', 'and the final gate has a count to hold the end against')
+  assert.deepEqual(result.fix.finalGate.alreadyFailing.map(t => t.id), [OLD_RED.id, UNLOADED.id])
+  const recount = calls.find(c => c.label === 'regress:recount')
+  assert.ok(recount.prompt.includes(H.fence(SUITE)) && recount.prompt.includes(H.fence(UNLOADED.id)), 'the command and what it named go out as data')
+  assert.deepEqual(recount.opts.schema, H.REGRESSION_SCHEMA)
+  assert.ok(calls.find(c => c.label === 'regress:wave1').prompt.includes(`c1:\n${H.fence(SUITE_RUNS)}`), 'every later gate repeats the command that ran')
+  assert.ok(logs.includes('Fix: regression baseline — a test command exited 2 with no passed count; it ran again without the files that would not load, and that run is the baseline'))
+})
+
+test('a second attempt that prints no count, or does not report, leaves the run as it was', async () => {
+  for (const second of [{ runs: [STOPPED] }, null]) {
+    const regress = ({ label }) => (label === 'regress:baseline' ? { runs: [STOPPED] } : label === 'regress:recount' ? second : { runs: [{ command: 'c1', exitCode: 2, passed: -1, failing: [UNLOADED] }] })
+    const { result, labels, logs } = await fixRun(SRC, { bugs: TWO, on: { regress } })
+    assert.equal(labels.filter(l => l === 'regress:recount').length, 1, 'one second attempt, not a loop')
+    assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
+    assert.equal(result.fix.finalGate.verdict, 'not checked')
+    assert.ok(logs.includes('Fix: regression baseline — a test command exited 2 with no passed count; a second attempt gave none either, so a test it never ran can look newly failing later'))
+  }
 })

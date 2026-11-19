@@ -64,7 +64,7 @@ test('a fix wave is counted at its worst, and only the fixers that fit are kept'
   assert.equal(H.fixersThatFit([4, 4, 4], 32), 3)
   assert.equal(H.fixersThatFit([4, 4, 4], 31), 2)
   assert.equal(H.fixersThatFit([1], 12), 0, 'not a wave it cannot finish')
-  assert.deepEqual([H.FIX_OPENING, H.FIX_CLOSING, H.COUPLED_AGENTS], [4, 2, 9])
+  assert.deepEqual([H.FIX_OPENING, H.FIX_CLOSING, H.COUPLED_AGENTS], [5, 2, 9])
 })
 
 test('the ledger write Verify sets agents aside for is never smaller than the one it makes', () => {
@@ -1067,7 +1067,7 @@ test('with no room for even one wave the fix phase does not start, and writes no
   assert.ok(!labels.some(l => /^(fix-branch|bootstrap|snapshot|fix:|regress)/.test(l)), 'no branch, no baseline, no fixer')
   assert.equal(labels.at(-1), 'persist:assemble')
   assert.equal(result.ledgerSaved, true, 'the review it did is on disk')
-  assert.ok(logs.some(l => /^Fix not started: 30 confirmed bug\(s\) left unfixed — agent limit \(\d+ of 1000 agents left, a first wave needs 19\)\. Run again from the ledger to fix them\.$/.test(l)))
+  assert.ok(logs.some(l => /^Fix not started: 30 confirmed bug\(s\) left unfixed — agent limit \(\d+ of 1000 agents left, a first wave needs 20\)\. Run again from the ledger to fix them\.$/.test(l)))
 })
 
 test('refutes that say intentional leave agents unspent, and further rounds review findings with them', async () => {
