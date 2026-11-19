@@ -29,6 +29,19 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   and logs it, since a runner that prints no count cannot be told from one that ran nothing.
   A command that ran no test beside one that did is not run again: it is left out of the
   repeated commands (see Changed), and its exit code is still read.
+- **A failing test nobody ran before the first fix no longer turns the final gate red on
+  sight** (`crg-debug.js`). A gate first repeats the baseline's commands, then runs tests the
+  agent picks for the files touched. A test that fails only under one of those picked commands
+  was never run on the untouched tree, and it used to count as newly failing: on isort three
+  tests that fail on the untouched repo made a final gate red after 89 clean fixes. The final
+  gate now runs such a test once on the tree as it stood before the first fix, by moving the
+  whole working tree to the first restore point and back, each move proved by git. A test that
+  fails there is listed as already failing; one that passes there is a new failure, as before;
+  one the check could not settle is listed in `fix.finalGate.noBefore`, and the gate then reads
+  not checked, neither red nor green. A tree that is not confirmed back halts the run and names
+  the restore point that holds it. A test in a file a fix of this run declared as its test file
+  is judged as before. The check costs four agents and runs only when such a test turns up; in
+  23 earlier runs with a final gate it would have run once. Wave gates are unchanged.
 
 ### Changed
 - **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).

@@ -107,7 +107,7 @@ test('a suite with one test already failing ends green, and names that test', as
   const { result, logs } = await fixRun(SRC, { bugs: TWO, on: { 'ingest-ledger': untyped, checks: missingChecker, regress } })
   assert.deepEqual(result.fix.fixed.map(b => b.bugId), ['b1', 'b2'])
   assert.deepEqual(result.fix.finalGate, {
-    clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], fewerPassed: [],
+    clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], noBefore: [], fewerPassed: [],
     notChecked: [{ name: 'typecheck', exitCode: 127 }], unreported: [], held: ['tests'],
     alreadyFailing: [{ id: OLD.id, command: BASE_CMD }],
     passedCounts: [{ name: 'tests', before: 1423, after: 1423 }],

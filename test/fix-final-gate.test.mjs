@@ -97,7 +97,7 @@ test('a clean run with a type checker that is not installed ends green, and says
     'checks:final', 'regress:allfixes',
   ])
   assert.deepEqual(result.fix.finalGate, {
-    clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], fewerPassed: [],
+    clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], noBefore: [], fewerPassed: [],
     notChecked: [{ name: 'typecheck', exitCode: 127 }], unreported: [], held: ['build', 'tests'],
     alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }],
     results: [{ command: 'k2', exitCode: 0, stdout: '', stderr: '' }],
@@ -175,7 +175,7 @@ test('a checks baseline that does not report stops nothing, and vouches for noth
 test('a toolchain with no typecheck or build is gated on its tests alone', async () => {
   const { result, labels, logs } = await fixRun(SRC, { bugs: TWO })
   assert.equal(labels.some(l => l.startsWith('checks:')), false)
-  assert.deepEqual(result.fix.finalGate, { clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], fewerPassed: [], notChecked: [], unreported: [], held: ['tests'], alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }], results: [] })
+  assert.deepEqual(result.fix.finalGate, { clean: true, verdict: 'green', regressed: [], newFailures: [], openBugTests: [], noBefore: [], fewerPassed: [], notChecked: [], unreported: [], held: ['tests'], alreadyFailing: [], passedCounts: [{ name: 'tests', before: 40, after: 40 }], results: [] })
   assert.match(logs.at(-1), / · final gate green · regression gate: /)
 })
 
