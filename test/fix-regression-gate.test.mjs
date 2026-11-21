@@ -454,9 +454,11 @@ const WAVE1 = `${'5'.repeat(39)}1` // the restore point the harness hands out fo
 // Re-pinned the fix and gate lines when every brief that runs a test, build or typecheck
 // command gained the rule for
 // running a command (stdin from /dev/null, output to a file, a time limit), 2026-11-16.
+// Re-pinned the ingest-ledger lines when the program that reads the ledger stopped calling
+// flatMap, so that it runs on a node older than 11 (2026-11-21).
 const PINNED = {
   two: [
-    'ingest-ledger a6954c1dfabc',
+    'ingest-ledger 410086781660',
     'fix-branch f0bdaf259764',
     'fix:alpha.py 66d5a1adec79',
     'fix:bravo.py 48fcca7ea951',
@@ -466,7 +468,7 @@ const PINNED = {
     'commit:wave 5bf04a3287b0',
   ],
   busy: [
-    'ingest-ledger 3ed203d62ea2',
+    'ingest-ledger 473766871a8e',
     'fix-branch 5093eaa3874e',
     'fix:alpha.py 068d465207d2',
     'fix:bravo.py ac0daf040a16',

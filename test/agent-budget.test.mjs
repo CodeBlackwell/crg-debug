@@ -178,6 +178,14 @@ test('neither ledger program holds a backslash, so retyping it into a tool call 
   assert.ok(!H.LEDGER_WRITE_PROGRAM.includes('\\'), 'the write program')
 })
 
+// wfl-arrow-py-SR1.1: the target machine's node was 10.24 and both programs called
+// Array.flatMap, which arrived in node 11. The read failed twice and the run stopped before
+// any fix. These programs run on whatever node the repository's machine has.
+test('neither ledger program calls flatMap, which a node older than 11 does not have', () => {
+  assert.ok(!H.LEDGER_READ_PROGRAM.includes('flatMap'), 'the read program')
+  assert.ok(!H.LEDGER_WRITE_PROGRAM.includes('flatMap'), 'the write program')
+})
+
 // ---- what the script reads from a relay ----------------------------------------------
 
 const WRITE = H.ledgerWrite({ set: { confirmedBugs: [{ a: 1 }, { a: 2 }] } })

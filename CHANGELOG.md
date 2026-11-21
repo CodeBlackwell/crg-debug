@@ -6,6 +6,14 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- **The ledger is read and written on a node older than 11** (`crg-debug.js`). The two small
+  programs that read and write the ledger called `Array.flatMap`, which node gained in version
+  11. They run on the node of the machine that holds the repository, and on one with node
+  10.24 a fix run from a saved ledger stopped at its first step with "could not read/parse
+  ledger"; a full run there could not have saved its ledger either. Both programs now build
+  the same lists with `concat`, and print the same bytes as before on a current node.
+
 ## [0.34.0] - 2026-11-19
 
 ### Changed
