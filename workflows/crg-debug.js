@@ -94,6 +94,33 @@ const groupBy = (items, keyFn) => {
 }
 // First occurrence of each key wins — the deterministic in-code dedup.
 const dedupBy = (items, keyFn) => [...groupBy(items, keyFn).values()].map(g => g[0])
+// A MERGED ROW KEEPS EVERY PLACE IT STANDS FOR. The merge agent groups findings that are
+// one bug, and the script used to keep the lowest index of a group and drop the rest whole.
+// On arrow-py a finder filed the same defect on four branches of one function, the agent
+// grouped them, the surviving row named one branch, and the fixer fixed one: 1 of 4 tests.
+// This drops the same rows and keeps the same row; the kept row gains `alsoAt`, the place
+// and stated cause of each row it replaced. A row no group touches is returned as it was.
+const ALSO_AT_CAP = 8 // places carried per row
+const ALSO_AT_TEXT_CAP = 300 // characters kept of each replaced row's rootCause
+const mergeDuplicateGroups = (findings, groups) => {
+  const drop = new Set()
+  const alsoAt = new Map()
+  for (const group of groups || []) {
+    const members = (group || []).filter(i => Number.isInteger(i) && i >= 0 && i < findings.length).sort((x, y) => x - y)
+    for (const i of members.slice(1)) {
+      if (!drop.has(i)) alsoAt.set(members[0], [...(alsoAt.get(members[0]) || []), { file: findings[i].file, rootCause: capText(findings[i].rootCause, ALSO_AT_TEXT_CAP) }])
+      drop.add(i)
+    }
+  }
+  return findings.flatMap((f, i) => (drop.has(i) ? [] : [alsoAt.has(i) ? { ...f, alsoAt: alsoAt.get(i).slice(0, ALSO_AT_CAP) } : f]))
+}
+// The lines a fixer's bug row gains, one per place. A place in the bug's own file is the
+// fixer's to fix; a place in another file is context it must not edit.
+const alsoAtLines = bug =>
+  ((bug && bug.alsoAt) || []).map(p => `\n${bugFile(p) === bugFile(bug) ? 'alsoReportedHere' : 'alsoReportedElsewhere'}: ${p.file} :: ${p.rootCause}`).join('')
+// What a fixer is told about those lines; nothing when no bug it holds carries a place.
+const ALSO_AT_NOTE = 'A bug row may list `alsoReportedHere` places: the same defect, reported at other lines of this file. Check each one. Where the defect is real there, your fix covers it and your test asserts the corrected behaviour there too. `alsoReportedElsewhere` places are in files you do not own: read them to understand the bug and do not edit them.'
+const alsoAtNote = bugs => ((bugs || []).some(b => (b.alsoAt || []).length) ? `\n${ALSO_AT_NOTE}` : '')
 // THE exit-code verdict. Every gate in this file routes through it so "green" means one
 // thing: at least one command actually ran, and every one of them exited 0. The script
 // owns this judgment — an agent transcribes exit codes, it never declares pass/fail.
@@ -2056,7 +2083,8 @@ deduped = dedupBy(rawFindings, bugKeyOf)
 
 // Exact-string dedup misses the SAME bug phrased two ways (different agents,
 // different wording). That equivalence is judgment, so one agent CLUSTERS dups by
-// index while the script keeps the canonical finding (lowest index of each group).
+// index while the script keeps the canonical finding (lowest index of each group) and
+// hands it the places of the rest (mergeDuplicateGroups).
 merged = deduped
 if (deduped.length > 1) {
   const list = deduped.map((f, i) => `${i} :: ${f.file} :: ${f.rootCause}`).join('\n')
@@ -2070,12 +2098,7 @@ Return duplicateGroups: each inner array lists the indices of findings that are 
     { label: 'dedup', phase: 'Discover', schema: DEDUP_SCHEMA, model: models.discover },
   )
   if (clusters && Array.isArray(clusters.duplicateGroups)) {
-    const drop = new Set()
-    for (const g of clusters.duplicateGroups) {
-      const idx = (g || []).filter(i => Number.isInteger(i) && i >= 0 && i < deduped.length).sort((x, y) => x - y)
-      for (const i of idx.slice(1)) drop.add(i)
-    }
-    merged = deduped.filter((_, i) => !drop.has(i))
+    merged = mergeDuplicateGroups(deduped, clusters.duplicateGroups)
   }
 }
 log(`Discover: ${rawFindings.length} raw (incl. ${baselineFailures.length} baseline) -> ${deduped.length} exact-dedup -> ${merged.length} after semantic merge`)
@@ -2121,7 +2144,7 @@ const bugRows = bugs =>
   bugs
     .map(b =>
       fence(
-        `bugId: ${b.bugId}\nfile: ${b.file}\nrootCause: ${b.rootCause}\nsymptom: ${b.symptom}\nwhyRepro: ${b.whyRepro}\nseverity: ${b.severity}`,
+        `bugId: ${b.bugId}\nfile: ${b.file}\nrootCause: ${b.rootCause}\nsymptom: ${b.symptom}\nwhyRepro: ${b.whyRepro}\nseverity: ${b.severity}${alsoAtLines(b)}`,
       ),
     )
     .join('\n')
@@ -2143,7 +2166,7 @@ const fixAgent = (file, bugs) =>
 
 Bugs in this file (${bugs.length}) — fix EVERY one:
 ${bugRows(bugs)}
-${LEDGER_NOTE}
+${LEDGER_NOTE}${alsoAtNote(bugs)}
 ${PRIOR_FAILURE_NOTE}${takenBackNote(bugs, regressionStrikes)}
 Toolchain (use the owning package's commands):
 ${tcLine()}
@@ -2169,7 +2192,7 @@ const fixAgentCoupled = (files, bugs) =>
 
 Bugs:
 ${bugRows(bugs)}
-${LEDGER_NOTE}
+${LEDGER_NOTE}${alsoAtNote(bugs)}
 ${PRIOR_FAILURE_NOTE}${takenBackNote(bugs, regressionStrikes)}
 Toolchain:
 ${tcLine()}

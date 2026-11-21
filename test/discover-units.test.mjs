@@ -24,6 +24,8 @@ const sha = text => createHash('sha256').update(text).digest('hex').slice(0, 12)
 // And a third, the two persist lines alone: the ledger carries its own row counts.
 // And a fourth, persist:assemble alone: the program that assembles the ledger no longer
 // calls flatMap, so it runs on a node older than 11.
+// And a fifth, the persist and return lines: the stand-in merge agent groups two findings,
+// and the row that is kept now carries the place and cause of the one it replaced (`alsoAt`).
 // >>> pin-harness
 // (the same stand-in as the fix harness in fix-regression-gate.test.mjs carries)
 // A stand-in for the disk and for node: the script's own two ledger programs, run over files
@@ -122,10 +124,10 @@ const PINNED = {
     'confirm:find_tests.py 82f38d8a94c6',
     'confirm:find_residual.py 6066bb84cad7',
     'confirm:z.py 95fce7232fbf',
-    'persist:1 91762c8b7197',
-    'persist:assemble d41df57c16ec',
+    'persist:1 b321ffe6a6b4',
+    'persist:assemble fd6f51ee7b25',
     'logs a8d8c006f68f',
-    'return d21dcaee4efd',
+    'return c1a07a5d0581',
   ],
   rich: [
     'setup 90104e291d00',
@@ -155,10 +157,10 @@ const PINNED = {
     'confirm:find_tests_.py df0c48d55fed',
     'confirm:find_residual_.py b61251c43a35',
     'confirm:z.py a5c480b3ca2b',
-    'persist:1 1ab6aaf6e7f9',
-    'persist:assemble 37a51f3991fb',
+    'persist:1 96e4dca2e58f',
+    'persist:assemble 82b80ba4f2da',
     'logs 240fd33e8e97',
-    'return 113bc0284e75',
+    'return 156099748058',
   ],
 }
 

@@ -24,6 +24,15 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   rejected, only the first is handed to the agent that re-runs the gate, and the log says how
   many were left out. The rejected command's exit code is still read, so the 0.34.1 rule
   works as it did. A baseline in which no command ran a test is kept whole.
+- **A merged finding keeps every place it stands for** (`crg-debug.js`). When the merge agent
+  groups several findings as one bug, the script keeps the first and used to drop the others
+  whole. Where the same defect sat on several lines of one function, the surviving row named
+  one of them and the fixer fixed one. The kept row now carries the place and stated cause of
+  each row it replaced (`alsoAt`, at most 8 places, 300 characters each), the saved ledger
+  holds it, and a fixer's bug row lists them as `alsoReportedHere` (its own file, to check and
+  fix) or `alsoReportedElsewhere` (context only). Reviewers see the row as before. Which rows
+  are kept and dropped is unchanged: over 71 recorded merges of 4,408 findings the kept rows
+  are the same, and 540 of them gain places.
 
 ## [0.34.1] - 2026-11-21
 
