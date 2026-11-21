@@ -6,6 +6,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-11-21
+
 ### Fixed
 - **The ledger is read and written on a node older than 11** (`crg-debug.js`). The two small
   programs that read and write the ledger called `Array.flatMap`, which node gained in version
