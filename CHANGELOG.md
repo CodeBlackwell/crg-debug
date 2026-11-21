@@ -60,6 +60,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   agent a run. In evals on one bug of this kind (a colon passed unescaped to zsh's
   `_describe`), a finder told this raised it in 2 of 3 real one-file runs and never when
   untold; it also brings more findings in such a file, which were true when run.
+- **A finding the refute reviewer rejects gets no second reviewer** (`crg-debug.js`). Refute
+  runs first. When it rejected a finding outright, the confirm reviewer still ran, and could
+  then only mark the finding conflicted, which is held and never fixed, or defer it. Confirm is
+  no longer started in that case and the finding is filed as rejected on refute's word. Over
+  three recorded reviews of 522 findings that is 201 fewer reviewers, and no finding enters or
+  leaves the fix queue; 46 rows that were listed as conflicted and 28 as deferred are listed
+  as rejected. One path is given up: a confirm reviewer that called such a finding intentional
+  with no line cited, reproduced it and rated it worth taking would have sent it to Fix as
+  rescued. No recorded pair did. A refute that calls the finding real, or calls it intentional
+  without citing a line, still gets its confirm.
 - **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).
   When the regression baseline reports one command that ran tests and another the runner
   rejected, only the first is handed to the agent that re-runs the gate, and the log says how

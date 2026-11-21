@@ -635,7 +635,7 @@ test('fromFindingsError refuses an oversized list or field rather than trimming 
   assert.match(H.fromFindingsError([{ ...FINDING, whyRepro: 'x'.repeat(H.FINDING_TEXT_CAP + 1) }]), /^row 0 /)
 })
 
-test('needsConfirm: skipping confirm after an intentional refute never changes a bucket', () => {
+test('needsConfirm: a confirm that is skipped could not have sent its finding to Fix', () => {
   const kinds = [
     null,
     { confirmed: false, classification: 'intentional', reason: 'documented', intentEvidence: 'docs/a.rst:3' },
@@ -648,18 +648,36 @@ test('needsConfirm: skipping confirm after an intentional refute never changes a
     { confirmed: false, classification: 'real-bug', reason: 'guarded' },
     { confirmed: false, classification: 'not-a-bug', reason: 'no path' },
   ]
+  // A confirmed row marked conflicted is held and never fixed, so "to Fix" leaves it out.
+  const toFix = buckets => buckets.confirmedBugs.filter(b => !b.conflicted).length
   let skipped = 0
+  let refiled = 0
   for (const [r, refute] of kinds.entries()) {
     for (const [c, confirm] of kinds.entries()) {
       const f = { file: `src/m${r}${c}.py:1`, rootCause: 'x', severity: 'High' }
       const both = H.bucketVerdicts([{ f, refute, confirm }])
       const ran = H.needsConfirm(refute) ? confirm : null
-      if (!H.needsConfirm(refute)) skipped++
-      assert.deepEqual(H.bucketVerdicts([{ f, refute, confirm: ran }]), both, `refute ${r}, confirm ${c}`)
+      const alone = H.bucketVerdicts([{ f, refute, confirm: ran }])
+      if (H.needsConfirm(refute)) {
+        assert.deepEqual(alone, both, `refute ${r}, confirm ${c}`)
+        continue
+      }
+      skipped++
+      // The one way a second verdict sends a rejected finding to Fix: confirm calls it
+      // intentional, cites no line, reproduced it and rates it worth taking (the rescue rule).
+      const rescue = !!confirm && refute.classification !== 'intentional' && confirm.classification === 'intentional' && !confirm.intentEvidence && confirm.reproduced === true && confirm.worth === 'take'
+      assert.equal(toFix(both), rescue ? 1 : 0, `refute ${r}, confirm ${c}: with both verdicts it reaches Fix only by a rescue`)
+      assert.equal(toFix(alone), 0, `refute ${r}, confirm ${c}: nor is it on refute's word alone`)
+      if (refute.classification === 'intentional') assert.deepEqual(alone, both, `refute ${r}, confirm ${c}: a cited intentional defers it either way`)
+      else assert.equal(alone.rejected.length, 1, `refute ${r}, confirm ${c}: rejected on refute's word`)
+      if (JSON.stringify(alone) !== JSON.stringify(both)) refiled++
     }
   }
-  assert.equal(skipped, 20, 'confirm is skipped exactly when refute said intentional and cited a line')
+  assert.equal(skipped, 40, 'confirm is skipped when refute cited a line for intentional, or rejected the finding')
+  assert.ok(refiled > 0, 'some rows are filed as rejected that two verdicts would have held, deferred or rescued')
   assert.equal(H.needsConfirm(null), true, 'a dead refute is not a verdict: confirm still runs')
+  assert.equal(H.needsConfirm(kinds[6]), true, 'a refute that calls it real still gets its confirm')
+  assert.equal(H.needsConfirm(kinds[2]), true, 'so does an intentional with no line cited')
 })
 
 test('bucketVerdicts: an intentional that cites nothing does not defer a finding reproduced and worth taking', () => {

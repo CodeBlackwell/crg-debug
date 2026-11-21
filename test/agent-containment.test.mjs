@@ -129,12 +129,12 @@ test('fromFindings runs Graph and Verify only, over exactly the supplied finding
   const res = await runWorkflow({ args: replayArgs, agent: replayAgent(undefined, calls), parallel })
   assert.deepEqual(
     calls.map(c => c.label),
-    ['setup', 'refute:alpha-widget.ts', 'refute:beta-cache.ts', 'confirm:alpha-widget.ts', 'confirm:beta-cache.ts', 'persist:1', 'persist:assemble'],
+    ['setup', 'refute:alpha-widget.ts', 'refute:beta-cache.ts', 'confirm:alpha-widget.ts', 'persist:1', 'persist:assemble'],
     'no Map, Discover or dedup agent may run in a replay',
   )
   assert.equal(res.mode, 'verify-from-findings')
   assert.deepEqual(res.confirmedBugs, [FINDINGS[0]])
-  assert.deepEqual(res.rejected, [{ ...FINDINGS[1], refutationReason: 'refute:beta-cache.ts reason | confirm:beta-cache.ts reason' }])
+  assert.deepEqual(res.rejected, [{ ...FINDINGS[1], refutationReason: 'refute:beta-cache.ts reason' }], 'rejected by its refute, so no confirm was asked')
   assert.deepEqual(res.deferred, [])
   assert.equal(res.fix, null, 'a replay never reaches the fix phase')
   assert.deepEqual(

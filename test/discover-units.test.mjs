@@ -153,14 +153,13 @@ const PINNED = {
     'confirm:find_tests.py 17b3ede4f426',
     'confirm:find_residual.py e6a357440bf4',
     'confirm:find_backend_logic_.py a1149142364f',
-    'confirm:find_security_.py 8637ead47561',
     'confirm:find_tests_.py df0c48d55fed',
     'confirm:find_residual_.py b61251c43a35',
     'confirm:z.py a5c480b3ca2b',
-    'persist:1 96e4dca2e58f',
-    'persist:assemble 82b80ba4f2da',
-    'logs 240fd33e8e97',
-    'return 156099748058',
+    'persist:1 0cc487757826',
+    'persist:assemble 562c64eebdc2',
+    'logs 39db231665fb',
+    'return b763acd7c7fc',
   ],
 }
 

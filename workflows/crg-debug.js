@@ -412,7 +412,13 @@ const bucketVerdicts = verified => {
 // done so the confirm reviewer cannot change where the finding lands and is not started.
 // An intentional refute that cites nothing can still be outweighed, so confirm runs. A dead refute
 // (null) is not a verdict: confirm still runs, as when both started together.
-const needsConfirm = refute => !(refute && refute.classification === 'intentional' && citesIntent(refute))
+// Confirm is not started either once refute has rejected the finding outright. A second
+// reviewer would then mark it conflicted, which is held and never fixed, or defer it; it
+// could send it to Fix only by the rescue rule (intentional, no line cited, reproduced and
+// worth taking). Over three recorded reviews that was 201 confirm reviewers, and no finding
+// entered or left the fix queue. The finding is filed as rejected on refute's word.
+const rejectedByRefute = refute => !!refute && refute.classification !== 'intentional' && !refute.confirmed
+const needsConfirm = refute => !(refute && refute.classification === 'intentional' && citesIntent(refute)) && !rejectedByRefute(refute)
 
 // ---- the agent limit ----------------------------------------------------------
 // A Workflow run may start AGENT_LIMIT agents; the runtime refuses the next one, and a
@@ -1862,8 +1868,11 @@ const reviewFindings = async (findings, fixed) => {
     )))
   }
   if (rounds > 1) log(`Verify: reviewed in ${rounds} rounds — each took what fit with room for both reviewers, and the next used what intentional refutes left unspent`)
-  const skipped = reviewed.filter(row => row && !needsConfirm(row.refute)).length
+  const settled = reviewed.filter(row => row && !needsConfirm(row.refute))
+  const turnedDown = settled.filter(row => rejectedByRefute(row.refute)).length
+  const skipped = settled.length - turnedDown
   if (skipped) log(`Verify: ${skipped} confirm reviewer(s) skipped — refute had already called the finding intentional and cited the repo for it, which defers it whatever confirm says`)
+  if (turnedDown) log(`Verify: ${turnedDown} confirm reviewer(s) skipped — refute had already rejected the finding, which is filed as rejected on its word`)
   const buckets = bucketVerdicts(verdictRows(findings, chosen, reviewed))
   const rescued = buckets.confirmedBugs.filter(b => b.rescued).length
   if (rescued) log(`Verify: ${rescued} finding(s) called intentional with no line cited go to Fix, marked rescued — a reviewer reproduced each and rated it worth taking`)

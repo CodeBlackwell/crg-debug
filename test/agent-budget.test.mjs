@@ -461,7 +461,7 @@ test('a finding is matched to its verdicts by its place in the list, so a copied
 const copyOf = value => (value === undefined ? value : JSON.parse(JSON.stringify(value)))
 const copyingParallel = thunks => Promise.all(thunks.map(t => t())).then(copyOf)
 
-test('two findings, four verdicts, copies back from parallel: one row per finding and none unreviewed', async () => {
+test('two findings, three verdicts, copies back from parallel: one row per finding and none unreviewed', async () => {
   const two = [finding(0), finding(1)]
   const disk = ledgerDisk(SRC)
   const logs = []
@@ -469,7 +469,7 @@ test('two findings, four verdicts, copies back from parallel: one row per findin
   const agent = async (prompt, opts = {}) => {
     labels.push(opts.label)
     if (opts.label === 'setup') return { graphStats: '1 file', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
-    // m0 is a real bug to both reviewers, m1 is refuted by both.
+    // m0 is a real bug to both reviewers; m1's refute rejects it, so its confirm is never asked.
     if (opts.phase === 'Verify' && /^(refute|confirm):/.test(opts.label)) return { confirmed: opts.label.endsWith('m0.py'), reason: `traced ${opts.label}`, classification: 'real-bug' }
     const onDisk = disk.answer(prompt)
     return onDisk !== undefined ? onDisk : 'ok'
@@ -478,10 +478,10 @@ test('two findings, four verdicts, copies back from parallel: one row per findin
     { repoRoot: '/tmp/crg-fixture', methodologyPath: '/tmp/METHODOLOGY.md', fromFindings: two },
     (prompt, opts) => agent(prompt, opts).then(copyOf), copyingParallel, m => logs.push(m), undefined, () => {},
   )
-  assert.deepEqual(labels.filter(l => /^(refute|confirm):/.test(l)), ['refute:m0.py', 'refute:m1.py', 'confirm:m0.py', 'confirm:m1.py'], 'both reviewers of both findings answered, each refute first')
-  assert.deepEqual(result.unreviewed, [], 'a finding with two verdicts is not unreviewed')
+  assert.deepEqual(labels.filter(l => /^(refute|confirm):/.test(l)), ['refute:m0.py', 'refute:m1.py', 'confirm:m0.py'], 'each refute first; m1 was rejected by its refute, so its confirm never started')
+  assert.deepEqual(result.unreviewed, [], 'a finding with a verdict is not unreviewed')
   assert.deepEqual(result.confirmedBugs, [two[0]])
-  assert.deepEqual(result.rejected, [{ ...two[1], refutationReason: 'traced refute:m1.py | traced confirm:m1.py' }])
+  assert.deepEqual(result.rejected, [{ ...two[1], refutationReason: 'traced refute:m1.py' }])
   assert.deepEqual(result.deferred, [])
   assert.ok(logs.includes('Verify: 1 confirmed · 0 deferred (intentional) · 1 rejected'), logs.filter(l => l.startsWith('Verify')).join(' / '))
   const ledger = JSON.parse(disk.files.get('/tmp/crg-fixture/.crg-debug/ledger.json'))
@@ -578,7 +578,7 @@ test('reviewers that all return nothing leave their findings unreviewed, and the
   const { result, ledger, logs } = await sweep({ perFinder: 2, verdict: label => (label.startsWith('refute:m0') || label.startsWith('confirm:m0') ? null : { confirmed: false, reason: 'guarded', classification: 'real-bug' }) })
   assert.deepEqual(result.unreviewed.map(r => [r.file, r.unreviewedReason]), [['src/m0.py:1', 'no verdict']])
   assert.equal(result.rejected.length, 3)
-  assert.ok(result.rejected.every(r => r.refutationReason === 'guarded | guarded'))
+  assert.ok(result.rejected.every(r => r.refutationReason === 'guarded'), 'rejected on the refute reviewer\'s word alone')
   assert.deepEqual(ledger.unreviewed, result.unreviewed)
   assert.ok(logs.includes('Verify: 0 confirmed · 0 deferred (intentional) · 3 rejected · 1 unreviewed (0 agent limit · 1 no verdict)'))
 })
@@ -644,7 +644,7 @@ const PRIOR = (extra = {}) => ({
   unreviewed: [held(0), held(1, 'no verdict'), held(2), held(3)],
   ...extra,
 })
-// m100 is confirmed, m101 is deferred as intentional, m102 is refuted, m103 gets no answer.
+// m100 is confirmed, m101 is deferred as intentional, m102 is rejected by its refute, m103 gets no answer.
 const REVIEW = {
   refute: ({ label }) => (label.endsWith('m103.py') ? null : label.endsWith('m101.py') ? { confirmed: false, classification: 'intentional', reason: 'documented', intentEvidence: 'docs/m101.rst:4' } : { confirmed: label.endsWith('m100.py'), classification: 'real-bug', reason: 'traced' }),
   confirm: ({ label }) => (label.endsWith('m103.py') ? null : { confirmed: label.endsWith('m100.py'), classification: 'real-bug', reason: 'traced' }),
@@ -656,14 +656,14 @@ test('a run from a ledger with fix off finishes the review: each row moves to th
   const { result, labels, logs, calls, disk } = await fixRun(SRC, { bugs: [], args: { fix: false }, on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
   assert.deepEqual(labels, [
     'ingest-ledger',
-    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m102.py', 'confirm:m103.py',
+    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m103.py',
     'persist:1', 'persist:assemble',
-  ], 'm101\'s refute called it intentional, so its confirm never started')
+  ], 'm101\'s refute called it intentional and m102\'s rejected it, so neither confirm started')
   assert.equal(result.mode, 'review-from-ledger')
   assert.equal(result.fix, null)
   assert.deepEqual(result.confirmedBugs.map(b => b.file), ['src/alpha.py:10', 'src/m100.py:101'])
   assert.deepEqual(result.deferred.map(b => [b.file, b.deferReason]), [['src/m101.py:102', 'documented']], 'the rows this run moved')
-  assert.deepEqual(result.rejected.map(b => [b.file, b.refutationReason]), [['src/m102.py:103', 'traced | traced']])
+  assert.deepEqual(result.rejected.map(b => [b.file, b.refutationReason]), [['src/m102.py:103', 'traced']])
   assert.deepEqual(result.unreviewed.map(b => [b.file, b.unreviewedReason]), [['src/m103.py:104', 'no verdict']], 'the reason is this run’s, not the one it came with')
   assert.deepEqual([result.stats.confirmed, result.stats.deferred, result.stats.rejected, result.stats.unreviewed], [2, 2, 3, 1], 'the counts are the ledger’s')
   assert.equal(result.ledgerSaved, true)
@@ -688,12 +688,12 @@ test('a run from a ledger with fix off finishes the review: each row moves to th
 
 test('a fix run from a ledger reviews what is unreviewed first, then fixes what is confirmed, the new bug among them', async () => {
   const { result, labels, logs, disk } = await fixRun(SRC, { bugs: [], on: { 'ingest-ledger': () => PRIOR(), ...REVIEW } })
-  assert.deepEqual(labels.slice(0, 11), [
+  assert.deepEqual(labels.slice(0, 10), [
     'tree-status', 'ingest-ledger',
-    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m102.py', 'confirm:m103.py',
+    'refute:m100.py', 'refute:m101.py', 'refute:m102.py', 'refute:m103.py', 'confirm:m100.py', 'confirm:m103.py',
     'persist:1', 'persist:assemble',
   ])
-  assert.deepEqual(labels.slice(11, 16), ['fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:m100.py'])
+  assert.deepEqual(labels.slice(10, 15), ['fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:m100.py'])
   assert.equal(result.mode, 'fix-from-ledger')
   assert.deepEqual(result.fix.fixed.map(b => b.file), ['src/alpha.py:10', 'src/m100.py:101'])
   assert.equal(result.unreviewed.length, 1)
@@ -1015,16 +1015,17 @@ test('a ledger narrowed by the slicer is still the ledger it says it is', async 
 
 // ---- the fix phase near the limit -------------------------------------------------------
 
-// A ledger whose review uses up most of the run: `waiting` unreviewed rows, thirty confirmed
-// bugs in thirty files. The 1001st agent throws, as the runtime's does.
-const nearLimit = async reason => {
+// A ledger whose review uses up most of the run: 960 unreviewed rows, each rejected by its
+// refute and so reviewed by one agent, and thirty confirmed bugs in thirty files. The 1001st
+// agent throws, as the runtime's does.
+const nearLimit = async (reason, waiting = 960) => {
   let started = 0
   const count = () => {
     if (++started > H.AGENT_LIMIT) throw new Error(CAP_REACHED)
     return undefined
   }
   const thirty = Array.from({ length: 30 }, (_, i) => bug(`b${i}`, `src/f${i}.py`))
-  const prior = () => PRIOR({ confirmedBugs: thirty, unreviewed: Array.from({ length: 480 }, (_, i) => held(i)) })
+  const prior = () => PRIOR({ confirmedBugs: thirty, unreviewed: Array.from({ length: waiting }, (_, i) => held(i)) })
   const verdict = () => (count(), { confirmed: false, classification: 'real-bug', reason })
   const counted = Object.fromEntries(['tree-status', 'persist', 'fix-branch', 'regress', 'snapshot', 'fix', 'gate', 'testedits', 'commit', 'checks', 'blame', 'restore', 'propose', 'uncommit', 'bootstrap'].map(kind => [kind, count]))
   return fixRun(SRC, { bugs: thirty, on: { ...counted, 'ingest-ledger': () => (count(), prior()), refute: verdict, confirm: verdict } })
@@ -1038,7 +1039,7 @@ test('with few agents left the fix phase runs the waves it can finish and leaves
 
   const reviewed = labels.filter(l => l.startsWith('refute:')).length
   assert.equal(result.rejected.length, reviewed)
-  assert.equal(result.unreviewed.length, 480 - reviewed)
+  assert.equal(result.unreviewed.length, 960 - reviewed)
   assert.ok(result.unreviewed.length > 0 && result.unreviewed.every(r => r.unreviewedReason === 'agent limit'))
   assert.equal(result.ledgerSaved, true)
 
@@ -1056,9 +1057,10 @@ test('with few agents left the fix phase runs the waves it can finish and leaves
 })
 
 test('with no room for even one wave the fix phase does not start, and writes nothing', async () => {
-  // Reasons that fill their cap with characters JSON must escape: the ledger write is as
-  // big as the agents set aside for it, so almost nothing is left over for Fix.
-  const { result, labels, logs } = await nearLimit('"'.repeat(700))
+  // Reasons that fill their cap with characters JSON must escape, and just more rows than
+  // the review has room for: the ledger write is nearly as big as the agents set aside for
+  // it, so too little is left over for Fix.
+  const { result, labels, logs } = await nearLimit('"'.repeat(700), 920)
   assert.ok(labels.length <= H.AGENT_LIMIT)
   assert.equal(result.fix.notStarted, 'agent limit')
   assert.deepEqual(result.fix.fixed, [])
