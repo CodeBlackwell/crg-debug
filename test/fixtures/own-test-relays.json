@@ -1,0 +1,47 @@
+{
+  "note": "The regression gate's relays of one live fix run on arrow-py, as the agents returned them: a baseline that holds only a command that works, and one wave whose agent also ran the wave's new test file in a form the runner rejects (exit 4) before it runs a test.",
+  "relays": {
+    "regress:baseline": {
+      "runs": [
+        {
+          "command": "pytest -o addopts=\"\" tests/test_factory.py tests/test_api.py",
+          "exitCode": 1,
+          "passed": 47,
+          "failing": [
+            {
+              "id": "tests/test_factory.py::TestGet::test_one_arg_dateparser_datetime",
+              "output": "                value = parse_repl_named_char(source)\n                if value is not None:\n                    return False, [value]\n    \n>           raise error(\"bad escape \\\\%s\" % ch, source.string, source.pos)\nE           regex._regex_core.error: bad escape \\d at position 7\n\n/usr/local/lib/python3.9/site-packages/regex/_regex_core.py:1824: error"
+            }
+          ]
+        }
+      ]
+    },
+    "regress:wave1": {
+      "runs": [
+        {
+          "command": "c1",
+          "exitCode": 1,
+          "passed": 47,
+          "failing": [
+            {
+              "id": "tests/test_factory.py::TestGet::test_one_arg_dateparser_datetime",
+              "output": "E           regex._regex_core.error: bad escape \\d at position 7\n\n/usr/local/lib/python3.9/site-packages/regex/_regex_core.py:1824: error"
+            }
+          ]
+        },
+        {
+          "command": "pytest tests/test_crg_b0.py",
+          "exitCode": 4,
+          "passed": -1,
+          "failing": []
+        },
+        {
+          "command": "pytest -o addopts=\"\" tests/test_crg_b0.py",
+          "exitCode": 0,
+          "passed": 1,
+          "failing": []
+        }
+      ]
+    }
+  }
+}

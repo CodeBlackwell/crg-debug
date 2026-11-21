@@ -6,6 +6,25 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- **A rejected run of a fix's own new test no longer costs the fix** (`crg-debug.js`). 0.34.1
+  set aside an added test command that ran no test only when a baseline command had been
+  rejected the same way. On a later run the baseline held just the command that works; the
+  agent re-running the gate still ran the wave's new test file as a plain `pytest <file>`,
+  which that machine rejects with exit 4, and a fix that was right on all four of its branches
+  was put back. An added command that ran no test and names only test files this run's own
+  fixers reported is now left out of the verdict and counted as not checked, whatever the
+  baseline held: such a command cannot show an existing test breaking. A command that names
+  any other file or directory, names a failing test or prints a passed count is judged as
+  before.
+
+### Changed
+- **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).
+  When the regression baseline reports one command that ran tests and another the runner
+  rejected, only the first is handed to the agent that re-runs the gate, and the log says how
+  many were left out. The rejected command's exit code is still read, so the 0.34.1 rule
+  works as it did. A baseline in which no command ran a test is kept whole.
+
 ## [0.34.1] - 2026-11-21
 
 ### Fixed

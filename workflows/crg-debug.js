@@ -705,14 +705,37 @@ const newFailures = (now, baselineIds, redCommands) => {
 const ranNoTest = run => !!run && run.exitCode !== 0 && run.exitCode !== 124 && !(run.failing || []).some(t => testIdOf(t && t.id)) && !(run.passed > 0)
 // The exit codes with which a baseline command ran no test, before any fix was applied.
 const deadExitCodes = baseline => [...new Set(((baseline && baseline.runs) || []).filter(ranNoTest).map(run => run.exitCode))]
+// THE SAME REJECTED COMMAND ON A CLEAN BASELINE. A later run's baseline held only the command
+// that works, so no baseline row had died; the gate's agent ran the wave's new test file in
+// the rejected form all the same, and a fix that was right on all four of its branches went
+// back. Every such row on record names only test files the run's own fixers wrote.
+// True when a command names at least one of those files and no other file or directory. The
+// program word and a leading `cd DIR &&` are not targets, and neither is a flag.
+const namesOnlyOwnTests = (command, ownTestFiles) => {
+  const words = String(command || '').replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '').split(/\s+/).filter(Boolean).slice(1)
+  const fileOf = word => word.split('::')[0]
+  const isOwn = word => (ownTestFiles || []).some(file => fileOf(word) === file || fileOf(word).endsWith(`/${file}`))
+  const isTarget = word => !word.startsWith('-') && /\/|\.[A-Za-z0-9]+$/.test(fileOf(word))
+  return words.some(isOwn) && words.filter(isTarget).every(isOwn)
+}
 // A re-run relay split in two (pass it through resolveRuns first). `unrun` = the rows that
-// are not a baseline command, ran no test, and exited with a code a baseline command already
-// gave the same way: no fix made the runner reject them, so they are evidence of nothing and
-// stay out of the verdict. Every other row is judged as before.
-const splitUnrun = (relay, commands, deadCodes) => {
-  const isUnrun = run => ranNoTest(run) && baselineIndexOf(run.command, commands) < 0 && (deadCodes || []).includes(run.exitCode)
+// are not a baseline command, ran no test, and either exited with a code a baseline command
+// already gave the same way or name only the run's own test files. No fix made the runner
+// reject the first kind, and the second kind cannot show an existing test breaking, so both
+// are evidence of nothing and stay out of the verdict. Every other row is judged as before.
+const splitUnrun = (relay, commands, deadCodes, ownTestFiles) => {
+  const isUnrun = run =>
+    ranNoTest(run) && baselineIndexOf(run.command, commands) < 0 && ((deadCodes || []).includes(run.exitCode) || namesOnlyOwnTests(run.command, ownTestFiles))
   const runs = ((relay && relay.runs) || []).filter(Boolean)
   return { judged: relay && { ...relay, runs: runs.filter(run => !isUnrun(run)) }, unrun: runs.filter(isUnrun) }
+}
+// The baseline rows worth repeating after every wave: all of them, unless some ran tests and
+// others ran none. A row that ran no test before any fix can show nothing after one, and a
+// baseline that keeps it has the gate's agent run it again each wave and copy its form.
+const liveBaselineRuns = baseline => {
+  const runs = ((baseline && baseline.runs) || []).filter(Boolean)
+  const live = runs.filter(run => !ranNoTest(run))
+  return live.length ? live : runs
 }
 // After the blamed fixers go back, a test still failing may be one a standing fix of the SAME
 // wave wrote: that fix leaned on a change just taken back. On click a closed fix's new test
@@ -2463,17 +2486,21 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   // already fail, and the exact commands that showed it. A baseline that did not report
   // leaves nothing to compare a wave against, so no fix is attempted at all.
   const regression = { baselineReported: false, baselineFailures: 0, takenBack: 0, unrun: 0, waves: [] }
-  const baseline = await regressionBaselineAgent(queue.map(bugFile))
-  regression.baselineReported = regressionReported(baseline, [])
+  const reportedBaseline = await regressionBaselineAgent(queue.map(bugFile))
+  regression.baselineReported = regressionReported(reportedBaseline, [])
+  // The exit codes are read from every row the agent reported; the commands repeated after
+  // each wave are only the rows that ran tests.
+  const deadCodes = deadExitCodes(reportedBaseline)
+  const baseline = regression.baselineReported ? { ...reportedBaseline, runs: liveBaselineRuns(reportedBaseline) } : reportedBaseline
+  const deadBaselineRows = regression.baselineReported ? reportedBaseline.runs.filter(Boolean).length - baseline.runs.length : 0
   const baselineCommands = regression.baselineReported ? [...new Set(baseline.runs.map(r => r && r.command).filter(Boolean))] : []
   const baselineFailing = failingTests(baseline).map(t => t.id)
   regression.baselineFailures = baselineFailing.length
-  const deadCodes = deadExitCodes(baseline)
   // The real test ids among them (not the stand-in for a red command that named none):
   // every re-run brief lists these so the agent writes a repeat failure the same way twice.
   const baselineNamed = failingTests({ runs: ((baseline && baseline.runs) || []).filter(r => r && (r.failing || []).length) }).map(t => t.id)
   if (regression.baselineReported) {
-    log(`Fix: regression baseline — ${baselineCommands.length} command(s), ${baselineFailing.length} test(s) already failing`)
+    log(`Fix: regression baseline — ${baselineCommands.length} command(s), ${baselineFailing.length} test(s) already failing${deadBaselineRows ? `, ${deadBaselineRows} command(s) that ran no test left out` : ''}`)
   } else {
     log(`Fix: regression baseline did not report — stopping before any fix is applied; ${queue.length} bug(s) left unfixed`)
     unfixedBugs.push(...queue.map(b => ({ ...b, reason: 'regression baseline did not report — no fix attempted', wave: 0 })))
@@ -2498,10 +2525,14 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   }
   // null = the gate did not report. Otherwise the tests that fail now and did not before.
   // A re-run relay without the rows splitUnrun sets aside; each of those is said and counted.
+  const ownTestFiles = new Set() // every test file a fixer of this run has reported, repo-relative
+  const noteOwnTests = fixes => (fixes || []).forEach(fx => fx && fx.testFile && ownTestFiles.add(relPath(fx.testFile, repoRoot)))
   const judgedRuns = (tag, relay) => {
-    const { judged, unrun } = splitUnrun(relay, baselineCommands, deadCodes)
+    const { judged, unrun } = splitUnrun(relay, baselineCommands, deadCodes, [...ownTestFiles])
     regression.unrun += unrun.length
-    if (unrun.length) log(`Fix ${tag}: not checked — ${unrun.length} added command(s) ran no test (exit ${[...new Set(unrun.map(r => r.exitCode))].join(', ')}), as a baseline command did before any fix: ${capText(norm(unrun[0].command), 200)}`)
+    const said = (rows, why) => rows.length && log(`Fix ${tag}: not checked — ${rows.length} added command(s) ran no test (exit ${[...new Set(rows.map(r => r.exitCode))].join(', ')}), ${why}: ${capText(norm(rows[0].command), 200)}`)
+    said(unrun.filter(r => deadCodes.includes(r.exitCode)), 'as a baseline command did before any fix')
+    said(unrun.filter(r => !deadCodes.includes(r.exitCode)), "and name only this run's own test file(s)")
     return judged
   }
   const regressionCheck = async (tag, touched, pass) => {
@@ -2646,6 +2677,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     // file-owning agent may also touch them, but they're closed when their own wave runs).
     const fixById = new Map()
     for (const { r } of results) for (const fx of (r && r.fixes) || []) fixById.set(fx.bugId, fx)
+    noteOwnTests([...fixById.values()])
     // filesTouched is reported per fix agent (i.e. per file-chunk), so every bug in a
     // chunk shares its agent's supporting edits. Keyed by bugId so commitWave widens the
     // allowlist only for the bugs that actually closed.
@@ -2878,6 +2910,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     const g = cmd ? await bugGateAgent({ file: files[0], bugId: 'coupled' }, cmd) : await gateAgent(files)
     const passed = allGreen(g)
     const coupledFix = new Map(((pr && pr.fixes) || []).map(f => [f.bugId, f]))
+    noteOwnTests([...coupledFix.values()])
     const coupledSupport = new Map(stillOpen.map(b => [b.bugId, ((pr && pr.filesTouched) || []).filter(Boolean)]))
     const coupledFiles = waveAllowlist(stillOpen, coupledFix, coupledSupport, repoRoot)
     if (cmd && !passed) for (const b of stillOpen) redCommands.set(b.bugId, cmd)
