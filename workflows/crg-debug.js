@@ -695,6 +695,25 @@ const newFailures = (now, baselineIds, redCommands) => {
   const before = new Set(baselineIds || [])
   return (now || []).filter(t => !before.has(t.id) && !(redCommands || []).some(c => commandNamesTest(c, t.id)))
 }
+// A COMMAND THE RUNNER REJECTS IS NOT A BROKEN TEST. On arrow-py a plain `pytest <files>`
+// exits 4 before it runs a test (the project's options name a plugin the machine lacks).
+// The baseline held that command beside one that works; after each wave the gate's agent
+// ran the wave's new test files in both forms, the rejected one read as a test the fix had
+// broken, and all nine fixes of three waves were put back.
+// A row whose runner ran no test: red, no failing test named, no passed count. 124 is the
+// time limit, which says nothing about whether a test ran.
+const ranNoTest = run => !!run && run.exitCode !== 0 && run.exitCode !== 124 && !(run.failing || []).some(t => testIdOf(t && t.id)) && !(run.passed > 0)
+// The exit codes with which a baseline command ran no test, before any fix was applied.
+const deadExitCodes = baseline => [...new Set(((baseline && baseline.runs) || []).filter(ranNoTest).map(run => run.exitCode))]
+// A re-run relay split in two (pass it through resolveRuns first). `unrun` = the rows that
+// are not a baseline command, ran no test, and exited with a code a baseline command already
+// gave the same way: no fix made the runner reject them, so they are evidence of nothing and
+// stay out of the verdict. Every other row is judged as before.
+const splitUnrun = (relay, commands, deadCodes) => {
+  const isUnrun = run => ranNoTest(run) && baselineIndexOf(run.command, commands) < 0 && (deadCodes || []).includes(run.exitCode)
+  const runs = ((relay && relay.runs) || []).filter(Boolean)
+  return { judged: relay && { ...relay, runs: runs.filter(run => !isUnrun(run)) }, unrun: runs.filter(isUnrun) }
+}
 // After the blamed fixers go back, a test still failing may be one a standing fix of the SAME
 // wave wrote: that fix leaned on a change just taken back. On click a closed fix's new test
 // failed this way, and the whole wave of 10 bugs went back for it, 8 of which broke nothing.
@@ -2443,12 +2462,13 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   // Regression baseline — once, before the first fix is applied. Which blast-radius tests
   // already fail, and the exact commands that showed it. A baseline that did not report
   // leaves nothing to compare a wave against, so no fix is attempted at all.
-  const regression = { baselineReported: false, baselineFailures: 0, takenBack: 0, waves: [] }
+  const regression = { baselineReported: false, baselineFailures: 0, takenBack: 0, unrun: 0, waves: [] }
   const baseline = await regressionBaselineAgent(queue.map(bugFile))
   regression.baselineReported = regressionReported(baseline, [])
   const baselineCommands = regression.baselineReported ? [...new Set(baseline.runs.map(r => r && r.command).filter(Boolean))] : []
   const baselineFailing = failingTests(baseline).map(t => t.id)
   regression.baselineFailures = baselineFailing.length
+  const deadCodes = deadExitCodes(baseline)
   // The real test ids among them (not the stand-in for a red command that named none):
   // every re-run brief lists these so the agent writes a repeat failure the same way twice.
   const baselineNamed = failingTests({ runs: ((baseline && baseline.runs) || []).filter(r => r && (r.failing || []).length) }).map(t => t.id)
@@ -2477,10 +2497,17 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     return snapshot
   }
   // null = the gate did not report. Otherwise the tests that fail now and did not before.
+  // A re-run relay without the rows splitUnrun sets aside; each of those is said and counted.
+  const judgedRuns = (tag, relay) => {
+    const { judged, unrun } = splitUnrun(relay, baselineCommands, deadCodes)
+    regression.unrun += unrun.length
+    if (unrun.length) log(`Fix ${tag}: not checked — ${unrun.length} added command(s) ran no test (exit ${[...new Set(unrun.map(r => r.exitCode))].join(', ')}), as a baseline command did before any fix: ${capText(norm(unrun[0].command), 200)}`)
+    return judged
+  }
   const regressionCheck = async (tag, touched, pass) => {
     const relay = resolveRuns(await regressionRerunAgent(tag, baselineCommands, touched, baselineNamed, pass), baselineCommands)
     if (!regressionReported(relay, baselineCommands)) return null
-    return newFailures(failingTests(relay), baselineFailing, [...redCommands.values()])
+    return newFailures(failingTests(judgedRuns(tag, relay)), baselineFailing, [...redCommands.values()])
   }
   // Put files back as they stood at the wave's restore point. False = not confirmed.
   const takeBack = async (tag, files, snapshot) => {
@@ -2899,7 +2926,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     after: passedAfter.get(commandId(i)),
   }))
   // Nothing is excused at the end. A test of a bug left unfixed is still red in the tree.
-  const failingAtEnd = testsReported ? newFailures(failingTests(finalTests), baselineFailing, []).map(t => t.id) : []
+  const failingAtEnd = testsReported ? newFailures(failingTests(judgedRuns('final gate', finalTests)), baselineFailing, []).map(t => t.id) : []
   const openBugTests = failingAtEnd.filter(id => [...redCommands.values()].some(c => commandNamesTest(c, id)))
   const finalNew = failingAtEnd.filter(id => !openBugTests.includes(id))
   const finalGate = finalGateVerdict(checks, checksBefore, exitCodesById(finalRelay, stillGreen), finalNew, suites, openBugTests)
@@ -2917,7 +2944,7 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
   }
   fixResult = { waves: waveLog, fixed: fixedBugs, unfixed: unfixedBugs, branch: fixBranch || undefined, commits, uncommitted, finalGate: { clean: finalClean, ...finalGate, alreadyFailing, passedCounts, results: finalResults }, needsDecision, regressionGate: regression, existingTestEdits: testChanges, halted: halted || undefined }
   const awaiting = needsDecision.reduce((n, row) => n + row.bugs.length, 0)
-  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${awaiting} need a decision · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed)${uncommitted.length ? ` · ${uncommitted.length} wave(s) NOT known to be committed` : ''} · final gate ${finalWord}${alreadyFailing.length ? ` · ${alreadyFailing.length} test${alreadyFailing.length === 1 ? '' : 's'} already failing before the first fix` : ''}${finalGate.notChecked.length ? ` · not checked: ${finalGate.notChecked.map(c => c.name).join(', ')}` : ''} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back`)
+  log(`Fix complete: ${fixedBugs.length} fixed · ${unfixedBugs.length} unfixed · ${awaiting} need a decision · ${commits.length} wave commit(s)${fixBranch ? ` on ${fixBranch}` : ''} (never pushed)${uncommitted.length ? ` · ${uncommitted.length} wave(s) NOT known to be committed` : ''} · final gate ${finalWord}${alreadyFailing.length ? ` · ${alreadyFailing.length} test${alreadyFailing.length === 1 ? '' : 's'} already failing before the first fix` : ''}${finalGate.notChecked.length ? ` · not checked: ${finalGate.notChecked.map(c => c.name).join(', ')}` : ''} · regression gate: ${regression.baselineReported ? `${regression.baselineFailures} test(s) failing before the first fix` : 'no baseline'}, ${regression.takenBack} fix(es) taken back${regression.unrun ? `, ${regression.unrun} added command(s) not checked` : ''}`)
 }
 
 // ---- return -------------------------------------------------------------------

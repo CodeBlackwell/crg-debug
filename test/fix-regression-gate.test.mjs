@@ -511,7 +511,7 @@ test('a clean run takes a baseline, checks each wave before its commit, and repo
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.equal(result.fix.halted, undefined)
   assert.deepEqual(result.fix.regressionGate, {
-    baselineReported: true, baselineFailures: 0, takenBack: 0,
+    baselineReported: true, baselineFailures: 0, takenBack: 0, unrun: 0,
     waves: [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }],
   })
   assert.match(logs.at(-1), /regression gate: 0 test\(s\) failing before the first fix, 0 fix\(es\) taken back$/)
@@ -986,4 +986,86 @@ test('every agent that runs a test, build or typecheck command is told to run it
   assert.ok(briefOf('bugGateAgent').includes('${runRule(GATE_LIMIT_S)}'), "one bug's own test runs under the short limit")
   assert.ok(Number(/const GATE_LIMIT_S = (\d+)/.exec(src)[1]) < Number(/const RUN_LIMIT_S = (\d+)/.exec(src)[1]))
   for (const name of ['fixAgent', 'fixAgentCoupled']) assert.ok(briefOf(name).includes('${NEVER_BLOCK}'), `${name} is told a test must never wait for input`)
+})
+
+// ---- a command the runner rejects is not a broken test ---------------------------
+
+const U = new Function(`${block}\nreturn { ranNoTest, deadExitCodes, splitUnrun }`)()
+const row = (command, exitCode, passed, failing = []) => ({ command, exitCode, passed, failing: failing.map(id => ({ id })) })
+const PLAIN = 'pytest tests/test_alpha.py tests/test_bravo.py'
+const WORKING = 'pytest -o addopts="" tests/test_alpha.py tests/test_bravo.py'
+const DEAD_BASELINE = { runs: [row(PLAIN, 4, -1), row(WORKING, 0, 40)] }
+// What the script would call newly failing in a re-run relay, with and without the rule.
+const newlyFailing = (baseline, relay, withRule) => {
+  const commands = [...new Set(baseline.runs.map(run => run.command))]
+  const resolved = H.resolveRuns(relay, commands)
+  const judged = withRule ? U.splitUnrun(resolved, commands, U.deadExitCodes(baseline)).judged : resolved
+  return H.newFailures(H.failingTests(judged), H.failingTests(baseline).map(t => t.id), []).map(t => t.id)
+}
+
+test('a row ran no test when it is red, names no test and has no passed count', () => {
+  assert.equal(U.ranNoTest(row('pytest t', 4, -1)), true)
+  assert.equal(U.ranNoTest(row('pytest t', 4, 0)), true, 'a count of zero is no evidence a test ran')
+  assert.equal(U.ranNoTest(row('pytest t', 0, -1)), false, 'a green command is not in question')
+  assert.equal(U.ranNoTest(row('pytest t', 1, 12)), false, 'the runner printed a count')
+  assert.equal(U.ranNoTest(row('pytest t', 2, -1, ['tests/a.py'])), false, 'it named what failed')
+  assert.equal(U.ranNoTest(row('pytest t', 124, -1)), false, 'the time limit says nothing about whether a test ran')
+  assert.equal(U.ranNoTest(null), false)
+  assert.deepEqual(U.deadExitCodes(DEAD_BASELINE), [4])
+  assert.deepEqual(U.deadExitCodes({ runs: [row(WORKING, 1, 39, ['t::a'])] }), [])
+  assert.deepEqual(U.deadExitCodes(null), [])
+})
+
+test('an added command the runner rejects as it rejected a baseline command is set aside, and nothing else is', () => {
+  const added = (exitCode, passed, failing) => ({ runs: [row('c1', 4, -1), row('c2', 0, 40), row('pytest tests/test_new.py', exitCode, passed, failing)] })
+  assert.deepEqual(newlyFailing(DEAD_BASELINE, added(4, -1), true), [])
+  assert.equal(newlyFailing(DEAD_BASELINE, added(4, -1), false).length, 1, 'without the rule the same relay costs the wave')
+  assert.equal(newlyFailing(DEAD_BASELINE, added(2, -1), true).length, 1, 'red with another exit code is still a failure')
+  assert.equal(newlyFailing(DEAD_BASELINE, added(4, 12), true).length, 1, 'red with a passed count is still a failure')
+  assert.deepEqual(newlyFailing(DEAD_BASELINE, added(1, 3, ['tests/test_new.py::test_x']), true), ['tests/test_new.py::test_x'])
+  const live = { runs: [row(WORKING, 0, 40)] }
+  assert.equal(newlyFailing(live, { runs: [row('c1', 0, 40), row('pytest tests/test_new.py', 4, -1)] }, true).length, 1, 'no baseline command was rejected, so this one is news')
+  assert.equal(newlyFailing(DEAD_BASELINE, { runs: [row('c1', 4, -1), row('c2', 4, -1)] }, true).length, 1, 'a baseline command that stops running tests is a failure')
+  const { judged, unrun } = U.splitUnrun({ runs: [row('pytest tests/test_new.py', 4, -1), row('x', 0, 5), null] }, [], [4])
+  assert.deepEqual([judged.runs.length, unrun.length], [1, 1], 'the rows set aside come back for the log')
+  assert.equal(U.splitUnrun(null, [], [4]).judged, null, 'a dead relay stays dead')
+})
+
+test('a wave whose added command was rejected like a baseline command commits, and the run says what was not checked', async () => {
+  const wave = { runs: [row('c1', 4, -1), row('c2', 0, 40), row('pytest tests/test_alpha.py', 4, -1), row('pytest -o addopts="" tests/test_alpha.py', 0, 2)] }
+  const { result, labels, logs } = await fixRun(SRC, { bugs: TWO, on: { regress: script(DEAD_BASELINE, wave, wave) } })
+  assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
+  assert.equal(labels.some(l => /^(blame|restore):/.test(l)), false)
+  assert.equal(result.fix.regressionGate.unrun, 2, 'one in the wave check, one in the final gate')
+  assert.ok(logs.some(l => /^Fix wave 1: not checked — 1 added command\(s\) ran no test \(exit 4\), as a baseline command did before any fix: pytest tests\/test_alpha\.py$/.test(l)))
+  assert.match(logs.at(-1), /0 fix\(es\) taken back, 2 added command\(s\) not checked$/)
+})
+
+test('the same wave with the added command red another way still goes back', async () => {
+  const wave = { runs: [row('c1', 4, -1), row('c2', 0, 40), row('pytest tests/test_alpha.py', 2, -1)] }
+  const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(DEAD_BASELINE, wave) } })
+  assert.equal(labels.includes('blame:wave1'), true)
+  assert.equal(result.fix.regressionGate.unrun, 0)
+})
+
+// The relays of a live run: nine bugs of one file in three waves, every wave put back for a
+// command that exits 4 on that machine before it runs a test.
+const LIVE = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/rejected-command-relays.json', import.meta.url)), 'utf8')).relays
+
+test('the live relays that cost nine fixes: each wave read as one broken test, and under the rule as none', () => {
+  for (const wave of ['regress:wave1', 'regress:wave2', 'regress:wave3']) {
+    assert.equal(newlyFailing(LIVE['regress:baseline'], LIVE[wave], false).length, 1, `${wave} without the rule`)
+    assert.deepEqual(newlyFailing(LIVE['regress:baseline'], LIVE[wave], true), [], `${wave} with it`)
+  }
+})
+
+test('a fix run fed those relays keeps all nine fixes', async () => {
+  const bugs = Array.from({ length: 9 }, (_, i) => bug(`b${i}`, 'arrow/locales.py'))
+  const clean = { runs: [row('c1', 4, -1), row('c2', 0, 1624)] }
+  const { result, labels } = await fixRun(SRC, { bugs, on: { regress: ({ label }) => LIVE[label] || clean } })
+  assert.deepEqual(names(result.fix.fixed), names(bugs))
+  assert.deepEqual(labels.filter(l => /^regress:wave\d+$/.test(l)), ['regress:wave1', 'regress:wave2', 'regress:wave3'])
+  assert.equal(labels.some(l => /^(blame|restore):/.test(l)), false)
+  assert.equal(result.fix.regressionGate.unrun, 3)
+  assert.equal(result.fix.regressionGate.takenBack, 0)
 })

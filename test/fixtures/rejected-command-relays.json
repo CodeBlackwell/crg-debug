@@ -1,0 +1,99 @@
+{
+ "note": "The regression gate's relays of one live fix run on arrow-py, as the agents returned them: a baseline that holds a command the runner rejects (exit 4) beside one that works, and three waves whose added commands were rejected the same way.",
+ "relays": {
+  "regress:baseline": {
+   "runs": [
+    {
+     "command": "cd /arrow && pytest tests/test_locales.py tests/test_arrow.py tests/test_parser.py tests/test_formatter.py",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest -o addopts=\"\" tests/test_locales.py tests/test_arrow.py tests/test_parser.py tests/test_formatter.py",
+     "exitCode": 0,
+     "passed": 1624,
+     "failing": []
+    }
+   ]
+  },
+  "regress:wave1": {
+   "runs": [
+    {
+     "command": "c1",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "c2",
+     "exitCode": 0,
+     "passed": 1624,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest tests/test_crg_b0.py tests/test_crg_b1.py tests/test_crg_b2.py tests/test_crg_b3.py",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest -o addopts=\"\" tests/test_crg_b0.py tests/test_crg_b1.py tests/test_crg_b2.py tests/test_crg_b3.py",
+     "exitCode": 0,
+     "passed": 15,
+     "failing": []
+    }
+   ]
+  },
+  "regress:wave2": {
+   "runs": [
+    {
+     "command": "c1",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "c2",
+     "exitCode": 0,
+     "passed": 1624,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest tests/test_crg_b4.py tests/test_crg_b5.py tests/test_crg_b6.py tests/test_crg_b7.py",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest -o addopts=\"\" tests/test_crg_b4.py tests/test_crg_b5.py tests/test_crg_b6.py tests/test_crg_b7.py",
+     "exitCode": 0,
+     "passed": 4,
+     "failing": []
+    }
+   ]
+  },
+  "regress:wave3": {
+   "runs": [
+    {
+     "command": "c1",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    },
+    {
+     "command": "c2",
+     "exitCode": 0,
+     "passed": 1624,
+     "failing": []
+    },
+    {
+     "command": "cd /arrow && pytest tests/test_crg_b8.py",
+     "exitCode": 4,
+     "passed": -1,
+     "failing": []
+    }
+   ]
+  }
+ }
+}

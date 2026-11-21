@@ -13,6 +13,17 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   10.24 a fix run from a saved ledger stopped at its first step with "could not read/parse
   ledger"; a full run there could not have saved its ledger either. Both programs now build
   the same lists with `concat`, and print the same bytes as before on a current node.
+- **A test command the runner rejects no longer costs a wave its fixes** (`crg-debug.js`). On
+  a project whose test options name a plugin the machine lacks, a plain `pytest <files>` exits
+  4 before it runs a test. When the regression baseline held such a command beside one that
+  works, the agent re-running the gate ran each wave's new test files in both forms, the
+  rejected one was read as a test the fix had broken, and every wave was put back: nine fixes
+  in three waves in one run, each of which had passed its own test. A re-run row is now set
+  aside when it is not a baseline command, ran no test (red, no test named, no passed count),
+  and exited with a code a baseline command already gave the same way before any fix. Such
+  rows are logged, counted in `fix.regressionGate.unrun`, and named in the closing line. Any
+  other red row is judged as before. Over the gate relays of 30 earlier runs this changes
+  three verdicts, the three waves of that run.
 
 ## [0.34.0] - 2026-11-19
 
