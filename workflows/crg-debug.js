@@ -2391,6 +2391,7 @@ const CONTAINERIZED_TEST_NOTE = `If the toolchain commands above are containeriz
 const fixAgent = (file, bugs) =>
   startAgent(
     `Fix confirmed bugs in ONE file in the repo at ${repoRoot} using strict TDD. You EXCLUSIVELY own this file for this wave — edit ONLY it (plus one new test file per bug): ${file}
+${SHARED_TREE_RULE}
 
 Bugs in this file (${bugs.length}) — fix EVERY one:
 ${bugRows(bugs)}
@@ -2511,6 +2512,10 @@ const RUN_LIMIT_S = 590
 const GATE_LIMIT_S = 120
 const runRule = limit => `How to run every test, build or typecheck command: first run \`mktemp -d\` once and keep the directory it prints, D, as your own (agents running beside you have theirs). Write each command exactly as given into a file of its own, D/run-<n>.sh, then run it in the foreground as \`timeout ${limit} sh D/run-<n>.sh < /dev/null > D/run-<n>.log 2>&1; echo "exit=$?"\` (leave off \`timeout ${limit}\` only where \`command -v timeout\` finds nothing), with your shell tool's own time limit at its maximum, and read the log file back. Its exit code is the one echoed; 124 means the time limit stopped it, so report 124. Never pipe a command into tail, head, grep or anything else, never run it in the background, and never wait on, list or kill processes by name (no pgrep, pkill or killall): other agents' runs share this machine.`
 const RUN_RULE = runRule(RUN_LIMIT_S)
+// Fixers of one wave share one working tree. In every saved run 14 to 38% of fixers ran git
+// stash or checkout to see their test fail before the fix, which moves every other fixer's
+// edits too: on pendulum a fix to _iso8601.c was lost that way and only its tests committed.
+const SHARED_TREE_RULE = 'Other fixers are editing other files in this same working tree at this moment. Never run a git command that changes the tree, the index or the stash (stash, checkout, switch, reset, restore, clean, add, commit, rm, mv): it would move their work as well as yours. To see a test fail before your fix, run it before you edit the source.'
 const NEVER_BLOCK = 'A test must never wait for input: it must not read a terminal, a pseudo-terminal, stdin, a socket or a pipe that nothing writes to, and anything that could block needs its own timeout inside the test. Its gate runs it under a short time limit, and a test stopped by the limit fails.'
 const RUN_TO_COMPLETION = 'TO COMPLETION — never stop at the first failure: no -x, --exitfirst, --maxfail, --bail or other fail-fast flag'
 const fileList = files => {
@@ -2521,7 +2526,7 @@ const fileList = files => {
 const regressionBaselineAgent = (files, again) =>
   startAgent(
     `Record the regression baseline for the repo at ${repoRoot}, BEFORE any fix is applied. Do NOT edit any file.
-1. Work out the test commands for the BLAST RADIUS of the files below, NOT the whole suite (it can be huge and hang). Compute the radius with the graph: for each file call get_impact_radius_tool and query_graph_tool(pattern="tests_for") (plus get_affected_flows_tool) to collect the tests that exercise those files AND their dependents. If the graph finds no covering test for a file, use its nearest co-located/sibling test; only if none exists at all, fall back to that one package's default test command. Name whole test FILES or directories in each command (no -k filter, no single test id): these exact commands are re-run after every fix wave and must still cover tests added to those files later.
+1. Work out the test commands for the BLAST RADIUS of the files below, NOT the whole suite (it can be huge and hang). Compute the radius with the graph: for each file call get_impact_radius_tool and query_graph_tool(pattern="tests_for") (plus get_affected_flows_tool) to collect the tests that exercise those files AND their dependents. If the graph finds no covering test for a file, use its nearest co-located/sibling test; only if none exists at all, fall back to that one package's default test command. Name whole test FILES or directories in each command (no -k filter, no single test id): these exact commands are re-run after every fix wave and must still cover tests added to those files later. If the package compiles extension modules in place (C or Cython sources built beside its Python code, as \`python setup.py build_ext --inplace\` does), begin each command with that in-place build joined by \`&&\`: a take-back puts back the source, not the built file, so every re-run has to build from the source as it stands.
 2. Run each command ${RUN_TO_COMPLETION}.
 Files about to be fixed (blast-radius roots):
 ${fileList(files)}

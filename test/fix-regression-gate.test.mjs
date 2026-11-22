@@ -462,8 +462,8 @@ const PINNED = {
   two: [
     'ingest-ledger 6c90c773b570',
     'fix-branch f0bdaf259764',
-    'fix:alpha.py 66d5a1adec79',
-    'fix:bravo.py 48fcca7ea951',
+    'fix:alpha.py 66717d0b1eb0',
+    'fix:bravo.py e76b8ffc472c',
     'gate:alpha.py de7a62f7843c',
     'gate:bravo.py c3cb5bae12ec',
     'commit:wave 974aab4a3936',
@@ -472,27 +472,27 @@ const PINNED = {
   busy: [
     'ingest-ledger 05a8f53eab59',
     'fix-branch 5093eaa3874e',
-    'fix:alpha.py 068d465207d2',
-    'fix:bravo.py ac0daf040a16',
+    'fix:alpha.py da6a70a8b877',
+    'fix:bravo.py 7ce824d44167',
     'gate:alpha.py 5fff255db671',
     'gate:alpha.py be353dfc00ad',
     'gate:alpha.py ea8e6951ff12',
     'gate:alpha.py f9ec38447b70',
     'gate:bravo.py ec7cb42870f3',
     'commit:wave cd48fbe54531',
-    'fix:alpha.py 29a910013d80',
+    'fix:alpha.py 60edc5659c38',
     'gate:alpha.py 5fff255db671',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 9b2e814fdb2d',
+    'fix:alpha.py 4f318348d815',
     'gate:alpha.py be353dfc00ad',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 92c07a804c60',
+    'fix:alpha.py a8264b57172d',
     'gate:alpha.py f9ec38447b70',
     'commit:wave 2004fb596429',
-    'fix:alpha.py 255be8242b0d',
+    'fix:alpha.py 72a927e60923',
     'gate:alpha.py d1a15ffbdaaf',
     'gate:alpha.py ea8e6951ff12',
-    'fix:alpha.py 83e6c2a019d8',
+    'fix:alpha.py 570ac5509df9',
     'gate:alpha.py d1a15ffbdaaf',
     'commit:wave 2004fb596429',
     'fix:coupled 8f1c8100af82',
@@ -1242,4 +1242,21 @@ test('a second attempt that prints no count, or does not report, leaves the run 
     assert.equal(result.fix.finalGate.verdict, 'not checked')
     assert.ok(logs.includes('Fix: regression baseline — a test command exited 2 with no passed count; a second attempt gave none either, so a test it never ran can look newly failing later'))
   }
+})
+
+// Fixers of one wave share one working tree; in every saved run some ran git stash, which moves
+// every other fixer's edits too (pendulum, round 101).
+test('every fixer is told the tree is shared and not to run git commands that move it', async () => {
+  const { calls } = await fixRun(SRC, { bugs: TWO })
+  for (const call of calls.filter(c => c.label.startsWith('fix:'))) {
+    assert.ok(call.prompt.includes('Other fixers are editing other files in this same working tree at this moment.'), call.label)
+    assert.ok(call.prompt.includes('(stash, checkout, switch, reset, restore, clean, add, commit, rm, mv)'), call.label)
+  }
+})
+
+// A take-back puts back a C source, not the extension built from it (pendulum, round 101).
+test('the regression baseline is told to build compiled extensions in place at the start of each command', async () => {
+  const { calls } = await fixRun(SRC, { bugs: TWO })
+  const baseline = calls.find(c => c.label === 'regress:baseline')
+  assert.ok(baseline.prompt.includes('begin each command with that in-place build joined by `&&`'))
 })

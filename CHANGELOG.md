@@ -6,6 +6,19 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- **Fixers no longer move each other's work with git** (`crg-debug.js`). The fixers of a wave
+  edit one shared working tree at the same time, and in every saved run 14 to 38% of them ran
+  `git stash` or `git checkout` to see their test fail before the fix. That moves every other
+  fixer's edits too: on pendulum a fix to `_iso8601.c` was lost before its commit, only its
+  tests were committed, and every later wave was blamed for their failure. Each fixer is now
+  told the tree is shared and not to run a git command that changes the tree, the index or the
+  stash, and to run its test before it edits the source.
+- **A take-back is checked against a fresh build of compiled extensions** (`crg-debug.js`). A
+  take-back puts back a C source but not the extension built from it, so a wave's rebuilt `.so`
+  outlived the take-back and failed tests in every later wave. The regression baseline agent is
+  told, for a package that builds extensions in place, to begin each command with that build.
+
 ## [0.35.0] - 2026-11-22
 
 ### Added
