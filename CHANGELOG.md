@@ -6,6 +6,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-22
+
 ### Added
 - **`stageModels.ledger` (`--ledger-model`): the ledger's writers and readers on a model of
   their own** (`crg-debug.js`, skill). These agents only copy sealed text, and every row is
