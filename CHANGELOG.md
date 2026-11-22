@@ -14,6 +14,19 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   Unset, the ledger stage runs on the run's model, as every stage does.
 
 ### Fixed
+- **A ledger is saved even when a few of its rows are copied wrong on every try**
+  (`crg-debug.js`). When the agents that write the ledger cannot copy a row to the disk as
+  sent, the whole ledger used to be thrown away. Now, if at most 4 finding rows
+  (confirmed, deferred, rejected or unreviewed) are still missing after every retry, the write
+  program is run once more and told which rows to stand without: it writes every other row
+  and puts a placeholder `{file, notWritten}` in each lost row's place, so the counts stay
+  true. The log says `persisted WITHOUT n row(s)`, `ledgerSaved` is `'partial'` rather than
+  `true`, and the return's `notWritten` names each row, which the return still holds whole.
+  A run from such a ledger lists the placeholder under `unread` with `notWritten: true`, leaves
+  it out of the fix queue and says so; a `fixOnly` run that would need it stops with an error.
+  Limits: findings only (never counts, toolchain, baseline or the kept places), and more than 4
+  missing rows still writes nothing. An older version refuses such a file. A write with no
+  fault is unchanged. The write budget holds one more agent for the extra write.
 - **A thrown agent failure no longer ends a crg-agentsmd, crg-ui-prep or farm-bypass run**
   (`crg-agentsmd.js`, `crg-ui-prep.js`, `crg-debug.farm-bypass.js`). These three still called
   `agent()` bare at the top level, so a schema-gated call that ran out of retries threw past

@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Graph-driven bug discovery + optional TDD fix waves: build/refresh the code-review-graph, map hotspots, fan out concern-disjoint finders, adversarially verify each finding, then (with fix=true) fix confirmed bugs in file-disjoint waves gated by real exit codes. Each validated wave is committed on a crg-debug/fix-* branch and the graph re-ingested; never pushes.',
   whenToUse:
-    'Requires args {repoRoot, scope?, model?, stageModels?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fixOnly?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json) ingests that ledger and skips Map/Discover: it first reviews whatever the ledger lists under unreviewed (the same reviewers and rule as a sweep\'s Verify), saves the ledger again, and then, with fix:true, runs the fix phase over the confirmed bugs — the serialized detect->fix hand-off; with fix off it only finishes the review (mode \'review-from-ledger\'). A ledger with nothing unreviewed goes straight to the fix phase. fixOnly:true (needs fromLedger and fix:true) fixes exactly the ledger\'s confirmed rows: its unreviewed rows are not reviewed and stay where they are, so a caller whose human chose the bugs to fix can be sure nothing confirmed afterwards is fixed. Deferred and rejected rows are counted and stay on disk: a run from a ledger returns only the ones it moved there itself, with the totals in stats. The ledger is read a row to a line, each row under its own seal; a row that does not arrive whole is asked for again alone, and one that never does is left out of the run, stays in the file, and is listed in the return\'s unread ([{bucket, index}]; after a re-save, its place in the saved ledger, which carries the same list). The run stops instead when none of the rows it came for arrived, when the toolchain or the baseline failures did not, or when it is fixOnly and a confirmed row is missing. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it by a fixed rule (library code before examples, docs, scripts and benchmarks, then by path and line) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. After a take-back every bug of that fixer is attempted alone, one bug per agent, and only an attempt a bug had to itself counts against it. A bug whose own attempt is taken back gets one retry; the second time its fix is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. A baseline test command that exits red with no passed count may have run nothing (a test file that fails to import stops some runners outright), so it is run once more without the files that would not load and the run that prints a count takes its place; when none does, the fix phase goes on as before and logs it. At the final gate a failing test that no baseline command ran (it fails only under a command the second step of the gate picked) is not called new on sight: the whole tree is moved to the first restore point and back, each move proved by git, and its command is run there once. A test that fails there joins fix.finalGate.alreadyFailing, one that passes there is a new failure, and one the check could not settle is listed in fix.finalGate.noBefore, where the gate is neither red for it nor green over it. The return carries fix.regressionGate. A confirmed finding whose two reviewers disagreed (conflicted in the ledger) is never attempted: every fix result lists these in fix.conflicted, each with its conflictNote and a reason, apart from fixed and unfixed, and when they are all there is the fix phase does not start and fix.notStarted says so. Each validated wave is committed one fixer at a time (a fixer\'s closed bugs and only their files, allowlist-verified; fixers whose files overlap share a commit, since a file is staged whole) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, a newly failing test, or fewer tests passing than before; a typecheck or build that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way. A test command is judged test by test, not by its exit code: every test relay carries the passed count from the runner\'s own summary, the tests that failed before the first fix are listed in fix.finalGate.alreadyFailing (id and command) and counted in the closing line, and a test command with no passed count before the first fix is listed in notChecked; \'green\' needs at least one check that held before and after, otherwise the verdict is \'not checked\'. At the end nothing is excused: a test of a bug left unfixed that still fails makes the verdict \'red\' and is listed in fix.finalGate.openBugTests, apart from newFailures. A scope made only of paths (each token has a / or a file extension) is a file set the script keeps to: the graph agent is told not to widen it, Map targets outside it are dropped, a scoped file Map left out is added, and findings outside it are dropped before Verify; any other scope is a focus in words, resolved as before. stageModels ({graph?, map?, discover?, verify?, fix?}, each a model name, or null / \'session\' to inherit the session model) runs each phase\'s agents on that phase\'s model; a phase it leaves out runs on model, and with no stageModels every agent runs on model as before. An unknown phase or an unusable value is refused before any agent starts. The ledger and the return carry models, the model of every phase by name (\'session\' where it inherits). A run counts the agents it starts against the Workflow limit of 1000 and returns agents {started, limit}. When Verify cannot give every finding its two reviewers it reviews the highest-ranked (severity, then confidence, then order) and returns the others in unreviewed with unreviewedReason \'agent limit\'; a finding whose reviewers both returned nothing is unreviewed with \'no verdict\', never rejected or deferred. The fix phase starts no wave it could not finish with the agents left, and the bugs it leaves for that are in fix.unfixed with reason \'agent limit\' (fix.notStarted says the same when not even one wave fits). The ledger carries unreviewed beside the other buckets, and counts, the number of rows in each bucket: a run from a ledger stops with an error naming the file when the file does not hold what its counts say, or holds a row that is not a finding (no file or rootCause); a ledger written before the counts existed is accepted and logged as unchecked. The ledger is written and read in pieces of at most 16,000 characters, put together or taken apart by a fixed node command whose printed lengths, seals and row counts the script checks (node must be on the PATH of the agents\' shell); ledgerSaved is true when this run\'s write was whole and false when it was not. Nothing is ever pushed.',
+    'Requires args {repoRoot, scope?, model?, stageModels?, fix?, discoveryRounds?, issueContext?, issueRef?, methodologyPath, fromLedger?, fixOnly?, fromFindings?, priorFailure?, discover?, maxUnits?}. priorFailure (evidence text from a prior lower-tier fix attempt, e.g. the farm ladder\'s failed pass) is fenced into every fix brief so the escalated tier knows what already failed. fromLedger (absolute path to a prior run\'s .crg-debug/ledger.json) ingests that ledger and skips Map/Discover: it first reviews whatever the ledger lists under unreviewed (the same reviewers and rule as a sweep\'s Verify), saves the ledger again, and then, with fix:true, runs the fix phase over the confirmed bugs — the serialized detect->fix hand-off; with fix off it only finishes the review (mode \'review-from-ledger\'). A ledger with nothing unreviewed goes straight to the fix phase. fixOnly:true (needs fromLedger and fix:true) fixes exactly the ledger\'s confirmed rows: its unreviewed rows are not reviewed and stay where they are, so a caller whose human chose the bugs to fix can be sure nothing confirmed afterwards is fixed. Deferred and rejected rows are counted and stay on disk: a run from a ledger returns only the ones it moved there itself, with the totals in stats. The ledger is read a row to a line, each row under its own seal; a row that does not arrive whole is asked for again alone, and one that never does is left out of the run, stays in the file, and is listed in the return\'s unread ([{bucket, index}]; after a re-save, its place in the saved ledger, which carries the same list). The run stops instead when none of the rows it came for arrived, when the toolchain or the baseline failures did not, or when it is fixOnly and a confirmed row is missing. fromFindings (an inline array of up to 200 finding rows — file, concern, symptom, rootCause, severity, whyRepro, confidence — UNTRUSTED, only ever fenced; not combinable with fromLedger or fix:true) replays Verify ALONE: Graph still runs, Map/Discover and the semantic merge are skipped, the supplied rows are verified unchanged, the ledger is persisted as usual and the return carries mode:\'verify-from-findings\' — for measuring a Verify change against saved findings. discover:\'units\' (default \'concerns\') swaps the concern finders and residual pass for one finder per function: a lister per mapped non-test file relays the graph\'s function list, the script orders it by a fixed rule (library code before examples, docs, scripts and benchmarks, then by path and line) and caps it at maxUnits (default 500, drops logged), and each finder must RUN its function against its documented behaviour — so this mode executes the repo\'s code, writing nothing; discoveryRounds is ignored. Default (fix omitted/false) = read-only Discover -> Verify, returns a confirmed real-bug ledger. issueContext (the fetched issue/ticket body — UNTRUSTED, only ever fenced) makes the sweep symptom-directed: it resolves the file set and is threaded into the finders so they hunt the reported bug; issueRef is short provenance recorded in the ledger. discoveryRounds>1 opts into loop-until-dry discovery: re-run the finders (each round told what is already found) until a round surfaces nothing new or the cap is hit. fix=true also runs Phase 4: TDD fix waves (RED before edit, GREEN after) over file-disjoint bug sets, with an independent gate agent whose exit codes the script reads. A regression gate guards every commit: before the first wave an agent runs the blast-radius tests of the files to be fixed and the script records which already fail; after each wave (and the coupled fallback) the same commands re-run, and a fix behind a test that passed before and fails now is taken back before anything commits — its files put back exactly as they stood when the wave began (a restore point is recorded before every wave, uncommitted content included, without touching the working tree or the index); a fix may add tests but may not change or remove a line of a test file that existed when its wave began: the script checks. After a take-back every bug of that fixer is attempted alone, one bug per agent, and only an attempt a bug had to itself counts against it. A bug whose own attempt is taken back gets one retry; the second time its fix is saved as a commit on no branch under refs/crg-debug/proposed/ and reported in fix.needsDecision (reason, the existing test\'s changed lines, the fixer\'s stated ground as a claim, the ref and the command that applies it) — never committed, merged or pushed; a gate or check that does not report costs the wave, never passes it, and a baseline that does not report stops the fix phase before any fix. A baseline test command that exits red with no passed count may have run nothing (a test file that fails to import stops some runners outright), so it is run once more without the files that would not load and the run that prints a count takes its place; when none does, the fix phase goes on as before and logs it. At the final gate a failing test that no baseline command ran (it fails only under a command the second step of the gate picked) is not called new on sight: the whole tree is moved to the first restore point and back, each move proved by git, and its command is run there once. A test that fails there joins fix.finalGate.alreadyFailing, one that passes there is a new failure, and one the check could not settle is listed in fix.finalGate.noBefore, where the gate is neither red for it nor green over it. The return carries fix.regressionGate. A confirmed finding whose two reviewers disagreed (conflicted in the ledger) is never attempted: every fix result lists these in fix.conflicted, each with its conflictNote and a reason, apart from fixed and unfixed, and when they are all there is the fix phase does not start and fix.notStarted says so. Each validated wave is committed one fixer at a time (a fixer\'s closed bugs and only their files, allowlist-verified; fixers whose files overlap share a commit, since a file is staged whole) on a crg-debug/fix-* branch off the current HEAD, followed by a code-review-graph update so later waves/gates query a graph that matches the tree; commit:false opts out. A wave whose fixes are not known to be in a commit (refused, failed, or a commit relay that never reported) is logged and listed in fix.uncommitted with its bugs; when nobody can say whether the commit landed, the fix phase stops there and fix.halted says why. A run with fix on first checks the working tree, before it writes anything: if a tracked file is staged, modified or deleted, or the check does not report, the fix phase does not start (fix.notStarted says why and fix.tree names the files) while Discover and Verify still report; untracked files do not block. The final gate is judged against a baseline taken before the first fix: fix.finalGate.verdict is \'red\' for a typecheck or build that was green and is not, a newly failing test, or fewer tests passing than before; a typecheck or build that was already red (a tool that is not installed, say) is listed in notChecked with its exit code and counts neither way. A test command is judged test by test, not by its exit code: every test relay carries the passed count from the runner\'s own summary, the tests that failed before the first fix are listed in fix.finalGate.alreadyFailing (id and command) and counted in the closing line, and a test command with no passed count before the first fix is listed in notChecked; \'green\' needs at least one check that held before and after, otherwise the verdict is \'not checked\'. At the end nothing is excused: a test of a bug left unfixed that still fails makes the verdict \'red\' and is listed in fix.finalGate.openBugTests, apart from newFailures. A scope made only of paths (each token has a / or a file extension) is a file set the script keeps to: the graph agent is told not to widen it, Map targets outside it are dropped, a scoped file Map left out is added, and findings outside it are dropped before Verify; any other scope is a focus in words, resolved as before. stageModels ({graph?, map?, discover?, verify?, fix?}, each a model name, or null / \'session\' to inherit the session model) runs each phase\'s agents on that phase\'s model; a phase it leaves out runs on model, and with no stageModels every agent runs on model as before. An unknown phase or an unusable value is refused before any agent starts. The ledger and the return carry models, the model of every phase by name (\'session\' where it inherits). A run counts the agents it starts against the Workflow limit of 1000 and returns agents {started, limit}. When Verify cannot give every finding its two reviewers it reviews the highest-ranked (severity, then confidence, then order) and returns the others in unreviewed with unreviewedReason \'agent limit\'; a finding whose reviewers both returned nothing is unreviewed with \'no verdict\', never rejected or deferred. The fix phase starts no wave it could not finish with the agents left, and the bugs it leaves for that are in fix.unfixed with reason \'agent limit\' (fix.notStarted says the same when not even one wave fits). The ledger carries unreviewed beside the other buckets, and counts, the number of rows in each bucket: a run from a ledger stops with an error naming the file when the file does not hold what its counts say, or holds a row that is not a finding (no file or rootCause); a ledger written before the counts existed is accepted and logged as unchecked. The ledger is written and read in pieces of at most 16,000 characters, put together or taken apart by a fixed node command whose printed lengths, seals and row counts the script checks (node must be on the PATH of the agents\' shell); ledgerSaved is true when this run\'s write was whole, \'partial\' when it was written without a few findings it could not write (at most 4, after every try; each holds a placeholder {file, notWritten} in its place, is named in the return\'s notWritten [{bucket, index, file}] by its place in the return, and is left out of a run from that ledger, named in its unread with notWritten:true), and false when nothing was written. Nothing is ever pushed.',
   phases: [
     { title: 'Graph', detail: 'build/refresh the graph + baseline build/typecheck' },
     { title: 'Map', detail: 'CRG hotspot/coverage map, partitioned by concern' },
@@ -512,9 +512,9 @@ const ledgerBound = (fixed, findings) =>
 // How many rows that did not reach the disk whole are sent again one to an agent; more than
 // this go again packed into pieces. And how often a write is tried again (ROW_TRIES_ALONE).
 const WRITE_ROWS_ALONE = 4
-// Agents one write takes: a writer per piece, the one that assembles them, and room for
-// every retry with its own assemble step.
-const ledgerWriteAgents = chars => Math.max(1, Math.ceil(chars / LEDGER_PIECE)) + 1 + 2 * (WRITE_ROWS_ALONE + 1)
+// Agents one write takes: a writer per piece, the one that assembles them, room for
+// every retry with its own assemble step, and one more to write without the rows left out.
+const ledgerWriteAgents = chars => Math.max(1, Math.ceil(chars / LEDGER_PIECE)) + 1 + 2 * (WRITE_ROWS_ALONE + 1) + 1
 // FNV-1a over a text, as eight hex digits. Not cryptographic: it shows that a piece which
 // went through an agent came out as it went in. The node programs below carry the same
 // function; the tests run them and compare.
@@ -560,11 +560,12 @@ const LEDGER_ROW_SECTIONS = ['toolchain', 'baselineFailures', 'confirmedBugs', '
 // place there and a seal over all three and the row's text, so each row is checked on its
 // own: a relay that alters one row loses that row and no other. The lines are packed
 // into batches of at most a piece. Asked for 0 it prints how many rows each section holds,
-// how many of those are findings (a row with a file and a rootCause), the counts the
+// how many of those are findings (a row with a file and a rootCause, or the placeholder
+// a write left in the place of one it could not write: a file and notWritten), the counts the
 // ledger carries of itself and how many batches there are, those four lines under one
 // seal, and the rows too when they are one batch. Asked for k it prints batch k. Asked
 // for `row <section> <place>` it prints that one row, alone.
-const LEDGER_READ_PROGRAM = `const fs=require("fs"),[file,what,section,place]=process.argv.slice(1);${LEDGER_SEAL_JS}${LEDGER_LINE_JS}const all=JSON.parse(fs.readFileSync(file,"utf8")),rows=key=>Array.isArray(all[key])?all[key]:[];const R=${JSON.stringify(LEDGER_ROW_SECTIONS)};const line=(key,i)=>{const text=lineSafe(JSON.stringify(rows(key)[i]));return "crg-ledger-row "+key+" "+i+" "+seal(key+" "+i+" "+text)+" "+text};const lines=[].concat(...R.map(key=>rows(key).map((row,i)=>line(key,i))));const batches=[[]];let size=0;for(const l of lines){if(size&&size+l.length>${LEDGER_PIECE}){batches.push([]);size=0}batches[batches.length-1].push(l);size+=l.length}const show=n=>batches[n-1].forEach(l=>console.log(l));const isFinding=r=>!!r&&typeof r==="object"&&typeof r.file==="string"&&r.file!==""&&typeof r.rootCause==="string"&&r.rootCause!=="";if(what==="0"){const S=${JSON.stringify(LEDGER_SECTIONS)},said=all.counts;const head=["crg-ledger-rows "+S.map(key=>rows(key).length).join(" "),"crg-ledger-findings "+S.map(key=>rows(key).filter(isFinding).length).join(" "),"crg-ledger-says "+(said&&typeof said==="object"?S.map(key=>String(said[key])):["nothing"]).join(" "),"crg-ledger-read "+rows("toolchain").length+" "+rows("baselineFailures").length+" "+batches.length];head.forEach(l=>console.log(l));console.log("crg-ledger-head",seal(head.join("|")));if(batches.length===1)show(1)}else if(what==="row"){if(!R.includes(section)||!(+place<rows(section).length))process.exit(1);console.log(line(section,+place))}else{if(!batches[+what-1])process.exit(1);show(+what)}`
+const LEDGER_READ_PROGRAM = `const fs=require("fs"),[file,what,section,place]=process.argv.slice(1);${LEDGER_SEAL_JS}${LEDGER_LINE_JS}const all=JSON.parse(fs.readFileSync(file,"utf8")),rows=key=>Array.isArray(all[key])?all[key]:[];const R=${JSON.stringify(LEDGER_ROW_SECTIONS)};const line=(key,i)=>{const text=lineSafe(JSON.stringify(rows(key)[i]));return "crg-ledger-row "+key+" "+i+" "+seal(key+" "+i+" "+text)+" "+text};const lines=[].concat(...R.map(key=>rows(key).map((row,i)=>line(key,i))));const batches=[[]];let size=0;for(const l of lines){if(size&&size+l.length>${LEDGER_PIECE}){batches.push([]);size=0}batches[batches.length-1].push(l);size+=l.length}const show=n=>batches[n-1].forEach(l=>console.log(l));const isFinding=r=>!!r&&typeof r==="object"&&typeof r.file==="string"&&r.file!==""&&(typeof r.rootCause==="string"&&r.rootCause!==""||typeof r.notWritten==="string");if(what==="0"){const S=${JSON.stringify(LEDGER_SECTIONS)},said=all.counts;const head=["crg-ledger-rows "+S.map(key=>rows(key).length).join(" "),"crg-ledger-findings "+S.map(key=>rows(key).filter(isFinding).length).join(" "),"crg-ledger-says "+(said&&typeof said==="object"?S.map(key=>String(said[key])):["nothing"]).join(" "),"crg-ledger-read "+rows("toolchain").length+" "+rows("baselineFailures").length+" "+batches.length];head.forEach(l=>console.log(l));console.log("crg-ledger-head",seal(head.join("|")));if(batches.length===1)show(1)}else if(what==="row"){if(!R.includes(section)||!(+place<rows(section).length))process.exit(1);console.log(line(section,+place))}else{if(!batches[+what-1])process.exit(1);show(+what)}`
 // A LEDGER IS WRITTEN A ROW TO A LINE. It used to go as one JSON text cut into pieces, under
 // one seal per piece. A live run lost a whole ledger that way: the agent writing piece 22
 // of 24 changed one row of it on both tries, so the piece failed twice and nothing was
@@ -579,7 +580,10 @@ const LEDGER_READ_PROGRAM = `const fs=require("fs"),[file,what,section,place]=pr
 // rows of the file that is there, by section and place, and they follow the section's
 // `set` rows (a run that could not read a row still must not write the ledger without
 // it). It prints a line per place it is missing, and the rows of the file it wrote.
-const LEDGER_WRITE_PROGRAM = `const fs=require("fs"),[file,n,want,shapeText,onto]=process.argv.slice(1);${LEDGER_SEAL_JS}const NEWLINE=String.fromCharCode(10);const shape=String(shapeText||"").split(",").filter(Boolean).map(s=>{const k=s.lastIndexOf(":");return [s.slice(0,k),+s.slice(k+1)]});const got=new Map();for(let i=1;i<=+n;i++){let t="";try{t=fs.readFileSync(file+".part-"+i,"utf8")}catch(e){}for(const raw of t.split(NEWLINE)){const m=/^crg-ledger-put ([^ ]+ (?:-|[0-9]+)) ([0-9a-f]{8}) (.*)$/.exec(raw.trim());if(m&&!got.has(m[1])&&seal(m[1]+" "+m[3])===m[2])got.set(m[1],m[3])}}const places=([slot,c])=>c<0?[slot+" -"]:Array.from({length:c},(_,j)=>slot+" "+j);const missing=[].concat(...shape.map(places)).filter(key=>!got.has(key));missing.forEach(key=>console.log("crg-ledger-missing "+key));const text=[].concat(...shape.map(places)).filter(key=>got.has(key)).map(key=>"crg-ledger-put "+key+" "+seal(key+" "+got.get(key))+" "+got.get(key)).join(NEWLINE);if(missing.length||seal(text)!==want){console.log("crg-ledger-not-written");process.exit(1)}const patch={};for(const [slot,c] of shape){const d=slot.indexOf("."),op=slot.slice(0,d),key=slot.slice(d+1);patch[op]=patch[op]||{};patch[op][key]=c<0?JSON.parse(got.get(slot+" -")):places([slot,c]).map(k=>JSON.parse(got.get(k)))}const base=onto==="onto"?JSON.parse(fs.readFileSync(file,"utf8")):{},rows=(o,key)=>Array.isArray(o[key])?o[key]:[];const out={...base,...patch.set};for(const key of Object.keys(patch.append||{}))out[key]=[...rows(base,key),...patch.append[key]];for(const key of Object.keys(patch.keep||{}))out[key]=[...rows(out,key),...patch.keep[key].map(i=>rows(base,key)[i]).filter(row=>row!==undefined)];fs.writeFileSync(file+".new",JSON.stringify(out,null,2));fs.renameSync(file+".new",file);for(let i=1;i<=+n;i++){try{fs.unlinkSync(file+".part-"+i)}catch(e){}}const now=JSON.parse(fs.readFileSync(file,"utf8"));console.log("crg-ledger-written",...${JSON.stringify(LEDGER_SECTIONS)}.map(key=>rows(now,key).length));console.log("crg-ledger-sealed",seal("written "+want))`
+// Told the rows to stand without (`left`, see LEFT_OUT_CAP), it writes when exactly those
+// are missing and `want` is the seal of the other lines and the token after them, and puts
+// in each of their places {file, notWritten}, made from the token alone.
+const LEDGER_WRITE_PROGRAM = `const fs=require("fs"),[file,n,want,shapeText,onto,leftText]=process.argv.slice(1);${LEDGER_SEAL_JS}const NEWLINE=String.fromCharCode(10);const shape=String(shapeText||"").split(",").filter(Boolean).map(s=>{const k=s.lastIndexOf(":");return [s.slice(0,k),+s.slice(k+1)]});const hole=new Map(String(leftText||"").split(",").filter(Boolean).map(s=>s.split(":")).map(([slot,place,mark,at])=>[slot+" "+place,{file:decodeURIComponent(at),notWritten:mark}]));const got=new Map();for(let i=1;i<=+n;i++){let t="";try{t=fs.readFileSync(file+".part-"+i,"utf8")}catch(e){}for(const raw of t.split(NEWLINE)){const m=/^crg-ledger-put ([^ ]+ (?:-|[0-9]+)) ([0-9a-f]{8}) (.*)$/.exec(raw.trim());if(m&&!got.has(m[1])&&seal(m[1]+" "+m[3])===m[2])got.set(m[1],m[3])}}const places=([slot,c])=>c<0?[slot+" -"]:Array.from({length:c},(_,j)=>slot+" "+j);const missing=[].concat(...shape.map(places)).filter(key=>!got.has(key));missing.forEach(key=>console.log("crg-ledger-missing "+key));const text=[].concat(...shape.map(places)).filter(key=>got.has(key)).map(key=>"crg-ledger-put "+key+" "+seal(key+" "+got.get(key))+" "+got.get(key)).join(NEWLINE);if(missing.join(",")!==Array.from(hole.keys()).join(",")||seal(hole.size?text+NEWLINE+leftText:text)!==want){console.log("crg-ledger-not-written");process.exit(1)}const patch={};for(const [slot,c] of shape){const d=slot.indexOf("."),op=slot.slice(0,d),key=slot.slice(d+1);patch[op]=patch[op]||{};patch[op][key]=c<0?JSON.parse(got.get(slot+" -")):places([slot,c]).map(k=>got.has(k)?JSON.parse(got.get(k)):hole.get(k))}const base=onto==="onto"?JSON.parse(fs.readFileSync(file,"utf8")):{},rows=(o,key)=>Array.isArray(o[key])?o[key]:[];const out={...base,...patch.set};for(const key of Object.keys(patch.append||{}))out[key]=[...rows(base,key),...patch.append[key]];for(const key of Object.keys(patch.keep||{}))out[key]=[...rows(out,key),...patch.keep[key].map(i=>rows(base,key)[i]).filter(row=>row!==undefined)];fs.writeFileSync(file+".new",JSON.stringify(out,null,2));fs.renameSync(file+".new",file);for(let i=1;i<=+n;i++){try{fs.unlinkSync(file+".part-"+i)}catch(e){}}const now=JSON.parse(fs.readFileSync(file,"utf8"));console.log("crg-ledger-written",...${JSON.stringify(LEDGER_SECTIONS)}.map(key=>rows(now,key).length));console.log("crg-ledger-sealed",seal("written "+want))`
 // A patch as the lines of one write: `rows` = [{ name, line }] in order, where name is
 // "<slot> <place>"; `shape` = every slot with its length (-1 for a value that is not a
 // list), as the program takes it; `want` = the seal of all the lines in order. A field
@@ -611,7 +615,7 @@ const writeRowName = name => {
 const ledgerReadCommand = (path, ...what) => `node -e ${shellQuote(LEDGER_READ_PROGRAM)} -- ${shellQuote(path)} ${what.join(' ')}`
 // `parts` = how many part files the write has put down so far, first tries and retries.
 const ledgerWriteCommand = (path, parts, write, onto) =>
-  `node -e ${shellQuote(LEDGER_WRITE_PROGRAM)} -- ${shellQuote(path)} ${parts} ${write.want} ${write.shape} ${onto ? 'onto' : 'new'}`
+  `node -e ${shellQuote(LEDGER_WRITE_PROGRAM)} -- ${shellQuote(path)} ${parts} ${write.want} ${write.shape} ${onto ? 'onto' : 'new'}${write.left ? ` ${write.left}` : ''}`
 const ledgerPartPath = (path, k) => `${path}.part-${k}`
 // The pieces of one write: its lines, packed.
 const ledgerParts = write => packLines(write.rows.map(r => r.line), LEDGER_PIECE)
@@ -640,6 +644,40 @@ const ledgerWriteOf = (relay, write, counts) => {
   const names = new Set(write.rows.map(r => r.name))
   return { ok: false, missing: [...new Set(linesLike(relay, /^crg-ledger-missing (\S+ (?:-|\d+))$/).map(m => m[1]))].filter(n => names.has(n)) }
 }
+// A ROW THAT CANNOT BE WRITTEN DOES NOT COST THE LEDGER. wfe-arrow-py-MP2.1 lost a whole
+// ledger to one confirmed row that every agent handed it copied wrong, three tries in three.
+// When the rows still missing after every try are a few findings, the program is run once
+// more and told to stand without them: it writes every other row as before and puts in
+// each missing row's place {file, notWritten: the seal of the line it was sent on}, made
+// from a token on the command line, so no agent copies the row again. The rows it keeps
+// must still be the rows that were sent: `want` is then the seal of their lines with the
+// token after them. A toolchain row, a count or a baseline failure is never left out: a run
+// from the ledger is gated on them. More rows than LEFT_OUT_CAP is a write that failed, not
+// a row that cannot be copied, and nothing is written.
+const LEFT_OUT_CAP = 4
+const LEFT_OUT_ROW = /^(set|append)\.(confirmedBugs|deferred|rejected|unreviewed) \d+$/
+const canLeaveOut = missing => missing.length > 0 && missing.length <= LEFT_OUT_CAP && missing.every(name => LEFT_OUT_ROW.test(name))
+// The row a write sends under `name` ("set.confirmedBugs 22"), from the patch it was made of.
+const patchRow = (patch, name) => {
+  const [slot, place] = name.split(' ')
+  const [op, key] = slot.split('.')
+  return patch[op][key][Number(place)]
+}
+// Text as one shell word that needs no quoting and holds no backslash or quote.
+const plainWord = s => encodeURIComponent(String(s)).replace(/[!'()*~]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+// The write that stands without `missing`: the token naming each row left out
+// (slot:place:seal:file, in the write's order) and the seal the program checks.
+const ledgerWriteWithout = (write, patch, missing) => {
+  const left = write.rows.filter(r => missing.includes(r.name)).map(r => `${r.name.replace(' ', ':')}:${r.line.split(' ')[3]}:${plainWord(patchRow(patch, r.name).file)}`).join(',')
+  const kept = write.rows.filter(r => !missing.includes(r.name)).map(r => r.line)
+  return { ...write, want: textSeal([...kept, left].join('\n')), left }
+}
+// The rows a saved ledger stands without, by their bucket and place in this run's return.
+const notWrittenOf = (patch, missing) =>
+  missing.map(name => ({ bucket: name.split(' ')[0].split('.')[1], index: Number(name.split(' ')[1]), file: patchRow(patch, name).file }))
+const notWrittenNames = rows => rows.map(r => `${r.bucket}[${r.index}] (${r.file})`).join(', ')
+// A placeholder the write left in the place of a row it could not write.
+const isNotWrittenRow = r => !!r && typeof r === 'object' && typeof r.notWritten === 'string'
 // What the read program said of a ledger, or null: a relay that died or exited non-zero is
 // no manifest, and nor is one whose four count lines do not carry the seal the program
 // printed for them: a count is a number an agent copied, and a miscopied one reads as
@@ -693,7 +731,9 @@ const ledgerReadOf = (manifest, got) => {
   for (const section of LEDGER_ROW_SECTIONS) {
     out[section] = []
     for (let index = 0; index < manifest.expects[section]; index++) {
-      if (got.has(rowName(section, index))) out[section].push(got.get(rowName(section, index)))
+      const row = got.get(rowName(section, index))
+      if (isNotWrittenRow(row)) out.unread.push({ bucket: section, index, file: row.file, notWritten: true })
+      else if (got.has(rowName(section, index))) out[section].push(row)
       else out.unread.push({ bucket: section, index })
     }
   }
@@ -709,6 +749,14 @@ const sectionCounts = ledger => Object.fromEntries(LEDGER_SECTIONS.map(k => [k, 
 // written the file first, so that case does not say it was not written.
 const ledgerFailureLine = (path, why) =>
   `ledger persist FAILED — ${path} ${why === LEDGER_UNREPORTED ? 'is not known to be written' : 'was not written'} and may hold a prior run (${why})`
+// What a write came to: the log line, and ledgerSaved (true, 'partial' or false).
+const ledgerSaveLine = (path, saved) =>
+  saved.why
+    ? ledgerFailureLine(path, saved.why)
+    : saved.notWritten.length
+      ? `ledger persisted WITHOUT ${saved.notWritten.length} row(s) -> ${path} — ${notWrittenNames(saved.notWritten)} did not reach the disk as sent. This run's return holds each whole at the place named; the file holds a placeholder {file, notWritten} where it would be, and a run from this ledger leaves it out and says so`
+      : `ledger persisted -> ${path}`
+const ledgerSavedOf = saved => (saved.why ? false : saved.notWritten.length ? 'partial' : true)
 // For the Verify line: empty when every finding was reviewed.
 const unreviewedNote = rows =>
   (rows || []).length
@@ -1770,35 +1818,47 @@ const startAgent = (prompt, opts) => {
 
 // ---- the ledger on disk ---------------------------------------------------------
 // Both directions go in pieces (see LEDGER_PIECE) and both are judged here.
-// saveLedger returns '' once the file is written and checked, else why it is not. `counts`
-// = the rows the file must hold afterwards. A row that did not reach the disk whole is
+// saveLedger returns { why, notWritten }: why is '' once the file is written and checked,
+// else why it is not; notWritten names the rows a written file stands without (see
+// LEFT_OUT_CAP), [] for a whole one. `counts` = the rows the file must hold afterwards, a
+// placeholder standing for its row. A row that did not reach the disk whole is
 // sent again (ROW_TRIES_ALONE times at most), alone when there are few of them, if agents
 // remain. A part file is never overwritten: a retry adds parts, and the program keeps the
 // first whole line for each row. `onto` lays the patch over the file that is there.
 const saveLedger = async (patch, counts, onto) => {
   const write = ledgerWrite(patch)
   const lineOf = new Map(write.rows.map(r => [r.name, r.line]))
+  const outcome = why => ({ why, notWritten: [] })
+  const assemble = (parts, sent) => startAgent(
+    ledgerRelayBrief(`Put the ${parts} piece(s) of a ledger together at ${ledgerPath}.`, 'assemble', ledgerWriteCommand(ledgerPath, parts, sent, onto)),
+    { label: 'persist:assemble', phase: 'Verify', schema: GATE_SCHEMA, model: models.ledger },
+  )
+  // After the last try: a few findings missing, and the ledger is written without them.
+  const saveWithout = async (parts, missing, why) => {
+    if (!canLeaveOut(missing) || agentsLeft(agentsStarted) < 1) return outcome(why)
+    const without = ledgerWriteWithout(write, patch, missing)
+    const relay = await assemble(parts, without)
+    if (ledgerWriteOf(relay, without, counts).ok) return { why: '', notWritten: notWrittenOf(patch, missing) }
+    return outcome(relay ? `${why}, and the ledger could not be written without them` : LEDGER_UNREPORTED)
+  }
   let todo = ledgerParts(write)
   agentsHeld = 0
-  if (agentsLeft(agentsStarted) < todo.length + 1) return `the write needs ${todo.length + 1} agents and ${agentsLeft(agentsStarted)} are left`
+  if (agentsLeft(agentsStarted) < todo.length + 1) return outcome(`the write needs ${todo.length + 1} agents and ${agentsLeft(agentsStarted)} are left`)
   let parts = 0
   for (let attempt = 0; ; attempt++) {
     const from = parts
     parts += todo.length
     await parallel(todo.map((piece, i) => () => startAgent(ledgerPartBrief(ledgerPath, from + i + 1, piece), { label: `persist:${from + i + 1}`, phase: 'Verify', model: models.ledger })))
-    const relay = await startAgent(
-      ledgerRelayBrief(`Put the ${parts} piece(s) of a ledger together at ${ledgerPath}.`, 'assemble', ledgerWriteCommand(ledgerPath, parts, write, onto)),
-      { label: 'persist:assemble', phase: 'Verify', schema: GATE_SCHEMA, model: models.ledger },
-    )
+    const relay = await assemble(parts, write)
     const seen = ledgerWriteOf(relay, write, counts)
-    if (seen.ok) return ''
-    if (!relay) return LEDGER_UNREPORTED
-    if (!seen.missing) return `the assemble command did not say which rows it holds (exit ${(relay.results || []).map(x => x && x.exitCode).join(', ') || 'unknown'})`
-    if (!seen.missing.length) return 'the rows on disk do not make the ledger that was sent'
+    if (seen.ok) return outcome('')
+    if (!relay) return outcome(LEDGER_UNREPORTED)
+    if (!seen.missing) return outcome(`the assemble command did not say which rows it holds (exit ${(relay.results || []).map(x => x && x.exitCode).join(', ') || 'unknown'})`)
+    if (!seen.missing.length) return outcome('the rows on disk do not make the ledger that was sent')
     const names = seen.missing.map(writeRowName).join(', ')
     const lines = seen.missing.map(n => lineOf.get(n))
     todo = lines.length <= WRITE_ROWS_ALONE ? lines : packLines(lines, LEDGER_PIECE)
-    if (attempt === ROW_TRIES_ALONE || agentsLeft(agentsStarted) < todo.length + 1) return `row(s) ${names} did not reach the disk as sent`
+    if (attempt === ROW_TRIES_ALONE || agentsLeft(agentsStarted) < todo.length + 1) return saveWithout(parts, seen.missing, `row(s) ${names} did not reach the disk as sent`)
   }
 }
 // The rows a run from a ledger works on, each checked by its own seal, with the file's row
@@ -1902,7 +1962,8 @@ ${fence(treeStatusCommand(repoRoot))}`,
 // Cross-phase vars the fix phase + return need, hoisted so either branch fills them.
 let setup, baselineFailures, rawFindings = [], deduped = [], merged = [], confirmedBugs = [], deferred = [], rejected = [], unreviewed = []
 let ledgerPath = `${repoRoot}/.crg-debug/ledger.json`
-let ledgerSaved // true / false once this run has tried to write the ledger
+let ledgerSaved // true / 'partial' / false once this run has tried to write the ledger
+let notWritten = [] // the rows the ledger this run saved stands without (see LEFT_OUT_CAP)
 let unread = [] // a run from a ledger: the rows of the file that never arrived whole, by bucket and place
 let ledgerCounts = null // the rows the ledger on disk holds, for a run that did not read them all
 
@@ -1922,6 +1983,8 @@ if (fromLedger) {
   // follows each through fixed or unfixed, and a bug this run never held would be in neither.
   unread = loaded.unread
   const unreadOf = bucket => unread.filter(u => u.bucket === bucket).map(u => u.index)
+  const holes = unread.filter(u => u.notWritten)
+  if (holes.length) log(`Ingest: ${holes.length} row(s) of ${fromLedger} were not written by the run that saved it and are left out of this run; the file holds a placeholder in each place: ${notWrittenNames(holes)}`)
   const cameFor = fix ? 'confirmedBugs' : 'unreviewed'
   if (loaded.counts[cameFor] && !loaded[cameFor].length) {
     throw new Error(`fix-from-ledger: could not read/parse ledger at ${fromLedger} — none of its ${loaded.counts[cameFor]} ${cameFor} row(s) arrived whole`)
@@ -1929,7 +1992,8 @@ if (fromLedger) {
   if (fixOnly && unreadOf('confirmedBugs').length) {
     throw new Error(`fix-from-ledger: could not read/parse ledger at ${fromLedger} — ${unreadNames(unread.filter(u => u.bucket === 'confirmedBugs'))} did not arrive whole, and a fixOnly run fixes every confirmed row of its ledger or does not start`)
   }
-  if (unread.length) log(`Ingest: ${unread.length} row(s) of ${fromLedger} did not arrive whole and are left out of this run; they are still in the file: ${unreadNames(unread)}`)
+  const lost = unread.filter(u => !u.notWritten)
+  if (lost.length) log(`Ingest: ${lost.length} row(s) of ${fromLedger} did not arrive whole and are left out of this run; they are still in the file: ${unreadNames(lost)}`)
   setup = { toolchain: loaded.toolchain, resolvedScope: 'from ledger' }
   baselineFailures = loaded.baselineFailures
   confirmedBugs = loaded.confirmedBugs
@@ -1954,10 +2018,11 @@ if (fromLedger) {
     unreviewed = buckets.unreviewed
     log(`Verify: ${waiting.length} unreviewed finding(s) from the ledger -> ${buckets.confirmedBugs.length} confirmed · ${deferred.length} deferred (intentional) · ${rejected.length} rejected${unreviewedNote(unreviewed)}`)
     ledgerCounts = { confirmedBugs: confirmedBugs.length + keep.confirmedBugs.length, deferred: ledgerCounts.deferred + deferred.length, rejected: ledgerCounts.rejected + rejected.length, unreviewed: unreviewed.length + keep.unreviewed.length }
-    unread = [...keep.confirmedBugs.map((_, i) => ({ bucket: 'confirmedBugs', index: confirmedBugs.length + i })), ...keep.unreviewed.map((_, i) => ({ bucket: 'unreviewed', index: unreviewed.length + i }))]
-    const saveFailed = await saveLedger({ set: { counts: ledgerCounts, confirmedBugs, unreviewed, unread }, append: { deferred, rejected }, keep }, ledgerCounts, true)
-    ledgerSaved = !saveFailed
-    log(saveFailed ? `Verify: ${ledgerFailureLine(ledgerPath, saveFailed)} — it still lists the reviewed rows as unreviewed` : `Verify: ledger persisted -> ${ledgerPath}`)
+    unread = [...unread.filter(u => u.bucket === 'confirmedBugs').map((u, i) => ({ ...u, index: confirmedBugs.length + i })), ...unread.filter(u => u.bucket === 'unreviewed').map((u, i) => ({ ...u, index: unreviewed.length + i }))]
+    const saved = await saveLedger({ set: { counts: ledgerCounts, confirmedBugs, unreviewed, unread }, append: { deferred, rejected }, keep }, ledgerCounts, true)
+    ledgerSaved = ledgerSavedOf(saved)
+    notWritten = saved.notWritten
+    log(`Verify: ${ledgerSaveLine(ledgerPath, saved)}${saved.why ? ' — it still lists the reviewed rows as unreviewed' : ''}`)
   }
 } else {
 // The discover+verify path. Body is intentionally left at column 0: it is the bulk of
@@ -2249,12 +2314,13 @@ log(`Verify: ${confirmedBugs.length} confirmed · ${deferred.length} deferred (i
 // coupling, or feed a later run from it. The sandbox can't write files itself, so
 // agents write it in pieces and one fixed command puts them together (saveLedger).
 const ledger = { ...ledgerHead, counts: sectionCounts({ confirmedBugs, deferred, rejected, unreviewed }), confirmedBugs, deferred, rejected, unreviewed }
-const saveFailed = await saveLedger({ set: ledger }, sectionCounts(ledger))
-ledgerSaved = !saveFailed
+const saved = await saveLedger({ set: ledger }, sectionCounts(ledger))
+ledgerSaved = ledgerSavedOf(saved)
+notWritten = saved.notWritten
 // A failed write leaves a STALE ledger on disk, which the fix-from-ledger hand-off would
 // silently re-fix. Say so rather than claiming a persist that did not happen.
-log(saveFailed ? `Verify: ${ledgerFailureLine(ledgerPath, saveFailed)}` : `Verify: ledger persisted -> ${ledgerPath}`)
-if (unreviewed.length) log(`Verify: ${unreviewed.length} finding(s) were NOT reviewed and are in no other bucket — run again with fromLedger: ${ledgerPath} to review them${saveFailed ? ' (this run could not write that file)' : ''}`)
+log(`Verify: ${ledgerSaveLine(ledgerPath, saved)}`)
+if (unreviewed.length) log(`Verify: ${unreviewed.length} finding(s) were NOT reviewed and are in no other bucket — run again with fromLedger: ${ledgerPath} to review them${saved.why ? ' (this run could not write that file)' : ''}`)
 } // end else — fix-from-ledger skipped this whole discover+verify path
 
 // ---- Phase 4: Fix waves (opt-in via fix=true) --------------------------------
@@ -2575,7 +2641,10 @@ if (fix && !fixResult && conflictedBugs.length === confirmedBugs.length && confl
 if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) {
   agentsHeld = FIX_CLOSING
   if (unreviewed.length) log(`Fix: ${unreviewed.length} finding(s) are still unreviewed and are not in the fix queue — run again from the ledger to review them`)
-  if (unread.some(u => u.bucket === 'confirmedBugs')) log(`Fix: ${unread.filter(u => u.bucket === 'confirmedBugs').length} confirmed bug(s) of the ledger were not read and are not in the fix queue — run again from the ledger to fix them`)
+  const unreadBugs = unread.filter(u => u.bucket === 'confirmedBugs' && !u.notWritten)
+  const unwrittenBugs = unread.filter(u => u.bucket === 'confirmedBugs' && u.notWritten)
+  if (unreadBugs.length) log(`Fix: ${unreadBugs.length} confirmed bug(s) of the ledger were not read and are not in the fix queue — run again from the ledger to fix them`)
+  if (unwrittenBugs.length) log(`Fix: ${unwrittenBugs.length} confirmed bug(s) are only placeholders in the ledger and are not in the fix queue: ${notWrittenNames(unwrittenBugs)} — the run that saved the ledger returned them whole`)
   // Test-harness bootstrap (once, before any wave — avoids parallel fix agents
   // racing to scaffold the same config). TDD's RED step needs a runner first.
   if (!(setup.toolchain || []).some(t => t.test)) {
@@ -3225,6 +3294,7 @@ return {
   models: stageModelNames(models),
   ledgerPath,
   ledgerSaved,
+  ...(notWritten.length ? { notWritten } : null),
   confirmedBugs,
   deferred,
   rejected,

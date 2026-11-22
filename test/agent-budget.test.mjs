@@ -82,8 +82,8 @@ test('the ledger write Verify sets agents aside for is never smaller than the on
     const sent = H.ledgerParts(H.ledgerWrite({ set: { ...head, ...H.bucketVerdicts(rows.map(shape)) } })).join('\n').length
     assert.ok(H.ledgerBound(head, rows) >= sent, `${H.ledgerBound(head, rows)} set aside for ${sent} sent`)
   }
-  const retries = 2 * (H.WRITE_ROWS_ALONE + 1)
-  assert.equal(H.ledgerWriteAgents(1), 2 + retries, 'one piece, the agent that assembles it, and room for two retries with their own assemble steps')
+  const retries = 2 * (H.WRITE_ROWS_ALONE + 1) + 1 // one larger since 2026-11-22: the write without the rows left out
+  assert.equal(H.ledgerWriteAgents(1), 2 + retries, 'one piece, the agent that assembles it, room for two retries with their own assemble steps, and one to write without the rows left out')
   assert.equal(H.ledgerWriteAgents(H.LEDGER_PIECE), 2 + retries)
   assert.equal(H.ledgerWriteAgents(H.LEDGER_PIECE + 1), 3 + retries)
   assert.equal(H.ledgerWriteAgents(409000), 27 + retries)

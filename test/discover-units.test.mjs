@@ -109,6 +109,8 @@ const RICH = { scope: 'the cli', issueContext: 'echo() drops the trailing newlin
 // the logs when that line came to say "skipped" rather than "not started" (2026-11-16).
 // Re-pinned when the ledger agents got a stage of their own (stageModels.ledger, 2026-11-16):
 // the return's models and the ledger's models row gained a ledger entry, nothing else.
+// Re-pinned the persist:assemble lines when the ledger write program took a sixth argument,
+// the rows it may leave out (2026-11-22).
 const PINNED = {
   plain: [
     'setup d48fe3acfae4',
@@ -127,7 +129,7 @@ const PINNED = {
     'confirm:find_residual.py 6066bb84cad7',
     'confirm:z.py 95fce7232fbf',
     'persist:1 3947be60f68d',
-    'persist:assemble acd528271a61',
+    'persist:assemble 47cf176756db',
     'logs a8d8c006f68f',
     'return 469c33d34df6',
   ],
@@ -159,7 +161,7 @@ const PINNED = {
     'confirm:find_residual_.py b61251c43a35',
     'confirm:z.py a5c480b3ca2b',
     'persist:1 cd24bf5c8c87',
-    'persist:assemble 6279ed4996d3',
+    'persist:assemble 6c6c463079ee',
     'logs 39db231665fb',
     'return bdc5aca0d5cc',
   ],
