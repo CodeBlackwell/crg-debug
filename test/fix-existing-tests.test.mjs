@@ -466,7 +466,7 @@ test('a coupled attempt that did not pass its own test is not kept as a proposal
 
 const EXISTING = { id: 'tests/test_alpha.py::test_existing', output: 'AssertionError: 1 != 2' }
 const BASE_CMD = 'pytest tests/test_alpha.py tests/test_bravo.py'
-const failing = (...f) => ({ runs: [{ command: BASE_CMD, exitCode: f.length ? 1 : 0, failing: f }] })
+const failing = (...f) => ({ runs: [{ command: BASE_CMD, exitCode: f.length ? 1 : 0, passed: 40, failing: f }] })
 const script = (...answers) => {
   let i = 0
   return () => answers[i++] ?? failing()

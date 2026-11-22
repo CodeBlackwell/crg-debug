@@ -14,6 +14,22 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   Unset, the ledger stage runs on the run's model, as every stage does.
 
 ### Fixed
+- **A regression baseline in which no test ran is asked for once more** (`crg-debug.js`). One
+  baseline agent ran a rejected command and a working one, then reported a third it had never
+  run, as passing with 0 tests. Run for real after each wave, that command exits 4, which read
+  as every wave breaking it, and all 50 fixes of the run went back. When no row of the first
+  baseline shows a test ran (a passed count above 0, or a failing test named), the baseline
+  agent is started once more (`regress:baseline:again`), and a second that reports replaces
+  the first. Limits: two made-up baselines in a row, or one that claims a count, are still
+  believed; a runner that prints no count pays one more agent.
+- **A machine fault stops the fix phase plainly or gets the right verdict** (`crg-debug.js`).
+  The tree check now tells a directory that is not a repository from git refusing to work for
+  the run's user (another user's repo, "dubious ownership", or git older than 2.13): the fix
+  phase does not start and the log gives git's own line, where before the tree read as clean
+  and every restore point failed. A per-bug gate that exits 0 when its runner says it ran 0
+  tests (unittest on Python 3.11 and older) no longer closes its bug. A ledger read that does
+  not report now names its exit code and node's first error line, and exit 127 as node missing
+  from the agents' PATH.
 - **A ledger is saved even when a few of its rows are copied wrong on every try**
   (`crg-debug.js`). When the agents that write the ledger cannot copy a row to the disk as
   sent, the whole ledger used to be thrown away. Now, if at most 4 finding rows

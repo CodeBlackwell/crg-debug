@@ -418,7 +418,7 @@ const BUSY = {
 
 const TWO = [bug('b1', 'src/alpha.py'), bug('b2', 'src/bravo.py')]
 const BASE_CMD = 'pytest tests/test_alpha.py tests/test_bravo.py'
-const runs = (...failing) => ({ runs: [{ command: BASE_CMD, exitCode: failing.length ? 1 : 0, failing }] })
+const runs = (...failing) => ({ runs: [{ command: BASE_CMD, exitCode: failing.length ? 1 : 0, passed: 40, failing }] })
 const EXISTING = { id: 'tests/test_alpha.py::test_existing', output: 'AssertionError: 1 != 2' }
 // A regress handler that plays a script: one answer per call, in order, then clean.
 const script = (...answers) => {
