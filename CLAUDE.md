@@ -111,6 +111,36 @@ the stale-install bug class it used to cause.
   advisories, never-auto-re-bake, hard human gates: these are load-bearing guarantees.
   Do not "streamline" one away.
 
+## Eval program (in progress)
+
+An eval loop is improving the `crg-debug` Workflow stage by stage and measuring it against
+stock Claude Code. The owner's success test (2026-11-13): **"capable of more autonomously,
+and not monstrously inefficient"**. One unattended Workflow run has to resolve more than one
+unattended stock run; it does not have to match stock's usage, but usage is reported as a
+multiple of stock beside every result. It lives outside this repo, in `../farm-tasks/bench-runs/`
+(untracked). Read `writeups/INDEX.md` there first, then `LADDER.md` and `LOG.md`.
+
+- **Problem register: `../farm-tasks/bench-runs/PROBLEMS.md`.** One entry per kind of problem
+  the loop has met (ids `DET-nn`, later `FIX-nn`, `HAR-nn`): its class, whose limit it is, what
+  was tried, its status, and the engineering that overcame it. **Keep it current.** When a run
+  or a records study moves a planted bug to another class, changes a status or meets a new kind
+  of problem, update it in the same turn as the `LOG.md` entry. Classify a new miss with its
+  six-step procedure before proposing a fix, and check its failed-levers table first.
+
+- **Roadmap artifact: https://claude.ai/artifact/23raAiKctsj69oV74E3rqs** ("crg-debug Eval
+  Roadmap", private to the owner). Its source is `../farm-tasks/bench-runs/roadmap.html`.
+  **Keep it current.** Whenever a stage's status, a rung, the repo set or the next step
+  changes, edit that file and republish to the same URL in the same turn as the `LOG.md`
+  entry. A page that lags the log is a defect.
+- **The model is part of every result.** Evals pass `model: "sonnet"` to the Workflow and
+  stock Claude Code runs on the same model. The Workflow has no escalation of its own: it
+  runs every agent on the one model it is given, default `haiku`. The haiku, sonnet, opus
+  ladder is `/crg-farm`'s. `tally.py` and `collect.py` record `model`, `wf_model` and
+  `agent_models` for every run; a writeup names all three, and a run whose agents ran on an
+  unexpected model is reported apart.
+- Variant changes go on an eval branch and are frozen under `variants/<TAG>/` before any
+  trial. Nothing from the eval loop merges, pushes or ships without the owner's separate yes.
+
 ## Release & sync discipline
 
 - **Version source of truth is `.claude-plugin/plugin.json`.**
