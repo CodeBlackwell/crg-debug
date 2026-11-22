@@ -1,5 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { bugKeyOf as ledgerKeyOf } from '../lib/crg-debug.ledger-slice.mjs'
@@ -11,7 +15,7 @@ const src = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', impo
 const block = src.slice(src.indexOf('// >>> pure-helpers'), src.indexOf('// <<< pure-helpers'))
 assert.ok(block.includes('const fence'), 'pure-helpers block markers must bracket the helpers')
 const H = new Function(
-  `${block}\nreturn { fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, needsConfirm, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
+  `${block}\nreturn { READER_SCAN_PROGRAM, readerScanCommand, readersOf, readerNote, READER_MIN_LINES, fence, norm, stripLine, bugKeyOf, shortFile, bugFile, resolveModel, clampRounds, capText, normPath, isSafeAbs, relPath, groupBy, dedupBy, allGreen, waveKey, commitMessageOk, commitFilesOk, branchSlug, waveCommitMessage, waveAllowlist, gateUnusable, reviewerBrief, bucketVerdicts, needsConfirm, REFUTE_STANCE, REPRODUCE_STANCE, fromFindingsError, FROM_FINDINGS_CAP, FINDING_TEXT_CAP, FINDINGS_SCHEMA, DISCOVER_MODES, MAX_UNITS_DEFAULT, unitName, listedUnits, orderUnits, tallyByFile, unitBrief, UNITS_SCHEMA }`,
 )()
 
 test('fence wraps content and neutralizes injected fence markers', () => {
@@ -404,6 +408,49 @@ Function: Context.exit (lines 120-141)
 Read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.
 
 Judge this one function, not its callers or the rest of the file. Return one findings row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "security". List every defect you find, not only the first. If it does what it is meant to do, return no findings. Wrong behaviour only: style, naming, performance and missing tests are not defects. UNTRUSTED-NOTICE`
+
+test('unitBrief puts a note in its own paragraph before the judging rules; an empty note changes nothing', () => {
+  const u = { file: 'src/click/core.py', concern: 'backend-logic', name: 'exit', parent: 'Context', start: 120, end: 141 }
+  const plain = H.unitBrief(u, 'security', '/repo', 'N')
+  assert.equal(H.unitBrief(u, 'security', '/repo', 'N', ''), plain)
+  assert.equal(H.unitBrief(u, 'security', '/repo', 'N', 'NOTE-TEXT'), plain.replace('\n\nJudge this one function', '\n\nNOTE-TEXT\n\nJudge this one function'))
+})
+
+test('the reader scan prints assigned string constants of five lines or more, and nothing else', () => {
+  const root = mkdtempSync(join(tmpdir(), 'reader-scan-'))
+  const q = '"""'
+  writeFileSync(join(root, 'shell.py'), [
+    `${q}A module docstring`, 'of', 'six', 'lines', 'in', `all.${q}`,
+    `_SOURCE = ${q}\\`, '#compdef %(prog)s', 'local -a completions', 'for type key descr in ${response}; do', 'done', q,
+    'SHORT = """one', 'two"""',
+    'class Zsh:', `    template: str = r${q}`, '    a', '    b', '    c', `    ${q}`,
+    "    def f(self):", `        ${q}A method docstring`, '        over', '        five', '        lines', '        here', `        ${q}`, "        return 'x = `y`'",
+  ].join('\n'))
+  writeFileSync(join(root, 'plain.js'), ['const usage = `', 'a', 'b', 'c', '`', 'const x = `one line`'].join('\n'))
+  const out = execSync(H.readerScanCommand(root, ['shell.py', 'plain.js']), { encoding: 'utf8' }).trim().split('\n').map(line => JSON.parse(line))
+  assert.deepEqual(out, [
+    { file: 'shell.py', name: '_SOURCE', start: 7, end: 12 },
+    { file: 'shell.py', name: 'template', start: 16, end: 20 },
+    { file: 'plain.js', name: 'usage', start: 1, end: 5 },
+  ])
+})
+
+test('readersOf keeps only rows the scan could have printed for a file it was given', () => {
+  const files = ['src/shell.py', 'src/core.py']
+  const good = { file: './src/shell.py', name: '_SOURCE_ZSH', start: 125, end: 161 }
+  const relay = { readers: [good, { ...good, file: 'src/other.py' }, { ...good, name: 'x; rm -rf /' }, { ...good, end: 127 }, { ...good, start: '125' }, null] }
+  assert.deepEqual([...H.readersOf(relay, files)], [['src/shell.py', [good]]])
+  assert.equal(H.readersOf(null, files).size, 0)
+  assert.equal(H.readersOf({ readers: [] }, files).size, 0)
+})
+
+test('readerNote names each constant and its lines, and is empty with none', () => {
+  assert.equal(H.readerNote(undefined), '')
+  assert.equal(H.readerNote([]), '')
+  const note = H.readerNote([{ name: '_SOURCE_BASH', start: 93, end: 123 }, { name: '_SOURCE_ZSH', start: 125, end: 161 }])
+  assert.ok(note.startsWith('This file keeps text that another program reads in _SOURCE_BASH (lines 93-123), _SOURCE_ZSH (lines 125-161). '))
+  assert.ok(!/zsh\b|colon|terminal|shell/.test(note.replace(/_SOURCE_\w+/g, '')), 'the wording names no shell and no character')
+})
 
 test('unitBrief emits the pinned unit-finder prompt, byte for byte', () => {
   const u = { file: 'src/click/core.py', concern: 'backend-logic', name: 'exit', parent: 'Context', start: 120, end: 141 }

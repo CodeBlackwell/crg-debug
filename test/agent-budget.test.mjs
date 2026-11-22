@@ -625,7 +625,7 @@ test('Discover cannot use up the agents the ledger needs: the finders past the r
     on: label => (label.startsWith('units:') ? { total: units.length, units } : label.startsWith('unit:') ? { findings: [] } : undefined),
   })
   const finders = calls.filter(c => c.label.startsWith('unit:')).length
-  assert.equal(finders, H.AGENT_LIMIT - H.DISCOVER_RESERVE - 3, 'setup, map and the lister came first')
+  assert.equal(finders, H.AGENT_LIMIT - H.DISCOVER_RESERVE - 4, 'setup, map, the lister and the reader scan came first')
   assert.equal(logs.filter(l => /^agent "unit:.*" not started: agent limit — 936 of 1000 started, 64 held back to finish the run$/.test(l)).length, 1200 - finders)
   assert.ok(calls.length <= H.AGENT_LIMIT)
   assert.equal(result.ledgerSaved, true)

@@ -285,15 +285,40 @@ const orderUnits = (units, maxUnits) => {
 // "a.py: 3, b.py: 1" — how many of `rows` fall in each file, in first-seen order.
 const tallyByFile = rows => [...groupBy(rows, row => row.file)].map(([file, group]) => `${file}: ${group.length}`).join(', ')
 
+// ---- the reader gate -------------------------------------------------------------
+// A finder told to look for "whatever reads this function's output" finds a reader
+// everywhere: a terminal, a shell, a person. In a file with no reader its findings went from
+// 16 to 29. So the script names the reader or says nothing. One agent runs
+// READER_SCAN_PROGRAM over the audited files; it prints each string constant of
+// READER_MIN_LINES lines or more that is assigned to a name (a script or a template kept in
+// the source; a docstring is not assigned, so it is left out). Only the functions of such a
+// file are told about it.
+const READER_MIN_LINES = 5
+const READER_SCAN_PROGRAM = `const fs=require("fs"),MIN=${READER_MIN_LINES},Q=String.fromCharCode(34),S=String.fromCharCode(39),D=[Q+Q+Q,S+S+S,String.fromCharCode(96)],NL=String.fromCharCode(10);const count=(l,d)=>l.split(d).length-1;for(const file of process.argv.slice(1)){let open=null;fs.readFileSync(file,"utf8").split(NL).forEach((line,i)=>{if(open){if(count(line,open.d)%2===1){if(open.name&&i-open.start+1>=MIN)console.log(JSON.stringify({file,name:open.name,start:open.start+1,end:i+1}));open=null}return}const d=D.map(d=>[line.indexOf(d),d]).filter(p=>p[0]>=0).sort((a,b)=>a[0]-b[0])[0];if(!d||count(line,d[1])%2===0)return;const named=line.slice(0,d[0]).match(/([A-Za-z_][A-Za-z0-9_.]*)\\s*(?::[^=]*)?=\\s*[A-Za-z]{0,3}$/);open={d:d[1],start:i,name:named?named[1]:""}})}`
+const readerScanCommand = (repoRoot, files) => `cd ${shellQuote(repoRoot)} && node -e ${shellQuote(READER_SCAN_PROGRAM)} -- ${files.map(shellQuote).join(' ')}`
+// Counted, not trusted: a row is kept only for a file that was scanned, with a plain
+// identifier for a name (it goes into a brief) and a span the program could have printed.
+const readersOf = (relay, files) => {
+  const known = new Map(files.map(file => [normPath(file), file]))
+  const usable = row => !!row && known.has(normPath(row.file)) && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(row.name) &&
+    Number.isInteger(row.start) && Number.isInteger(row.end) && row.end - row.start + 1 >= READER_MIN_LINES
+  return groupBy(((relay && relay.readers) || []).filter(usable), row => known.get(normPath(row.file)))
+}
+const readerNote = readers =>
+  readers && readers.length
+    ? `This file keeps text that another program reads in ${readers.map(r => `${r.name} (lines ${r.start}-${r.end})`).join(', ')}. If this function builds text that such a reader takes in, work out from the reader which characters it treats as separators or as special, and run the function with values that contain them.`
+    : ''
+
 // The whole prompt one unit finder receives. `untrusted` is the source-is-data notice,
-// passed in to keep the block dependency-free.
-const unitBrief = (unit, concern, repoRoot, untrusted) =>
+// passed in to keep the block dependency-free. `note` is a paragraph of the script's own
+// (readerNote); an empty note leaves the brief byte for byte as it was.
+const unitBrief = (unit, concern, repoRoot, untrusted, note = '') =>
   `You are auditing ONE function in the repo at ${repoRoot}. Change nothing in the repository.
 
 File: ${unit.file}
 Function: ${unitName(unit)} (lines ${unit.start}-${unit.end})
 
-Read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.
+Read its body and its docstring, and whatever else in the repository you need in order to know what it is meant to do. Then exercise it. Choose at least five inputs that cover its branches and edge cases; for each, write down the result the documented behaviour predicts, then run the code and compare. Call it directly where you can, and through the public API that reaches it where you cannot. Run it from the repository root with the project's own interpreter or toolchain (for Python, a heredoc: python - <<'EOF' ... EOF); write no file into the repository. A result that differs from what the documented behaviour predicts is a defect.${note ? `\n\n${note}` : ''}
 
 Judge this one function, not its callers or the rest of the file. Return one findings row for each place where it does something other than what it is meant to do: file:line, the behaviour it is meant to have as rootCause, and the concrete input with the wrong result it produces as whyRepro. Use concern "${concern}". List every defect you find, not only the first. If it does what it is meant to do, return no findings. Wrong behaviour only: style, naming, performance and missing tests are not defects. ${untrusted}`
 
@@ -1380,6 +1405,21 @@ const fromFindingsError = list => {
 
 // What a unit lister relays from find_large_functions_tool: the tool's own count FIRST,
 // then one row per result. The script compares the two; the agent only transcribes.
+const READERS_SCHEMA = {
+  type: 'object',
+  required: ['readers'],
+  properties: {
+    readers: {
+      type: 'array',
+      description: 'one row for each line the command printed; an empty list when it printed nothing',
+      items: {
+        type: 'object',
+        required: ['file', 'name', 'start', 'end'],
+        properties: { file: { type: 'string' }, name: { type: 'string' }, start: { type: 'integer' }, end: { type: 'integer' } },
+      },
+    },
+  },
+}
 const UNITS_SCHEMA = {
   type: 'object',
   required: ['total', 'units'],
@@ -2085,8 +2125,16 @@ if (discover === 'units') {
   }
   const { kept, dropped } = orderUnits(listed, maxUnits)
   log(`Units: ${listed.length} listed in ${unitTargets.length} file(s) -> ${kept.length} to audit, ${dropped.length} dropped by maxUnits=${maxUnits}${dropped.length ? ` (${tallyByFile(dropped)})` : ''}`)
+  const auditedFiles = [...new Set(kept.map(unit => unit.file))]
+  const scan = await startAgent(
+    `Run this one command and relay what it prints: one row for each line of output, with its file, name, start and end exactly as printed, and an empty list when it prints nothing. Do not read the files yourself and do not run anything else.\n\n${readerScanCommand(repoRoot, auditedFiles)}`,
+    { label: 'readers', phase: 'Discover', schema: READERS_SCHEMA, model: models.discover },
+  )
+  const readers = readersOf(scan, auditedFiles)
+  // A scan that did not report is not a scan that found nothing: say which, and go on without.
+  log(scan ? `Readers: ${readers.size} of ${auditedFiles.length} file(s) keep a script or template${readers.size ? ` (${[...readers.keys()].join(', ')})` : ''}` : 'Readers: the scan did not report, so no finder is told about a reader')
   const judged = await parallel(kept.map(unit => () =>
-    startAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED_MAY_RUN), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model: models.discover }),
+    startAgent(unitBrief(unit, unit.concern, repoRoot, UNTRUSTED_MAY_RUN, readerNote(readers.get(unit.file))), { agentType: 'Explore', label: `unit:${shortFile(unit.file)}:${unitName(unit)}`, phase: 'Discover', schema: FINDINGS_SCHEMA, model: models.discover }),
   ))
   const perUnit = kept.map((unit, i) => ({ unit, findings: (judged[i] && judged[i].findings) || [] }))
   rawFindings = dedupBy(perUnit.flatMap(row => row.findings), bugKeyOf)

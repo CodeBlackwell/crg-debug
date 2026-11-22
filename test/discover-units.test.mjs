@@ -203,6 +203,7 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
     if (label === 'setup') return { graphStats: '4 files', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (label === 'map') return { overview: 'o', targets: TARGETS }
     if (label.startsWith('units:')) return relays[label] ?? null
+    if (label === 'readers') return 'readers' in relays ? relays.readers : { readers: [] }
     if (label.startsWith('unit:')) {
       const rows = findings(label)
       return rows === null ? null : { findings: rows }
@@ -217,11 +218,28 @@ const unitsRun = async ({ args = {}, relays = RELAYS, findings = label => (label
   return { calls, logs, res, labels: calls.map(c => c.label) }
 }
 
+test('only the finders of a file that keeps a script or template are told about it', async () => {
+  const relays = { ...RELAYS, readers: { readers: [{ file: 'src/auth.py', name: '_SOURCE', start: 30, end: 60 }, { file: 'src/gone.py', name: 'X', start: 1, end: 9 }] } }
+  const { calls, logs } = await unitsRun({ relays })
+  const scan = calls.find(c => c.label === 'readers')
+  assert.match(scan.prompt, /cd '\/tmp\/[^']*' && node -e '.*' -- 'src\/auth\.py' 'src\/core\.py'$/s, 'one command over the audited files, each once')
+  const told = calls.filter(c => c.label.startsWith('unit:') && c.prompt.includes('This file keeps text that another program reads in _SOURCE (lines 30-60).'))
+  assert.deepEqual(told.map(c => c.label), ['unit:auth.py:sign', 'unit:auth.py:check_token'])
+  assert.ok(logs.includes('Readers: 1 of 2 file(s) keep a script or template (src/auth.py)'), logs.join('\n'))
+})
+
+test('a reader scan that does not report is said so, and no finder is told about a reader', async () => {
+  const { calls, logs } = await unitsRun({ relays: { ...RELAYS, readers: null } })
+  assert.ok(logs.includes('Readers: the scan did not report, so no finder is told about a reader'), logs.join('\n'))
+  assert.equal(calls.filter(c => c.label.startsWith('unit:')).length, 5, 'the finders still run')
+  assert.ok(!calls.some(c => c.prompt.includes('another program reads')))
+})
+
 test('units mode lists each mapped source file once, then runs one finder per function, by path and line', async () => {
   const { labels } = await unitsRun()
   assert.deepEqual(labels, [
     'setup', 'map',
-    'units:src/core.py', 'units:src/auth.py', 'units:src/empty.py',
+    'units:src/core.py', 'units:src/auth.py', 'units:src/empty.py', 'readers',
     'unit:auth.py:sign', 'unit:auth.py:check_token', 'unit:core.py:Context.exit', 'unit:core.py:main', 'unit:core.py:Command.invoke',
     'refute:auth.py', 'confirm:auth.py', 'persist:1', 'persist:assemble',
   ], 'no concern finder, residual pass or test-file lister; a single finding skips the dedup agent')
@@ -295,11 +313,12 @@ test('only the unit finders get the run permission', async () => {
 test('the script counts what was listed, kept, judged and found', async () => {
   const { logs, res } = await unitsRun({ findings: label => (label === 'unit:core.py:main' ? null : label.startsWith('unit:auth.py') ? [{ ...FOUND, rootCause: `${label} root` }] : []) })
   const at = logs.indexOf('units:src/core.py: 3 of 5 functions listed')
-  assert.deepEqual(logs.slice(at, at + 5), [
+  assert.deepEqual(logs.slice(at, at + 6), [
     'units:src/core.py: 3 of 5 functions listed',
     'units:src/auth.py: 2 of 2 functions listed',
     'units:src/empty.py: 0 of 0 functions listed',
     'Units: 5 listed in 3 file(s) -> 5 to audit, 0 dropped by maxUnits=500',
+    'Readers: 0 of 2 file(s) keep a script or template',
     'Units: 4 judged, 1 returned nothing, 2 finding(s) (src/auth.py: 2)',
   ])
   assert.equal(res.stats.raw, 2)

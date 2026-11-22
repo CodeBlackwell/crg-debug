@@ -44,6 +44,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   23 earlier runs with a final gate it would have run once. Wave gates are unchanged.
 
 ### Changed
+- **Finders in a file that keeps a script or template are told about its reader**
+  (`crg-debug.js`). In units mode one more agent runs a fixed scan over the audited files for a
+  script or template kept in a multi-line string constant of five lines or more. Only the
+  finders of a file that holds one get a paragraph naming the constant and its lines, asking
+  them to work out which characters that reader treats as separators or as special and to run
+  the function with values that contain them. The script decides who is told; no agent does.
+  If the scan does not report, no finder is told and the run goes on as before. Costs one
+  agent a run. In evals on one bug of this kind (a colon passed unescaped to zsh's
+  `_describe`), a finder told this raised it in 2 of 3 real one-file runs and never when
+  untold; it also brings more findings in such a file, which were true when run.
 - **A baseline command that ran no test is not repeated after each wave** (`crg-debug.js`).
   When the regression baseline reports one command that ran tests and another the runner
   rejected, only the first is handed to the agent that re-runs the gate, and the log says how
