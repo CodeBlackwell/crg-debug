@@ -640,30 +640,49 @@ test('a proposal that could not be saved is said so in the reason, and the fix i
   }
 })
 
-test('when restoring the blamed fix does not clear the failure, the whole wave goes back and nothing commits', async () => {
-  const { result, labels, calls } = await fixRun(SRC, {
+test('when restoring the blamed fix does not clear the failure, the fixers still standing go back by halves', async () => {
+  const { result, labels, logs } = await fixRun(SRC, {
     bugs: TWO,
     on: {
       regress: script(runs(), runs(EXISTING), runs(EXISTING)),
       blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }),
     },
   })
-  assert.deepEqual(labels, ['tree-status', 'ingest-ledger', 'fix-branch', 'regress:baseline', 'snapshot:wave1', 'fix:alpha.py', 'fix:bravo.py', 'gate:alpha.py', 'gate:bravo.py', 'testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'regress:allfixes'])
-  const second = calls.filter(c => c.label === 'restore:wave1')[1]
-  assert.ok(second.prompt.includes(`'src/alpha.py' 'tests/test_alpha.py' 'src/bravo.py' 'tests/test_bravo.py'`), 'every file the wave touched')
+  assert.deepEqual(labels.slice(9, 17), ['testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'restore:wave1', 'regress:wave1:recheck', 'snapshot:wave2'])
+  assert.ok(logs.includes('Fix wave 1: tests still fail and no fix is named for them — took back b2, half of the fixers standing; 0 fixer(s) left'))
+  assert.deepEqual(result.fix.regressionGate.waves[0], { wave: 1, newFailures: [EXISTING.id], takenBack: ['b1', 'b2'], outcome: 'halves restored' })
+  assert.deepEqual(names(result.fix.fixed).sort(), ['b1', 'b2'], 'both go round once more and are fixed in wave 2')
+  assert.deepEqual(result.fix.unfixed, [])
+})
+
+// FIX-04, wfe-click-MK2.2: the blame agent named three fixers, the tests still failed with them
+// gone, and all 47 findings of the wave were filed unfixed. Halving keeps the half that passes.
+test('a blame that names nobody in the wave: half the fixers go back, the half that passes commits', async () => {
+  const FOUR = [bug('b1', 'src/alpha.py'), bug('b2', 'src/bravo.py'), bug('b3', 'src/gamma.py'), bug('b4', 'src/delta.py')]
+  const { result, labels } = await fixRun(SRC, { bugs: FOUR, on: { regress: script(runs(), runs(EXISTING), runs()), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b77'] }] }) } })
+  assert.deepEqual(labels.slice(13, 20), ['testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:wave1:recheck', 'commit:wave', 'commit:wave'])
+  assert.deepEqual(result.fix.commits.slice(0, 2).map(c => c.bugs), [['b3'], ['b4']], 'the half still standing commits in wave 1')
+  assert.deepEqual(result.fix.fixed.map(b => [b.bugId, b.wave]), [['b3', 1], ['b4', 1], ['b1', 2], ['b2', 2]])
+  for (const blame of [() => null, () => { throw new Error('retry cap') }]) {
+    const { result: again } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING)), blame } })
+    assert.deepEqual(again.fix.commits[0].bugs, ['b2'], 'a blame that never arrives names nobody')
+    assert.deepEqual(names(again.fix.fixed).sort(), ['b1', 'b2'])
+  }
+})
+
+test('a fix taken back by halves a second time is unfixed for the test its wave broke', async () => {
+  const { result } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING), runs(), runs(EXISTING), runs()), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b77'] }] }) } })
+  assert.deepEqual(names(result.fix.fixed), ['b2'])
+  assert.deepEqual(result.fix.unfixed.map(b => [b.bugId, b.reason]), [['b1', `fix breaks existing test ${EXISTING.id} — taken back by halves twice`]])
+  assert.deepEqual(result.fix.regressionGate.waves.map(w => w.outcome), ['halves restored', 'halves restored'])
+})
+
+test('when the tests still fail with every fixer of the wave taken back, the whole wave is unfixed and nothing commits', async () => {
+  const { result } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING), runs(EXISTING), runs(EXISTING)), blame: () => null } })
   assert.deepEqual(result.fix.fixed, [])
   assert.deepEqual(result.fix.commits, [])
   assert.deepEqual(result.fix.unfixed.map(b => [b.bugId, b.reason]), [['b1', `fix breaks existing test ${EXISTING.id}`], ['b2', `fix breaks existing test ${EXISTING.id}`]])
   assert.deepEqual(result.fix.regressionGate.waves, [{ wave: 1, newFailures: [EXISTING.id], takenBack: ['b1', 'b2'], outcome: 'wave restored' }])
-})
-
-test('a blame that never arrives, or names nobody in the wave, takes the whole wave back', async () => {
-  for (const blame of [() => null, () => { throw new Error('retry cap') }, () => ({ causes: [{ test: EXISTING.id, bugIds: ['b77'] }] })]) {
-    const { result, labels } = await fixRun(SRC, { bugs: TWO, on: { regress: script(runs(), runs(EXISTING)), blame } })
-    assert.deepEqual(labels.slice(9), ['testedits:wave1', 'regress:wave1', 'blame:wave1', 'restore:wave1', 'regress:allfixes'])
-    assert.deepEqual(result.fix.commits, [])
-    assert.equal(result.fix.unfixed.length, 2)
-  }
 })
 
 test('a baseline that does not report stops the Fix phase before any fix is attempted', async () => {
@@ -972,7 +991,8 @@ test('a fix whose own test fails once the blamed fix is gone goes back alone, an
     bugs: THREE,
     on: { regress: script(runs(), runs(EXISTING), runs({ id: 'tests/test_other.py::test_x' })), blame: () => ({ causes: [{ test: EXISTING.id, bugIds: ['b1'] }] }) },
   })
-  assert.equal(unowned.result.fix.regressionGate.waves[0].outcome, 'wave restored', 'a failure no bug of the wave owns still costs the wave')
+  assert.equal(unowned.result.fix.regressionGate.waves[0].outcome, 'halves restored', 'a failure no bug of the wave owns goes to the halving')
+  assert.deepEqual(unowned.result.fix.commits[0].bugs, ['b3'])
 })
 
 // Writeup 030: a suite piped into tail, with the terminal as its input, sat idle for twelve

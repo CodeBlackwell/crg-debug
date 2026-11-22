@@ -56,14 +56,14 @@ test('the findings reviewed first are ranked by severity, then confidence, then 
 })
 
 test('a fix wave is counted at its worst, and only the fixers that fit are kept', () => {
-  assert.equal(H.waveAgents(1, 1), 13)
-  assert.equal(H.waveAgents(10, 10), 58, 'a commit and its un-commit per fixer')
-  assert.equal(H.waveAgents(3, 12), 32, 'a file of four bugs is one fixer, four gates and one commit')
+  assert.equal(H.waveAgents(1, 1), 15)
+  assert.equal(H.waveAgents(10, 10), 66, 'a commit and its un-commit per fixer, four halvings')
+  assert.equal(H.waveAgents(3, 12), 36, 'a file of four bugs is one fixer, four gates and one commit')
   assert.equal(H.fixersThatFit([1, 1, 1], 100), 3)
-  assert.equal(H.fixersThatFit(Array(30).fill(1), 35), 5)
-  assert.equal(H.fixersThatFit([4, 4, 4], 32), 3)
-  assert.equal(H.fixersThatFit([4, 4, 4], 31), 2)
-  assert.equal(H.fixersThatFit([1], 12), 0, 'not a wave it cannot finish')
+  assert.equal(H.fixersThatFit(Array(30).fill(1), 35), 4)
+  assert.equal(H.fixersThatFit([4, 4, 4], 36), 3)
+  assert.equal(H.fixersThatFit([4, 4, 4], 35), 2)
+  assert.equal(H.fixersThatFit([1], 14), 0, 'not a wave it cannot finish')
   assert.deepEqual([H.FIX_OPENING, H.FIX_CLOSING, H.COUPLED_AGENTS], [5, 2, 9])
 })
 
@@ -1069,7 +1069,7 @@ test('with no room for even one wave the fix phase does not start, and writes no
   assert.ok(!labels.some(l => /^(fix-branch|bootstrap|snapshot|fix:|regress)/.test(l)), 'no branch, no baseline, no fixer')
   assert.equal(labels.at(-1), 'persist:assemble')
   assert.equal(result.ledgerSaved, true, 'the review it did is on disk')
-  assert.ok(logs.some(l => /^Fix not started: 30 confirmed bug\(s\) left unfixed — agent limit \(\d+ of 1000 agents left, a first wave needs 20\)\. Run again from the ledger to fix them\.$/.test(l)))
+  assert.ok(logs.some(l => /^Fix not started: 30 confirmed bug\(s\) left unfixed — agent limit \(\d+ of 1000 agents left, a first wave needs 22\)\. Run again from the ledger to fix them\.$/.test(l)))
 })
 
 test('refutes that say intentional leave agents unspent, and further rounds review findings with them', async () => {

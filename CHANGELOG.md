@@ -14,6 +14,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   Unset, the ledger stage runs on the run's model, as every stage does.
 
 ### Fixed
+- **A wrong blame no longer puts back a whole fix wave** (`crg-debug.js`). After a wave, one
+  agent names the fixes behind each newly failing test and those are taken back. When a test
+  still failed after that, every fix of the wave went back and all its bugs were filed
+  unfixed: one run lost 47 fixes this way, with five of click's planted bugs among them, after
+  the blame named three fixers and missed the one that broke the test. Now the fixers still
+  standing go back half at a time, with the tests run again after each half, and the fixers
+  standing when the tests pass are kept. A fix taken back this way goes round once more in the
+  next wave; taken back by halves a second time, it is unfixed for the test its wave broke. A
+  wave whose tests still fail with every fixer gone goes back whole, as before. A wave now
+  reserves a restore and a recheck for each halving in its agent budget.
 - **A regression baseline in which no test ran is asked for once more** (`crg-debug.js`). One
   baseline agent ran a rejected command and a working one, then reported a third it had never
   run, as passing with 0 tests. Run for real after each wave, that command exits 4, which read
