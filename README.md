@@ -33,6 +33,7 @@ measurement, a diff confined to an allowlist. Nothing is ever pushed on your beh
 - [Install](#-install)
 - [Prose vs deterministic mode](#-prose-vs-deterministic-mode)
   - [The original evaluation](#-the-original-evaluation)
+  - [Eval card: `/crg-debug` against stock Claude Code](#-eval-card-crg-debug-against-stock-claude-code)
 - [The workflows](#-the-workflows)
 - [The safety model](#-the-safety-model)
 - [Repo layout](#-repo-layout)
@@ -201,6 +202,76 @@ reference fix, not test-suite passage; judge decomposition of the answer key add
 small cells; and the Workflow's separate BugFix validation used real compile/test exit codes
 instead (13 confirmed bugs, 0 unfixed, green gate) — a stronger signal, deliberately not mapped
 onto the recall/precision tables.
+
+### 🪪 Eval card: `/crg-debug` against stock Claude Code
+
+Since 12 November 2026 the `/crg-debug` Workflow has been measured against stock Claude Code on
+real Python libraries with planted bugs. This card is where that measurement stands on
+22 November 2026, limits included. It is a progress report on the repos the Workflow was tuned
+on, not a benchmark result.
+
+**What is measured**
+
+| | |
+|---|---|
+| Task | A library with 4 to 13 planted bugs, each an upstream fix taken back out. The agent is told to find and fix bugs and is left alone: nobody answers a question or approves a step. |
+| Grading | Each bug has hidden tests the agent never sees. A bug is **resolved** when its tests pass and no test that passed before now fails. There is no LLM judge. |
+| Arms | Stock Claude Code in one session, against one `/crg-debug` Workflow run in deterministic mode with `fix: true`. |
+| Models | Stock on Claude Sonnet 5.5. The Workflow's reviewers and fixers on Sonnet 5.5, its finders on Claude Haiku 5.5. In the click batch the agents that copy its list of findings to disk also ran on Haiku. |
+| pass@k, pass^k | Of k runs of one setup: **pass@k** counts the bugs resolved in at least one run, **pass^k** the bugs resolved in every run. The gap between them is how much one run can be trusted. |
+
+**click: three unattended runs of each, one batch**
+
+13 planted bugs. The Workflow is `main` at `02faa49`, thirteen commits after 0.34.1 and not yet
+released. Runs alternated, one at a time, on 22 November 2026 (Claude Code 2.1.330).
+
+| | Stock Claude Code | `/crg-debug` Workflow |
+|---|---:|---:|
+| Resolved in each run | 0, 0, 0 | **7, 3, 6** |
+| pass@3: resolved in at least one run | 0 | **8** |
+| pass^3: resolved in every run | 0 | **2** |
+| Runs that broke a passing test | 0 | 0 |
+| Usage per run, at list price | $0.82 | $19.76 |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/eval-card-dark.svg">
+  <img src="docs/eval-card-light.svg" width="720" alt="On click, planted bugs resolved as more runs are counted. The Workflow: 8 of 13 in at least one of three runs, 2 in all three. Stock Claude Code: 0 in any run.">
+</picture>
+
+The upper edge of the band is pass@k and the lower edge pass^k, for each k up to three. The
+band is wide: the Workflow resolves 8 of the 13 at least once and only 2 every time. The run
+that resolved 3 found more of the planted bugs than the other two and then put its first wave
+of 47 fixes back whole after an existing test failed, which is the Workflow working as built
+and its largest known source of an unsteady run. An earlier stock run on 12 November resolved
+1 of 13.
+
+**The other repos: one run of each, on earlier versions**
+
+| Repo | Planted bugs | Stock Claude Code | `/crg-debug` Workflow | Workflow version | Usage, Workflow against stock |
+|------|-------------:|------------------:|----------------------:|------------------|-------------------------------|
+| isort | 11 | 0 | **2** | `main`, six commits after 0.34.1 (0.34.0 resolved 0) | $25.83 against $1.67 |
+| arrow | 4 | 0, 0 and 1 over three runs | 0 | `main`, two commits after 0.34.1 | $11.85 against about $0.50 |
+| pendulum | 9 | 1 | no run on a current version | | |
+
+Each Workflow figure is a detection run followed by a fix run from the findings it saved, with
+no person in between. The arrow run lost its saved findings and then its fixes to two
+bookkeeping faults, so its 0 says nothing about the fixes themselves.
+
+**What this card does not show**
+
+- **These are the tuning repos.** The Workflow was changed in response to what it missed on
+  them. A held-out set of 8 repos and 98 bugs is sealed and has not been run.
+- **Only click has repeats.** The other three repos have one Workflow run each, on older
+  versions, and one stock run on two of them.
+- **Three runs is a small sample.** One more run like the worst or the best would move the
+  mean and pass^3 a good deal.
+- **It costs far more than stock.** On click the Workflow used 24 times stock's dollars.
+- **It does not find everything.** A click run confirmed 7 to 9 of the 13 planted bugs; 3 were
+  confirmed in none of the three runs.
+- **A confirmed bug can be fixed wrongly.** One click bug was confirmed and fixed twice and its
+  hidden test failed both times: the fix went further than the upstream one.
+- **The shipped default is Haiku for every agent.** These runs set a model per stage; the
+  default has not completed an end-to-end trial.
 
 Two bundled agents cover a third shape — a **sequential single-context run** for orchestrators that
 can't nest subagents: `crg-debugger` and `crg-ui-converger`.

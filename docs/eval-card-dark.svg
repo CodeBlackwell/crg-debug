@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 372" width="720" role="img" aria-label="pass@k and pass^k on click, of 13 planted bugs" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<line x1="64" x2="400" y1="316.0" y2="316.0" stroke="#383835"/>
+<text x="54" y="320.0" text-anchor="end" fill="#c3c2b7">0</text>
+<line x1="64" x2="400" y1="276.0" y2="276.0" stroke="#2c2c2a"/>
+<text x="54" y="280.0" text-anchor="end" fill="#c3c2b7">2</text>
+<line x1="64" x2="400" y1="236.0" y2="236.0" stroke="#2c2c2a"/>
+<text x="54" y="240.0" text-anchor="end" fill="#c3c2b7">4</text>
+<line x1="64" x2="400" y1="196.0" y2="196.0" stroke="#2c2c2a"/>
+<text x="54" y="200.0" text-anchor="end" fill="#c3c2b7">6</text>
+<line x1="64" x2="400" y1="156.0" y2="156.0" stroke="#2c2c2a"/>
+<text x="54" y="160.0" text-anchor="end" fill="#c3c2b7">8</text>
+<line x1="64" x2="400" y1="116.0" y2="116.0" stroke="#2c2c2a"/>
+<text x="54" y="120.0" text-anchor="end" fill="#c3c2b7">10</text>
+<line x1="64" x2="400" y1="76.0" y2="76.0" stroke="#2c2c2a"/>
+<text x="54" y="80.0" text-anchor="end" fill="#c3c2b7">12</text>
+<text x="64.0" y="336" text-anchor="middle" fill="#c3c2b7">1</text>
+<text x="232.0" y="336" text-anchor="middle" fill="#c3c2b7">2</text>
+<text x="400.0" y="336" text-anchor="middle" fill="#c3c2b7">3</text>
+<text x="232.0" y="360" text-anchor="middle" fill="#c3c2b7">Runs counted (k)</text>
+<text x="64" y="22" fill="#c3c2b7">Planted bugs resolved, of 13</text>
+<polygon points="64.0,209.3 232.0,169.3 400.0,156.0 400.0,276.0 232.0,249.3 64.0,209.3" fill="#3987e5" fill-opacity="0.12"/>
+<polyline points="64.0,209.3 232.0,169.3 400.0,156.0" fill="none" stroke="#3987e5" stroke-width="2"/>
+<circle cx="64.0" cy="209.3" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/><circle cx="232.0" cy="169.3" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/><circle cx="400.0" cy="156.0" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
+<polyline points="64.0,209.3 232.0,249.3 400.0,276.0" fill="none" stroke="#3987e5" stroke-width="2"/>
+<circle cx="64.0" cy="209.3" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/><circle cx="232.0" cy="249.3" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/><circle cx="400.0" cy="276.0" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
+<text x="412.0" y="160.0" fill="#f0efec">8 in at least one run (pass@3)</text>
+<text x="412.0" y="280.0" fill="#f0efec">2 in every run (pass^3)</text>
+<rect x="64" y="34" width="12" height="12" rx="2" fill="#3987e5"/>
+<text x="82" y="44" fill="#f0efec">/crg-debug Workflow, 3 runs</text>
+<polygon points="64.0,316.0 232.0,316.0 400.0,316.0 400.0,316.0 232.0,316.0 64.0,316.0" fill="#d95926" fill-opacity="0.12"/>
+<polyline points="64.0,316.0 232.0,316.0 400.0,316.0" fill="none" stroke="#d95926" stroke-width="2"/>
+<circle cx="64.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/><circle cx="232.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/><circle cx="400.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/>
+<polyline points="64.0,316.0 232.0,316.0 400.0,316.0" fill="none" stroke="#d95926" stroke-width="2"/>
+<circle cx="64.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/><circle cx="232.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/><circle cx="400.0" cy="316.0" r="4" fill="#d95926" stroke="#0d1117" stroke-width="2"/>
+<text x="412.0" y="308.0" fill="#f0efec">0 in any run</text>
+<rect x="294" y="34" width="12" height="12" rx="2" fill="#d95926"/>
+<text x="312" y="44" fill="#f0efec">Stock Claude Code, 3 runs</text>
+</svg>
