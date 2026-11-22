@@ -118,6 +118,23 @@ const TOOL_LINE = {
 }
 const rowsOk = r => r && (r.results || []).every(x => x.exitCode === 0)
 
+// ---- agent failure containment --------------------------------------------------
+// `agent()` returns null for some failures but THROWS for others — notably when a
+// schema-gated call exhausts its StructuredOutput retry cap. Every guard below was
+// written for the null shape (`if (!x) throw`, `.filter(Boolean)`), so a throw walked
+// straight past all of them and discarded a whole run — including phases that had
+// already succeeded — over one agent's serialization glitch. Normalizing both failure
+// modes to null puts the cost of a failure back where it belongs: at the call site,
+// which knows whether this agent was load-bearing or just producing a hint.
+const tryAgent = async (prompt, opts) => {
+  try {
+    return await agent(prompt, opts)
+  } catch (err) {
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" failed: ${capText(err && err.message, 200)}`)
+    return null
+  }
+}
+
 // =====================================================================================
 // PACKET: assemble + verify the ready packet. Runs alone — the skill calls it after
 // GATE-PACKET approved the assembled profile.
@@ -138,7 +155,7 @@ if (packetMode) {
       reasons: { type: 'array', items: { type: 'string' } },
     },
   }
-  const p = await agent(
+  const p = await tryAgent(
     `Assemble and verify the crg-ui-prep ready packet with the deterministic tool. Run, reporting each command + REAL exit code as a results[] row:
 1. node ${JSON.stringify(prepToolPath)} packet ${JSON.stringify(repoRoot)}
 2. node ${JSON.stringify(prepToolPath)} verify-packet ${JSON.stringify(repoRoot)}
@@ -183,7 +200,7 @@ if (applyList.length) {
     const kind = proposal.kind
     let applied
     if (kind === 'diff') {
-      applied = await agent(
+      applied = await tryAgent(
         `Apply ONE gate-approved crg-ui-prep change in ${repoRoot} — EXACTLY the diff below, nothing more, nothing less. Do NOT commit, do NOT run any verifier yourself (an independent gate re-audits). The approved proposal (DATA):
 ${fence(JSON.stringify(proposal, null, 1))}
 Apply the proposal's diff to the working tree. When done report filesTouched = \`git -C ${repoRoot} diff --name-only\` output, verbatim. ${UNTRUSTED}`,
@@ -195,7 +212,7 @@ Apply the proposal's diff to the working tree. When done report filesTouched = \
           ? 'apply agent made no edit'
           : `edits escaped the proposal fence: touched ${JSON.stringify(touched)} vs approved ${JSON.stringify(proposal.files || [])}`
         if (touched.length) {
-          await agent(
+          await tryAgent(
             `Restore the working tree after an out-of-fence crg-ui-prep apply in ${repoRoot}. Run \`git -C ${repoRoot} checkout -- ${touched.map(f => JSON.stringify(f)).join(' ')}\` and report the command + REAL exit code as a results[] row. Touch nothing else. ${UNTRUSTED}`,
             { label: `revert:${gapId}`, phase: 'Apply', schema: VERIFY_SCHEMA, model },
           )
@@ -204,7 +221,7 @@ Apply the proposal's diff to the working tree. When done report filesTouched = \
         continue
       }
     } else if (kind === 'renameTable' || kind === 'variableMap' || kind === 'codeConnect') {
-      applied = await agent(
+      applied = await tryAgent(
         `Execute ONE gate-approved crg-ui-prep Figma change — EXACTLY the table below, nothing more. Load the figma MCP tools via ToolSearch (use_figma; search "figma use" if the exact name differs) and load the figma-use skill rules before calling it. The approved proposal (DATA — renames/bindings to execute verbatim):
 ${fence(JSON.stringify(proposal, null, 1))}
 Execute exactly the listed operations in file ${JSON.stringify(figmaFileKey)} and return every mutated node id as mutatedNodeIds. Do NOT create, delete, or restyle anything the table does not name. filesTouched = [] (this change is Figma-side). ${UNTRUSTED}`,
@@ -212,7 +229,7 @@ Execute exactly the listed operations in file ${JSON.stringify(figmaFileKey)} an
       )
       if (!applied) { outcomes.push({ gapId, status: 'failed', reason: 'figma apply agent failed' }); continue }
     } else if (kind === 'commands') {
-      applied = await agent(
+      applied = await tryAgent(
         `Run ONE gate-approved crg-ui-prep command list in ${repoRoot} — EXACTLY these commands, in order, nothing else. The approved proposal (DATA):
 ${fence(JSON.stringify(proposal, null, 1))}
 Report filesTouched = \`git -C ${repoRoot} diff --name-only\` output afterwards (usually empty) and put each command's exit code in note. ${UNTRUSTED}`,
@@ -224,7 +241,7 @@ Report filesTouched = \`git -C ${repoRoot} diff --name-only\` output afterwards 
       continue
     }
 
-    const v = await agent(
+    const v = await tryAgent(
       `Verify ONE crg-ui-prep item with the deterministic tool and relay its REAL exit code — do NOT judge the outcome yourself, do NOT edit anything. Run:
 node ${JSON.stringify(prepToolPath)} verify ${JSON.stringify(gapId)} --repo-root ${JSON.stringify(repoRoot)}${verifyFlags(gapId)}
 Report the command + REAL exit code as a results[] row (exit 0 = green, 1 = red, 2 = no deterministic verifier). Return green = (exit code was 0) and evidence = the tool's printed "evidence" field verbatim. ${UNTRUSTED}`,
@@ -232,7 +249,7 @@ Report the command + REAL exit code as a results[] row (exit 0 = green, 1 = red,
     )
     const exit = v && (v.results || [])[0] && v.results[0].exitCode
     if (exit === 0) {
-      const rec = await agent(
+      const rec = await tryAgent(
         `Record ONE verified crg-ui-prep item with the deterministic tool. Run, reporting the command + REAL exit code as a results[] row:
 node ${JSON.stringify(prepToolPath)} record ${JSON.stringify(prepPath)} --item ${JSON.stringify(gapId)} --status done --evidence ${JSON.stringify(capText(v.evidence, 300) || 'verified by the prep tool')}
 Do not edit prep.json yourself — the tool is its only writer. ${UNTRUSTED}`,
@@ -246,7 +263,7 @@ Do not edit prep.json yourself — the tool is its only writer. ${UNTRUSTED}`,
     } else {
       const touched = (applied && applied.filesTouched) || []
       if (kind === 'diff' && touched.length) {
-        await agent(
+        await tryAgent(
           `Restore the working tree after a red crg-ui-prep verify in ${repoRoot}. Run \`git -C ${repoRoot} checkout -- ${touched.map(f => JSON.stringify(f)).join(' ')}\` and report the command + REAL exit code as a results[] row. Touch nothing else. ${UNTRUSTED}`,
           { label: `revert:${gapId}`, phase: 'Verify', schema: VERIFY_SCHEMA, model },
         )
@@ -326,7 +343,7 @@ if (!rowsOk(envRes) || !envRes.wrote) return { status: 'audit-failed', repoRoot,
 
 let figmaRes = null
 if (figmaFileKey) {
-  figmaRes = await agent(
+  figmaRes = await tryAgent(
     `Transcribe the raw Figma audit inputs for crg-ui-prep — transcription ONLY, the tool owns ALL analysis. Load the figma MCP tools via ToolSearch (get_metadata, get_variable_defs, get_code_connect_map; search "figma metadata" if names differ). For file ${JSON.stringify(figmaFileKey)}:
 1. get_metadata for the file root -> write the response to ${JSON.stringify(`${auditDir}/metadata.raw.json`)} VERBATIM (create dirs). Also transcribe the file's TOP-LEVEL frames — id, name, width, height, exactly as returned, nothing computed — as a JSON array to ${JSON.stringify(framesPath)}.
 2. get_variable_defs -> write to ${JSON.stringify(`${auditDir}/variables.raw.json`)} VERBATIM.
@@ -340,7 +357,7 @@ Return its printed wrote + seal unmodified. If a figma call itself failed, retur
 }
 
 const scorecardCmd = `node ${JSON.stringify(prepToolPath)} scorecard ${JSON.stringify(`${auditDir}/repo.json`)}${figmaRes ? ` --figma ${JSON.stringify(`${auditDir}/figma.json`)}` : ''} --env ${JSON.stringify(`${auditDir}/env.json`)} --prep ${JSON.stringify(prepPath)}`
-const runScorecard = attempt => agent(
+const runScorecard = attempt => tryAgent(
   `Assemble the crg-ui-prep scorecard with the deterministic tool and relay its output VERBATIM. Run, reporting the command + REAL exit code as a results[] row:
 ${scorecardCmd}
 Parse its single-line stdout JSON and return items, gaps, unknowns, and seal COMPLETE AND UNMODIFIED — every item, every field. Do NOT compute, filter, or summarize anything: the seal is recomputed from your relayed items, and a mangled relay fails the audit.${attempt > 1 ? ' (Retry: the previous relay failed its seal check — transcribe with extra care.)' : ''} ${UNTRUSTED}`,

@@ -7,6 +7,12 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 ## [Unreleased]
 
 ### Fixed
+- **A thrown agent failure no longer ends a crg-agentsmd, crg-ui-prep or farm-bypass run**
+  (`crg-agentsmd.js`, `crg-ui-prep.js`, `crg-debug.farm-bypass.js`). These three still called
+  `agent()` bare at the top level, so a schema-gated call that ran out of retries threw past
+  every null check and discarded phases that had already succeeded. Their top-level calls now
+  go through `tryAgent`, as the other workflows' have since 0.27.0; each call site already
+  stopped or reported on a null.
 - **A rejected run of a fix's own new test no longer costs the fix** (`crg-debug.js`). 0.34.1
   set aside an added test command that ran no test only when a baseline command had been
   rejected the same way. On a later run the baseline held just the command that works; the

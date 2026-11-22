@@ -143,6 +143,24 @@ const note = (repo, msg, why) => log(`[${repo || 'run'}] ${msg}${why ? ` — why
 // Bookkeeping is best-effort: a telemetry agent that hits its retry cap and throws must never
 // take down a run whose real work succeeded. Contained here, logged, never silent.
 const bestEffort = (p, what) => p.catch(e => note(null, `${what} failed: ${capText(e && e.message, 200)}`, 'best-effort log — run continues'))
+
+// ---- agent failure containment --------------------------------------------------
+// `agent()` returns null for some failures but THROWS for others — notably when a
+// schema-gated call exhausts its StructuredOutput retry cap. Every guard below was
+// written for the null shape (`if (!x) throw`, `.filter(Boolean)`), so a throw walked
+// straight past all of them and discarded a whole run — including phases that had
+// already succeeded — over one agent's serialization glitch. Normalizing both failure
+// modes to null puts the cost of a failure back where it belongs: at the call site,
+// which knows whether this agent was load-bearing or just producing a hint.
+const tryAgent = async (prompt, opts) => {
+  try {
+    return await agent(prompt, opts)
+  } catch (err) {
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" failed: ${capText(err && err.message, 200)}`)
+    return null
+  }
+}
+
 const mark = async (repo, stage, detail, why, phase = 'Triage') => {
   note(repo, `${stage}${detail ? `: ${detail}` : ''}`, why)
   await bestEffort(agent(
@@ -171,7 +189,7 @@ const reconPrompt =
       : `Unthemed cross-repo GitHub search for open, PR-able bugs: \`gh search issues --state open --label bug --sort updated -L 30\`. Quality-filter: drop any repo that is archived or has had no push in the last 12 months (\`gh repo view <owner>/<repo> --json isArchived,pushedAt\`).`
 
 note(null, `RECON spawn: sourcing candidates (${direction}${excludeSecurity ? ', excludeSecurity' : ''}) → two-pass dedup → farmability prior → rank`)
-const recon = await agent(
+const recon = await tryAgent(
   `${reconPrompt}
 
 For each hit, run the two-pass duplicate-fix check from crg-farm's methodology — read ${methodologyPath}, section "RECON — sourcing + duplicate-fix check", for the exact judgment rules:
