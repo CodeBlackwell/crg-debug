@@ -18,6 +18,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   take-back puts back a C source but not the extension built from it, so a wave's rebuilt `.so`
   outlived the take-back and failed tests in every later wave. The regression baseline agent is
   told, for a package that builds extensions in place, to begin each command with that build.
+- **A fixer that closed none of its bugs is put back whole** (`crg-debug.js`). Only the test
+  files of an open bug went back, so the source edit stayed. On isort a fixer whose test command
+  could not run (no `poetry` in the image) kept its edit to `deprecated/finders.py`; its retry
+  found the fix already there, saw no test fail and gave up, and the edit, owned by no fix,
+  broke an existing test in the final tree. Its source and declared support files now go back
+  with its tests, in the same put-back, except a file a closed fix keeps.
+- **The regression baseline keeps every test file** (`crg-debug.js`). isort's baseline left
+  `test_deprecated_finders.py` out with `--ignore`, so no wave could see a break in it. The
+  baseline agent is told to leave no test file out; a baseline that still does is asked once
+  more with the paths named, and whatever stays out is reported as `regressionGate.leftOut`.
 
 ## [0.35.0] - 2026-11-22
 

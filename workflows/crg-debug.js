@@ -191,6 +191,16 @@ const ownTests = (attempted, closed, fixById, root) => {
   const restore = [...new Set(open.map(testOf).filter(t => t && !sources.has(t)))]
   return { restore, demote: (closed || []).filter(b => restore.includes(testOf(b))) }
 }
+// A FIXER NONE OF WHOSE BUGS CLOSED (FIX-07). Only an open bug's test went back, so its source
+// edit stayed: on isort a fixer whose test command could not run left its edit to
+// deprecated/finders.py, the retry found it already fixed and saw no RED, and the edit,
+// owned by no fix, reached the final tree. Such a fixer's files go back whole, except a file
+// a closed fix keeps and a test that is already back. A fixer with a bug closed is committed.
+const unclosedFixerFiles = (groups, closed, filesOf, alreadyBack) => {
+  const kept = new Set([...filesOf(closed || []), ...(alreadyBack || [])])
+  const open = (groups || []).filter(([, bugs]) => !bugs.some(b => (closed || []).includes(b)))
+  return [...new Set(filesOf(open.flatMap(([, bugs]) => bugs)))].filter(f => !kept.has(f))
+}
 const SHARED_TEST_REASON = 'its test shared a file with the test of a bug that did not close, twice'
 // A COMMIT PER FIXER, not per wave. Six wave commits held about 50 fixes, so a reviewer who
 // wanted to drop a bad one had to pick hunks apart. Each fixer's closed bugs (one file's
@@ -931,6 +941,14 @@ const blindRuns = baseline => {
 // failing test named) is evidence of nothing, so it is asked for once more.
 const baselineRanATest = relay =>
   ((relay && relay.runs) || []).some(run => !!run && (run.passed > 0 || (run.failing || []).some(t => testIdOf(t && t.id))))
+// A BASELINE WITH A TEST FILE LEFT OUT (FIX-08). isort's baseline ran
+// `pytest tests/unit/ --ignore=tests/unit/test_deprecated_finders.py`; every wave re-ran that, so
+// a fix that broke a test in that file was seen by no wave. The paths a command leaves out
+// whole: --ignore, --ignore-glob, and a --deselect that names a file rather than one test.
+const leftOutTests = commands => [...new Set((commands || []).flatMap(command =>
+  [...String(command || '').matchAll(/--(?:ignore|ignore-glob|deselect)(?:=|\s+)(["']?)([^\s"']+)\1/g)]
+    .map(m => m[2])
+    .filter(path => !path.includes('::'))))]
 const regressionReason = tests => {
   const ids = (tests || []).map(t => t.id)
   return `fix breaks existing test ${capText(ids[0], 300)}${ids.length > 1 ? ` (+${ids.length - 1} more)` : ''}`
@@ -2523,18 +2541,20 @@ const fileList = files => {
   return unique.length ? fence(unique.join('\n')) : '(none recorded)'
 }
 
-const regressionBaselineAgent = (files, again) =>
+const regressionBaselineAgent = (files, again, leftOut) =>
   startAgent(
     `Record the regression baseline for the repo at ${repoRoot}, BEFORE any fix is applied. Do NOT edit any file.
-1. Work out the test commands for the BLAST RADIUS of the files below, NOT the whole suite (it can be huge and hang). Compute the radius with the graph: for each file call get_impact_radius_tool and query_graph_tool(pattern="tests_for") (plus get_affected_flows_tool) to collect the tests that exercise those files AND their dependents. If the graph finds no covering test for a file, use its nearest co-located/sibling test; only if none exists at all, fall back to that one package's default test command. Name whole test FILES or directories in each command (no -k filter, no single test id): these exact commands are re-run after every fix wave and must still cover tests added to those files later. If the package compiles extension modules in place (C or Cython sources built beside its Python code, as \`python setup.py build_ext --inplace\` does), begin each command with that in-place build joined by \`&&\`: a take-back puts back the source, not the built file, so every re-run has to build from the source as it stands.
+1. Work out the test commands for the BLAST RADIUS of the files below, NOT the whole suite (it can be huge and hang). Compute the radius with the graph: for each file call get_impact_radius_tool and query_graph_tool(pattern="tests_for") (plus get_affected_flows_tool) to collect the tests that exercise those files AND their dependents. If the graph finds no covering test for a file, use its nearest co-located/sibling test; only if none exists at all, fall back to that one package's default test command. Name whole test FILES or directories in each command (no -k filter, no single test id): these exact commands are re-run after every fix wave and must still cover tests added to those files later. Leave no test file or directory out of a command (no --ignore, no --ignore-glob, no --deselect of a whole file): a test that already fails before any fix is recorded as already failing and is never held against a fix, but a file left out is a file in which no later check can see a fix break anything. If the package compiles extension modules in place (C or Cython sources built beside its Python code, as \`python setup.py build_ext --inplace\` does), begin each command with that in-place build joined by \`&&\`: a take-back puts back the source, not the built file, so every re-run has to build from the source as it stands.
 2. Run each command ${RUN_TO_COMPLETION}.
 Files about to be fixed (blast-radius roots):
 ${fileList(files)}
 Toolchain:
 ${tcLine()}
 ${RUN_RULE}
-${regressionRows(BASELINE_COMMAND_RULE)}`,
-    { label: `regress:baseline${again ? ':again' : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
+${regressionRows(BASELINE_COMMAND_RULE)}${leftOut && leftOut.length ? `
+Your first baseline left these test paths out of its commands. Run them in this time; a test in them that fails now is recorded as already failing. Leave one out only if the runner cannot even collect it, and then leave out that one file alone:
+${fence(leftOut.join('\n'))}` : ''}`,
+    { label: `regress:baseline${leftOut && leftOut.length ? ':whole' : again ? ':again' : ''}`, phase: 'Fix', schema: REGRESSION_SCHEMA, model: models.fix },
   )
 
 // One blind baseline command (ranBlind), run again so that its tests run.
@@ -2808,12 +2828,20 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     log(`Fix: regression baseline showed no test run in its ${reportedBaseline.runs.filter(Boolean).length} command(s) — asked once more, and ${better ? (baselineRanATest(second) ? 'the second one ran tests' : 'the second one ran none either') : 'the second did not report, so the first stands'}`)
     if (better) reportedBaseline = second
   }
+  const leftOutFirst = leftOutTests(((reportedBaseline && reportedBaseline.runs) || []).map(r => r && r.command))
+  if (regressionReported(reportedBaseline, []) && leftOutFirst.length) {
+    const whole = await regressionBaselineAgent(queue.map(bugFile), true, leftOutFirst)
+    const fewer = regressionReported(whole, []) && baselineRanATest(whole) && leftOutTests(whole.runs.map(r => r && r.command)).length < leftOutFirst.length
+    log(`Fix: regression baseline left out ${leftOutFirst.length} test path(s) (${capText(leftOutFirst.join(', '), 300)}) — asked once more, and ${fewer ? 'the second one leaves out fewer, so it is the baseline' : 'the second one does not, so the first stands and no wave can see a break in those paths'}`)
+    if (fewer) reportedBaseline = whole
+  }
   for (const blind of blindRuns(reportedBaseline)) {
     const again = recounted(reportedBaseline, blind, await regressionRecountAgent(blind))
     log(`Fix: regression baseline — a test command exited ${blind.exitCode} with no passed count; ${again === reportedBaseline ? 'a second attempt gave none either, so a test it never ran can look newly failing later' : 'it ran again without the files that would not load, and that run is the baseline'}`)
     reportedBaseline = again
   }
   regression.baselineReported = regressionReported(reportedBaseline, [])
+  regression.leftOut = leftOutTests(((reportedBaseline && reportedBaseline.runs) || []).map(r => r && r.command))
   // The exit codes are read from every row the agent reported; the commands repeated after
   // each wave are only the rows that ran tests.
   const deadCodes = deadExitCodes(reportedBaseline)
@@ -3078,9 +3106,12 @@ if (fix && !fixRefused && !fixResult && confirmedBugs.some(b => !b.conflicted)) 
     // files go back now, and leave every allowlist. A closed bug whose test was in one of
     // them is not closed any more: it gets a single-bug attempt, once.
     const own = ownTests(attempted, closedNow, fixById, repoRoot)
-    if (own.restore.length) {
-      for (const [id, files] of supportById) supportById.set(id, files.filter(f => !own.restore.includes(relPath(f, repoRoot))))
-      if (await takeBack(waveTag, own.restore, snapshot)) log(`Fix wave ${waveNum}: put back the test file(s) of bugs that did not close: ${own.restore.join(', ')}`)
+    for (const [id, files] of supportById) supportById.set(id, files.filter(f => !own.restore.includes(relPath(f, repoRoot))))
+    // A fixer that closed nothing goes back whole (FIX-07), in the same put-back.
+    const strays = unclosedFixerFiles(groups, closedNow.filter(b => !own.demote.includes(b)), filesOf, own.restore)
+    if ((own.restore.length || strays.length) && await takeBack(waveTag, [...own.restore, ...strays], snapshot)) {
+      if (own.restore.length) log(`Fix wave ${waveNum}: put back the test file(s) of bugs that did not close: ${own.restore.join(', ')}`)
+      if (strays.length) log(`Fix wave ${waveNum}: put back the edits of the fixer(s) none of whose bugs closed: ${strays.join(', ')}`)
     }
     for (const b of own.demote) {
       if (sharedTest.has(b.bugId)) {

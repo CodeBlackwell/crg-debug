@@ -513,7 +513,7 @@ test('a clean run takes a baseline, checks each wave before its commit, and repo
   assert.deepEqual(names(result.fix.fixed), ['b1', 'b2'])
   assert.equal(result.fix.halted, undefined)
   assert.deepEqual(result.fix.regressionGate, {
-    baselineReported: true, baselineFailures: 0, takenBack: 0, unrun: 0,
+    baselineReported: true, baselineFailures: 0, takenBack: 0, unrun: 0, leftOut: [],
     waves: [{ wave: 1, newFailures: [], takenBack: [], outcome: 'clean' }],
   })
   assert.match(logs.at(-1), /regression gate: 0 test\(s\) failing before the first fix, 0 fix\(es\) taken back$/)

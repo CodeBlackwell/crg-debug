@@ -84,8 +84,8 @@ Output: the **confirmed real-bug queue** — deduped, verified, each with concer
 
 Per wave (barriered):
 1. Dispatch all fix work items at once. Each owns its bug + **exclusive** file set and follows the strict **TDD micro-cycle** (see TDD discipline in Cross-cutting rules): write the failing test first → run it and confirm RED for the right reason → apply the minimal fix → re-run to GREEN. No fix is applied before its test has been observed failing. Each bug's test goes in a **new test file of its own**, one per bug: a test of a bug that does not close never reaches a commit, so the test files of the open bugs are put back before anything is gated or committed, and a closed bug whose test shares one of them is not kept and is tried again alone (once; the second time it is unfixed). Each brief names `.crg-debug/ledger.json` as the on-disk source of truth for the full bug records, and — on an escalated re-invocation — fences in the caller's `priorFailure` evidence so the higher tier never repeats the failed approach.
-2. **Barrier** — wait for every fix item to return before any verification.
-3. **Dependent tests-wave** — run typecheck + the full toolchain-profile test command, scoped to affected packages, to catch cross-item interactions.
+2. **Barrier** — wait for every fix item to return before any verification. A fix item none of whose bugs closed has its whole edit put back now, source and tests, so its retry starts from the code as it was and no edit that no fix owns can reach a commit.
+3. **Dependent tests-wave** — run typecheck + the full toolchain-profile test command, scoped to affected packages, to catch cross-item interactions. Leave no test file in scope out of that command (no `--ignore`): a test that already failed before any fix is recorded as already failing, but a file left out is one in which no wave can see a break.
 4. Any new typecheck/test failure becomes a bug for the *next* wave (never let an agent thrash its own files mid-wave).
 
 **Loop-until-dry termination** — stop when, at a wave's end, ALL hold: queue empty · the wave produced no new failures · typecheck clean and scoped tests green.
