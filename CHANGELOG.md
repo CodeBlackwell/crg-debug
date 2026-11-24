@@ -13,10 +13,16 @@ All notable changes to the crg-debug plugin are documented here. The format foll
   writer of one nine-row piece, every retry packed the same nine rows and was stopped at the
   same row, and the run and its relaunch saved no ledger, so the fix half never started. A
   piece none of whose rows arrived on a retry, lost twice with the same rows, now goes again
-  one row to an agent, so only a row refused alone stays out and the ledger is saved without it (`ledgerSaved: 'partial'`). A piece lost on
-  its first try is still sent again packed, as one agent is cheaper when the fault passed.
-  When several pieces were sent and none arrived, or too few agents are left for a row each,
-  the rows go again as before.
+  one row to an agent, so only a row refused alone stays out and the ledger is saved without
+  it (`ledgerSaved: 'partial'`). A piece lost on its first try is still sent again packed, as
+  one agent is cheaper when the fault passed; when too few agents are left for a row each,
+  the rows go again packed.
+- **A ledger is saved without any number of finding rows it could not write**
+  (`crg-debug.js`). The partial save stood without at most 4 rows and wrote nothing past that,
+  so nine refused rows cost a ledger that held every other finding. Finding rows may now be
+  left out in any number, each whole in the return and named in `notWritten`. The toolchain,
+  the counts and the baseline failures are still never left out: a write that lost one of
+  them failed.
 
 ## [0.35.1] - 2026-11-24
 

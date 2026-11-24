@@ -1,4 +1,4 @@
-// A ledger that survives a row its agents cannot copy: when at most LEFT_OUT_CAP finding rows
+// A ledger that survives a row its agents cannot copy: when finding rows, any number of them,
 // still have not reached the disk after every retry, the write program is run once more and
 // told which rows to stand without. It writes every other row and a placeholder
 // {file, notWritten} in each lost row's place. Helpers are eval-extracted from the shipped
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 
 const SRC = readFileSync(fileURLToPath(new URL('../workflows/crg-debug.js', import.meta.url)), 'utf8')
 const block = SRC.slice(SRC.indexOf('// >>> pure-helpers'), SRC.indexOf('// <<< pure-helpers'))
-const NAMES = ['canLeaveOut', 'LEFT_OUT_CAP', 'plainWord', 'ledgerWrite', 'ledgerWriteWithout', 'ledgerWriteCommand', 'ledgerReadCommand', 'ledgerParts', 'notWrittenOf', 'notWrittenNames', 'isNotWrittenRow', 'ledgerReadOf', 'ledgerSaveLine', 'ledgerSavedOf', 'LEDGER_UNREPORTED', 'textSeal']
+const NAMES = ['canLeaveOut', 'plainWord', 'ledgerWrite', 'ledgerWriteWithout', 'ledgerWriteCommand', 'ledgerReadCommand', 'ledgerParts', 'notWrittenOf', 'notWrittenNames', 'isNotWrittenRow', 'ledgerReadOf', 'ledgerSaveLine', 'ledgerSavedOf', 'LEDGER_UNREPORTED', 'textSeal']
 const H = new Function(`${block}\nreturn { ${NAMES.join(', ')} }`)()
 const HARNESS = readFileSync(fileURLToPath(new URL('./fix-regression-gate.test.mjs', import.meta.url)), 'utf8')
 const { fixRun, ledgerDisk } = new Function(`${HARNESS.slice(HARNESS.indexOf('// >>> fix-harness'), HARNESS.indexOf('// <<< fix-harness'))}\nreturn { fixRun, ledgerDisk }`)()
@@ -24,10 +24,11 @@ test('canLeaveOut: a few finding rows yes; nothing missing, a head row, a count 
   assert.equal(H.canLeaveOut([]), false)
   for (const name of ['set.counts -', 'set.toolchain 0', 'set.baselineFailures 3', 'keep.confirmedBugs 0', 'set.unread 1', 'set.repoRoot -', 'set.models -']) assert.equal(H.canLeaveOut([name]), false, name)
 })
-test('canLeaveOut: more than LEFT_OUT_CAP rows, or one row that may not be left out among them, no', () => {
-  assert.equal(H.canLeaveOut(Array.from({ length: H.LEFT_OUT_CAP }, (_, i) => `set.deferred ${i}`)), true)
-  assert.equal(H.canLeaveOut(Array.from({ length: H.LEFT_OUT_CAP + 1 }, (_, i) => `set.deferred ${i}`)), false)
+test('canLeaveOut: finding rows in any number yes; one row that may not be left out among them no', () => {
+  assert.equal(H.canLeaveOut(Array.from({ length: 5 }, (_, i) => `set.deferred ${i}`)), true)
+  assert.equal(H.canLeaveOut(Array.from({ length: 300 }, (_, i) => `set.${['confirmedBugs', 'deferred', 'rejected', 'unreviewed'][i % 4]} ${i}`)), true)
   assert.equal(H.canLeaveOut(['set.confirmedBugs 1', 'set.counts -']), false)
+  assert.equal(H.canLeaveOut([...Array.from({ length: 9 }, (_, i) => `append.deferred ${i}`), 'set.toolchain 0']), false)
 })
 test('plainWord: one shell word with no quote, backslash, space or tilde, which decodes back', () => {
   for (const file of ['/arrow/arrow/arrow.py:1582-1587', "src/it's here.py:3", 'a\\b (c)*!~.py', 'ünïcode/路径.py:1']) {
@@ -185,12 +186,15 @@ test('a run: a write with no fault is what it was before: ledgerSaved true and n
   assert.ok(!r.logs.some(l => l.includes('WITHOUT')))
   assert.ok(!r.text.includes('notWritten'))
 })
-test('a run: more rows missing than LEFT_OUT_CAP writes nothing and ledgerSaved is false', async () => {
+test('a run: five rows copied wrong on every try (more than the old cap of four) are left out, and the rest saved', async () => {
   const r = await sweep({ edit: (p, l) => (isWriter(l) ? p.replace(/"rootCause":"root cause ([0-4])"/g, '"rootCause":"root $1"') : p) })
-  assert.equal(r.result.ledgerSaved, false)
-  assert.equal(r.text, undefined)
-  assert.ok(r.logs.some(l => l.includes('ledger persist FAILED')))
-  assert.equal(r.labels.filter(l => l === 'persist:assemble').length, 3, 'no write without them is tried')
+  assert.equal(r.result.ledgerSaved, 'partial')
+  assert.deepEqual(r.result.notWritten, [0, 1, 2, 3, 4].map(i => ({ bucket: 'confirmedBugs', index: i, file: `src/m${i}.py:${i + 1}` })))
+  assert.deepEqual(r.ledger.confirmedBugs.slice(0, 5).map(row => Object.keys(row)), Array(5).fill(['file', 'notWritten']))
+  assert.deepEqual(r.ledger.confirmedBugs[5], r.result.confirmedBugs[5])
+  assert.equal(r.ledger.counts.confirmedBugs, 6)
+  assert.ok(r.logs.some(l => l.includes('ledger persisted WITHOUT 5 row(s)')))
+  assert.equal(r.labels.filter(l => l === 'persist:assemble').length, 4, 'three tries, then the write without them')
 })
 test('a run: a count that never arrives is not left out, and nothing is written', async () => {
   const r = await sweep({ edit: (p, l) => (isWriter(l) ? p.replace('"confirmedBugs":6', '"confirmedBugs":5') : p) })

@@ -47,10 +47,11 @@ test('retryPieces: a piece lost whole and stray rows of another: the piece row b
   const sent = [other.join('\n'), lost.join('\n')]
   assert.deepEqual(H.retryPieces(sent, [...strays, ...lost].map(nameOf), ROOM, true), [...lost, ...strays])
 })
-test('retryPieces: when several pieces were sent and none arrived, the rows go as before, packed', () => {
+test('retryPieces: when several pieces were sent on a retry and none arrived, every row goes alone: refused rows can sit in each', () => {
   const a = rows('set.deferred', 0, 9)
   const b = rows('set.deferred', 9, 9)
-  assert.deepEqual(H.retryPieces([a.join('\n'), b.join('\n')], [...a, ...b].map(nameOf), ROOM, true), H.packLines([...a, ...b], H.LEDGER_PIECE))
+  assert.deepEqual(H.retryPieces([a.join('\n'), b.join('\n')], [...a, ...b].map(nameOf), ROOM, true), [...a, ...b])
+  assert.deepEqual(H.retryPieces([a.join('\n'), b.join('\n')], [...a, ...b].map(nameOf), 17, true), H.packLines([...a, ...b], H.LEDGER_PIECE), 'unless the agents left cannot take one each')
 })
 test('retryPieces: too few agents for a row each, the rows go as before, packed', () => {
   const lost = rows('set.deferred', 15, 9)
@@ -74,7 +75,7 @@ const sweep = async (refuse, { perFinder = 3, pad = '' } = {}) => {
   const agent = async (prompt, opts = {}) => {
     const label = opts.label || ''
     labels.push(label)
-    if (label.startsWith('persist:') && label !== 'persist:assemble' && prompt.includes(refuse.row)) return refuse.answer
+    if (label.startsWith('persist:') && label !== 'persist:assemble' && [].concat(refuse.row).some(row => prompt.includes(row))) return refuse.answer
     if (label === 'setup') return { graphStats: '1 file', resolvedScope: 'full repo', toolchain: [{ package: 'app', test: 'pytest' }], baselineFailures: [] }
     if (label === 'map') return { overview: 'o', targets: [{ file: 'src/a.py', concern: 'security', functions: ['check'] }] }
     if (label.startsWith('find:')) return { audited: [], findings: Array.from({ length: perFinder }, () => finding(n++, pad)) }
@@ -116,4 +117,16 @@ test('a run: the live shape, a ledger of several pieces and one refused on every
   assert.deepEqual(r.result.notWritten, [{ bucket: 'confirmedBugs', index: 13, file: 'src/m13.py:14' }])
   assert.deepEqual(r.ledger.confirmedBugs.filter((_, i) => i !== 13), r.result.confirmedBugs.filter((_, i) => i !== 13))
   assert.equal(r.labels.filter(l => l === 'persist:assemble').length, 4, 'three tries, then the write without the row')
+})
+
+test('a run: more than four rows each refused alone, in several pieces, are all left out and every other row is saved', async () => {
+  const pad = ` ${'x'.repeat(1500)}`
+  const refused = [2, 9, 13, 17, 21, 22]
+  const r = await sweep({ row: refused.map(i => `"symptom":"symptom ${i} `), answer: null }, { perFinder: 12, pad })
+  assert.equal(r.result.ledgerSaved, 'partial')
+  assert.deepEqual(r.result.notWritten, refused.map(i => ({ bucket: 'confirmedBugs', index: i, file: `src/m${i}.py:${i + 1}` })))
+  assert.deepEqual(r.ledger.confirmedBugs.filter((_, i) => !refused.includes(i)), r.result.confirmedBugs.filter((_, i) => !refused.includes(i)))
+  assert.ok(refused.every(i => r.ledger.confirmedBugs[i].notWritten), 'a placeholder in each refused row\'s place')
+  assert.equal(r.ledger.counts.confirmedBugs, r.result.confirmedBugs.length)
+  assert.ok(r.logs.some(l => l.includes(`ledger persisted WITHOUT ${refused.length} row(s)`)))
 })
