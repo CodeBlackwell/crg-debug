@@ -6,6 +6,8 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-11-24
+
 ### Fixed
 - **Fixers no longer move each other's work with git** (`crg-debug.js`). The fixers of a wave
   edit one shared working tree at the same time, and in every saved run 14 to 38% of them ran
