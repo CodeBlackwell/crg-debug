@@ -602,7 +602,13 @@ test('a row that does not reach the disk whole is sent again alone; a write that
   const never = await sweep({ perFinder: 2, on: label => (/^persist:\d+$/.test(label) ? 'written' : undefined) })
   assert.equal(never.result.ledgerSaved, false)
   assert.equal(never.ledger, undefined, 'no file is put at the path')
-  assert.deepEqual(never.labels.filter(l => l.startsWith('persist')), ['persist:1', 'persist:assemble', 'persist:2', 'persist:assemble', 'persist:3', 'persist:assemble'], 'two retries, not a loop')
+  const neverLabels = never.labels.filter(l => l.startsWith('persist'))
+  assert.equal(neverLabels.filter(l => l === 'persist:assemble').length, 3, 'two retries, not a loop')
+  assert.deepEqual(neverLabels.slice(0, 4), ['persist:1', 'persist:assemble', 'persist:2', 'persist:assemble'], 'the first retry sends the piece packed again')
+  // Lost whole twice, the piece goes a row to an agent on the last try: from outside this is
+  // a writer refusing its piece, which only rows sent alone get past. Bounded by one piece.
+  const lastTry = never.calls.filter(c => /^persist:\d+$/.test(c.label)).slice(2)
+  assert.ok(lastTry.length > H.WRITE_ROWS_ALONE && lastTry.every(c => c.prompt.match(/^crg-ledger-put /gm).length === 1), 'the last try sends each row alone')
   assert.ok(never.logs.some(l => l.startsWith('Verify: ledger persist FAILED — /tmp/crg-fixture/.crg-debug/ledger.json was not written and may hold a prior run (row(s) set.repoRoot, ') && l.endsWith(' did not reach the disk as sent)')))
   assert.equal(never.result.confirmedBugs.length, 4, 'the return still carries what Verify found')
 

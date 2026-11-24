@@ -6,6 +6,18 @@ All notable changes to the crg-debug plugin are documented here. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- **A ledger piece a writer will not write no longer costs the ledger** (`crg-debug.js`). The
+  ledger goes to disk in pieces, one writer each, and rows that did not arrive were sent again
+  packed together when there were more than four. On arrow-py a safety classifier stopped the
+  writer of one nine-row piece, every retry packed the same nine rows and was stopped at the
+  same row, and the run and its relaunch saved no ledger, so the fix half never started. A
+  piece none of whose rows arrived on a retry, lost twice with the same rows, now goes again
+  one row to an agent, so only a row refused alone stays out and the ledger is saved without it (`ledgerSaved: 'partial'`). A piece lost on
+  its first try is still sent again packed, as one agent is cheaper when the fault passed.
+  When several pieces were sent and none arrived, or too few agents are left for a row each,
+  the rows go again as before.
+
 ## [0.35.1] - 2026-11-24
 
 ### Fixed
